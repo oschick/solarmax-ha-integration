@@ -35,5 +35,5 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Translation support
 - HACS compatibility
 
-[Unreleased]: https://github.com/oschick/solarmax-agent/compare/v1.0.0...HEAD
-[1.0.0]: https://github.com/oschick/solarmax-agent/releases/tag/v1.0.0
+[Unreleased]: https://github.com/oschick/solarmax-ha-integration/compare/v1.0.0...HEAD
+[1.0.0]: https://github.com/oschick/solarmax-ha-integration/releases/tag/v1.0.0

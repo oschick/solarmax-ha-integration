@@ -1,8 +1,8 @@
 # Solarmax Inverter Integration for Home Assistant
 
 [![hacs_badge](https://img.shields.io/badge/HACS-Custom-orange.svg)](https://github.com/custom-components/hacs)
-[![GitHub release](https://img.shields.io/github/release/oschick/solarmax-agent.svg)](https://github.com/oschick/solarmax-agent/releases/)
-[![GitHub license](https://img.shields.io/github/license/oschick/solarmax-agent.svg)](https://github.com/oschick/solarmax-agent/blob/main/LICENSE)
+[![GitHub release](https://img.shields.io/github/release/oschick/solarmax-ha-integration.svg)](https://github.com/oschick/solarmax-ha-integration/releases/)
+[![GitHub license](https://img.shields.io/github/license/oschick/solarmax-ha-integration.svg)](https://github.com/oschick/solarmax-ha-integration/blob/main/LICENSE)
 
 A Home Assistant custom integration for Solarmax solar inverters. This integration allows you to monitor your Solarmax inverter's performance directly within Home Assistant.
 
@@ -28,7 +28,7 @@ A Home Assistant custom integration for Solarmax solar inverters. This integrati
 2. Go to "Integrations"
 3. Click the three dots in the top right corner
 4. Select "Custom repositories"
-5. Add this repository URL: `https://github.com/oschick/solarmax-agent`
+5. Add this repository URL: `https://github.com/oschick/solarmax-ha-integration`
 6. Select "Integration" as the category
 7. Click "Add"
 8. Search for "Solarmax Inverter" and install it
@@ -36,7 +36,7 @@ A Home Assistant custom integration for Solarmax solar inverters. This integrati
 
 ### Manual Installation
 
-1. Download the latest release from the [releases page](https://github.com/oschick/solarmax-agent/releases)
+1. Download the latest release from the [releases page](https://github.com/oschick/solarmax-ha-integration/releases)
 2. Extract the contents
 3. Copy the `custom_components/solarmax` folder to your Home Assistant `custom_components` directory
 4. Restart Home Assistant
@@ -106,8 +106,8 @@ logger:
 
 ## Support
 
-- **Issues**: [GitHub Issues](https://github.com/oschick/solarmax-agent/issues)
-- **Feature Requests**: [GitHub Discussions](https://github.com/oschick/solarmax-agent/discussions)
+- **Issues**: [GitHub Issues](https://github.com/oschick/solarmax-ha-integration/issues)
+- **Feature Requests**: [GitHub Discussions](https://github.com/oschick/solarmax-ha-integration/discussions)
 
 ## Contributing
 

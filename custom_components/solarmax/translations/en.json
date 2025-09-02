@@ -13,9 +13,10 @@
       }
     },
     "error": {
-      "cannot_connect": "Failed to connect to the inverter",
-      "invalid_auth": "Invalid authentication",
-      "unknown": "Unexpected error"
+      "cannot_connect": "Failed to connect to inverter",
+      "invalid_host": "Invalid host address",
+      "timeout": "Connection timeout",
+      "unknown": "Unexpected error occurred"
     },
     "abort": {
       "already_configured": "Device is already configured"

@@ -35,4 +35,4 @@ A comprehensive Home Assistant integration for monitoring Solarmax solar inverte
 - Network access to the inverter from Home Assistant
 
 ### Support
-For issues, feature requests, or questions, visit the [GitHub repository](https://github.com/oschick/solarmax-agent).
+For issues, feature requests, or questions, visit the [GitHub repository](https://github.com/oschick/solarmax-ha-integration).

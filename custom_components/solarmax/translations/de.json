@@ -14,8 +14,9 @@
     },
     "error": {
       "cannot_connect": "Verbindung zum Wechselrichter fehlgeschlagen",
-      "invalid_auth": "Ungültige Authentifizierung",
-      "unknown": "Unerwarteter Fehler"
+      "invalid_host": "Ungültige Host-Adresse",
+      "timeout": "Verbindungszeit überschritten",
+      "unknown": "Unerwarteter Fehler aufgetreten"
     },
     "abort": {
       "already_configured": "Gerät ist bereits konfiguriert"

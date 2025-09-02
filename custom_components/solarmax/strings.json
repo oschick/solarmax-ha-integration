@@ -2,23 +2,46 @@
   "config": {
     "step": {
       "user": {
-        "title": "Solarmax Wechselrichter",
-        "description": "Richten Sie Ihren Solarmax Wechselrichter ein",
+        "title": "Solarmax Inverter",
+        "description": "Set up your Solarmax inverter",
         "data": {
           "host": "Host",
           "port": "Port",
-          "update_interval": "Aktualisierungsintervall (Sekunden)",
-          "device_name": "Gerätename"
+          "update_interval": "Update interval (seconds)",
+          "device_name": "Device name"
         }
       }
     },
     "error": {
-      "cannot_connect": "Verbindung zum Wechselrichter fehlgeschlagen",
-      "invalid_auth": "Ungültige Authentifizierung",
-      "unknown": "Unerwarteter Fehler"
+      "cannot_connect": "Failed to connect to inverter",
+      "invalid_host": "Invalid host address",
+      "timeout": "Connection timeout",
+      "unknown": "Unexpected error occurred"
     },
     "abort": {
-      "already_configured": "Gerät ist bereits konfiguriert"
+      "already_configured": "Device is already configured"
+    }
+  },
+  "entity": {
+    "sensor": {
+      "pac": {
+        "name": "AC Power"
+      },
+      "pdc": {
+        "name": "DC Power"
+      },
+      "udc": {
+        "name": "DC Voltage"
+      },
+      "idc": {
+        "name": "DC Current"
+      },
+      "status": {
+        "name": "Status"
+      },
+      "temperature": {
+        "name": "Temperature"
+      }
     }
   }
 }

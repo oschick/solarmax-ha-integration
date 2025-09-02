@@ -1,3 +1,33 @@
+[build-system]
+requires = ["setuptools>=61.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "solarmax-ha-integration"
+version = "1.0.0"
+description = "Home Assistant integration for Solarmax solar inverters"
+readme = "README.md"
+license = {file = "LICENSE"}
+authors = [
+    {name = "Ole Schicketanz", email = "oschick@users.noreply.github.com"}
+]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Home Automation",
+]
+requires-python = ">=3.11"
+
+[project.urls]
+Homepage = "https://github.com/oschick/solarmax-ha-integration"
+"Bug Reports" = "https://github.com/oschick/solarmax-ha-integration/issues"
+"Source" = "https://github.com/oschick/solarmax-ha-integration"
+
 [tool.black]
 line-length = 88
 target-version = ['py311']
