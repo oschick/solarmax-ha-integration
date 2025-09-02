@@ -1,0 +1,24 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Solarmax Wechselrichter",
+        "description": "Richten Sie Ihren Solarmax Wechselrichter ein",
+        "data": {
+          "host": "Host",
+          "port": "Port",
+          "update_interval": "Aktualisierungsintervall (Sekunden)",
+          "device_name": "Gerätename"
+        }
+      }
+    },
+    "error": {
+      "cannot_connect": "Verbindung zum Wechselrichter fehlgeschlagen",
+      "invalid_auth": "Ungültige Authentifizierung",
+      "unknown": "Unerwarteter Fehler"
+    },
+    "abort": {
+      "already_configured": "Gerät ist bereits konfiguriert"
+    }
+  }
+}

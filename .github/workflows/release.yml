@@ -1,0 +1,37 @@
+name: Release
+
+on:
+  release:
+    types: [published]
+
+jobs:
+  release:
+    name: Prepare release
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Get version
+        id: version
+        run: |
+          echo "version=${GITHUB_REF#refs/tags/}" >> $GITHUB_OUTPUT
+
+      - name: Update manifest version
+        run: |
+          sed -i 's/"version": ".*"/"version": "${{ steps.version.outputs.version }}"/' custom_components/solarmax/manifest.json
+
+      - name: Create ZIP file
+        run: |
+          cd custom_components/solarmax
+          zip -r ../../solarmax-${{ steps.version.outputs.version }}.zip .
+
+      - name: Upload ZIP to release
+        uses: actions/upload-release-asset@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          upload_url: ${{ github.event.release.upload_url }}
+          asset_path: ./solarmax-${{ steps.version.outputs.version }}.zip
+          asset_name: solarmax-${{ steps.version.outputs.version }}.zip
+          asset_content_type: application/zip
