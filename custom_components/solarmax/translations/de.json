@@ -97,36 +97,5 @@
         "name": "Status-Code"
       }
     }
-  },
-  "status_codes": {
-    "20000": "Keine Kommunikation",
-    "20001": "In Betrieb",
-    "20002": "Zu wenig Einstrahlung", 
-    "20003": "Anfahren",
-    "20004": "Betrieb auf MPP",
-    "20005": "Ventilator läuft",
-    "20006": "Betrieb auf Maximalleistung",
-    "20007": "Temperaturbegrenzung",
-    "20008": "Netzbetrieb"
-  },
-  "alarm_codes": {
-    "0": "Kein Fehler",
-    "1": "Externer Fehler 1",
-    "2": "Isolationsfehler DC-Seite",
-    "4": "Fehlerstrom Erde zu groß",
-    "8": "Sicherungsbruch Mittelpunkterde",
-    "16": "Externer Alarm 2", 
-    "32": "Langzeit-Temperaturbegrenzung",
-    "64": "Fehler AC-Einspeisung",
-    "128": "Externer Alarm 4",
-    "256": "Ventilator defekt",
-    "512": "Sicherungsbruch",
-    "1024": "Ausfall Temperatursensor",
-    "2048": "Alarm 12",
-    "4096": "Alarm 13",
-    "8192": "Alarm 14",
-    "16384": "Alarm 15",
-    "32768": "Alarm 16",
-    "65536": "Alarm 17"
   }
 }

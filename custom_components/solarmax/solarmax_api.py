@@ -1,4 +1,5 @@
 """Solarmax Inverter API."""
+
 from __future__ import annotations
 
 import logging
@@ -11,12 +12,12 @@ _LOGGER = logging.getLogger(__name__)
 # Field mapping for inverter parameters
 FIELD_MAP_INVERTER = {
     "KDY": "Energy_Day (Wh)",
-    "KMT": "Energy_Month (kWh)", 
+    "KMT": "Energy_Month (kWh)",
     "KYR": "Energy_Year (kWh)",
     "KT0": "Energy_Total (kWh)",
     "PDC": "DC_Power (W)",
     "PD01": "DC_Power_String_1 (W)",
-    "PD02": "DC_Power_String_2 (W)", 
+    "PD02": "DC_Power_String_2 (W)",
     "UD01": "DC_Voltage_String_1 (V)",
     "UD02": "DC_Voltage_String_2 (V)",
     "IDC": "DC_Current (A)",
@@ -88,11 +89,11 @@ class SolarmaxAPI:
             sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
             sock.settimeout(self.timeout)
             sock.connect((self.host, self.port))
-            
+
             # Try to send a minimal request
             request = self.build_request({"PAC": "AC_Power (W)"})
             sock.send(bytes(request, "utf-8"))
-            
+
             # Try to receive response
             response = ""
             start_time = datetime.now()
@@ -101,10 +102,10 @@ class SolarmaxAPI:
                 if len(buf) > 0:
                     response += buf.decode("utf-8", errors="ignore")
                     break
-            
+
             sock.close()
             return len(response) > 0
-            
+
         except Exception as e:
             _LOGGER.debug(f"Connection test failed: {e}")
             return False
@@ -115,17 +116,17 @@ class SolarmaxAPI:
             sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
             sock.settimeout(self.timeout)
             sock.connect((self.host, self.port))
-            
+
             # Build and send request
             request = self.build_request(FIELD_MAP_INVERTER)
             _LOGGER.debug(f"Sending request: {request}")
             sock.send(bytes(request, "utf-8"))
-            
+
             # Receive response
             response = ""
             start_time = datetime.now()
             data_received = False
-            
+
             while (
                 not data_received and (datetime.now() - start_time).total_seconds() < 2
             ):
@@ -133,16 +134,16 @@ class SolarmaxAPI:
                 if len(buf) > 0:
                     response += buf.decode("utf-8", errors="ignore")
                     data_received = True
-            
+
             sock.close()
             _LOGGER.debug(f"Received response: {response}")
-            
+
             if response:
                 return self.convert_to_json(FIELD_MAP_INVERTER, response)
             else:
                 _LOGGER.warning("No response received from inverter")
                 return {}
-                
+
         except Exception as e:
             _LOGGER.error(f"Error getting data from inverter: {e}")
             # Return offline status data

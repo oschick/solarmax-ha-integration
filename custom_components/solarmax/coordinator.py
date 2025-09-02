@@ -1,4 +1,5 @@
 """DataUpdateCoordinator for Solarmax."""
+
 from __future__ import annotations
 
 import logging
@@ -29,9 +30,9 @@ class SolarmaxCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             host=entry.data[CONF_HOST],
             port=entry.data[CONF_PORT],
         )
-        
+
         update_interval = timedelta(seconds=entry.data.get(CONF_UPDATE_INTERVAL, 30))
-        
+
         super().__init__(
             hass,
             _LOGGER,

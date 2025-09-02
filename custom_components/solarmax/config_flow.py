@@ -1,24 +1,24 @@
 """Config flow for Solarmax Inverter integration."""
+
 from __future__ import annotations
 
 import logging
 from typing import Any
 
 import voluptuous as vol
-
 from homeassistant import config_entries
 from homeassistant.core import HomeAssistant
 from homeassistant.data_entry_flow import FlowResult
 from homeassistant.exceptions import HomeAssistantError
 
 from .const import (
+    CONF_DEVICE_NAME,
     CONF_HOST,
     CONF_PORT,
     CONF_UPDATE_INTERVAL,
-    CONF_DEVICE_NAME,
+    DEFAULT_DEVICE_NAME,
     DEFAULT_PORT,
     DEFAULT_UPDATE_INTERVAL,
-    DEFAULT_DEVICE_NAME,
     DOMAIN,
 )
 from .solarmax_api import SolarmaxAPI
@@ -29,7 +29,9 @@ STEP_USER_DATA_SCHEMA = vol.Schema(
     {
         vol.Required(CONF_HOST): str,
         vol.Required(CONF_PORT, default=DEFAULT_PORT): vol.Coerce(int),
-        vol.Optional(CONF_UPDATE_INTERVAL, default=DEFAULT_UPDATE_INTERVAL): vol.Coerce(int),
+        vol.Optional(CONF_UPDATE_INTERVAL, default=DEFAULT_UPDATE_INTERVAL): vol.Coerce(
+            int
+        ),
         vol.Optional(CONF_DEVICE_NAME, default=DEFAULT_DEVICE_NAME): str,
     }
 )
@@ -41,11 +43,11 @@ async def validate_input(hass: HomeAssistant, data: dict[str, Any]) -> dict[str,
     Data has the keys from STEP_USER_DATA_SCHEMA with values provided by the user.
     """
     api = SolarmaxAPI(data[CONF_HOST], data[CONF_PORT])
-    
+
     # Test the connection
     if not await hass.async_add_executor_job(api.test_connection):
         raise CannotConnect
-    
+
     # Return info that you want to store in the config entry.
     return {"title": data[CONF_DEVICE_NAME]}
 

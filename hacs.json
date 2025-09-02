@@ -4,6 +4,5 @@
   "filename": "solarmax.zip",
   "country": ["DE", "AT", "CH", "NL", "BE", "FR", "IT", "ES", "PT", "GB", "US", "CA", "AU"],
   "homeassistant": "2023.1.0",
-  "render_readme": true,
-  "iot_class": "Local Polling"
+  "render_readme": true
 }

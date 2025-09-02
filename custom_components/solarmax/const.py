@@ -26,7 +26,7 @@ SENSOR_TYPES = {
     "PDC": {
         "name": "DC Power",
         "translation_key": "pdc",
-        "unit": "W", 
+        "unit": "W",
         "device_class": "power",
         "state_class": "measurement",
         "icon": "mdi:solar-power",
@@ -35,7 +35,7 @@ SENSOR_TYPES = {
         "name": "DC Power String 1",
         "translation_key": "pd01",
         "unit": "W",
-        "device_class": "power", 
+        "device_class": "power",
         "state_class": "measurement",
         "icon": "mdi:solar-power",
     },
@@ -44,7 +44,7 @@ SENSOR_TYPES = {
         "translation_key": "pd02",
         "unit": "W",
         "device_class": "power",
-        "state_class": "measurement", 
+        "state_class": "measurement",
         "icon": "mdi:solar-power",
     },
     "UL1": {
@@ -56,7 +56,7 @@ SENSOR_TYPES = {
         "icon": "mdi:sine-wave",
     },
     "UL2": {
-        "name": "AC Voltage Phase 2", 
+        "name": "AC Voltage Phase 2",
         "translation_key": "ul2",
         "unit": "V",
         "device_class": "voltage",
@@ -66,7 +66,7 @@ SENSOR_TYPES = {
     "UL3": {
         "name": "AC Voltage Phase 3",
         "translation_key": "ul3",
-        "unit": "V", 
+        "unit": "V",
         "device_class": "voltage",
         "state_class": "measurement",
         "icon": "mdi:sine-wave",
@@ -77,7 +77,7 @@ SENSOR_TYPES = {
         "unit": "V",
         "device_class": "voltage",
         "state_class": "measurement",
-        "icon": "mdi:sine-wave", 
+        "icon": "mdi:sine-wave",
     },
     "UD02": {
         "name": "DC Voltage String 2",
@@ -98,7 +98,7 @@ SENSOR_TYPES = {
     "IL2": {
         "name": "AC Current Phase 2",
         "translation_key": "il2",
-        "unit": "A", 
+        "unit": "A",
         "device_class": "current",
         "state_class": "measurement",
         "icon": "mdi:current-ac",
@@ -115,7 +115,7 @@ SENSOR_TYPES = {
         "name": "DC Current",
         "translation_key": "idc",
         "unit": "A",
-        "device_class": "current", 
+        "device_class": "current",
         "state_class": "measurement",
         "icon": "mdi:current-dc",
     },
@@ -132,7 +132,7 @@ SENSOR_TYPES = {
         "translation_key": "id02",
         "unit": "A",
         "device_class": "current",
-        "state_class": "measurement", 
+        "state_class": "measurement",
         "icon": "mdi:current-dc",
     },
     "KDY": {
@@ -152,7 +152,7 @@ SENSOR_TYPES = {
         "icon": "mdi:solar-power",
     },
     "KYR": {
-        "name": "Energy Year", 
+        "name": "Energy Year",
         "translation_key": "kyr",
         "unit": "kWh",
         "device_class": "energy",
@@ -172,7 +172,7 @@ SENSOR_TYPES = {
         "translation_key": "tkk",
         "unit": "°C",
         "device_class": "temperature",
-        "state_class": "measurement", 
+        "state_class": "measurement",
         "icon": "mdi:thermometer",
     },
     "KHR": {
@@ -194,7 +194,7 @@ SENSOR_TYPES = {
         "icon": "mdi:alert-circle",
     },
     "SYS": {
-        "name": "Status Code", 
+        "name": "Status Code",
         "translation_key": "sys",
         "icon": "mdi:information",
     },

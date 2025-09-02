@@ -97,36 +97,5 @@
         "name": "Status Code"
       }
     }
-  },
-  "status_codes": {
-    "20000": "No Communication",
-    "20001": "In Operation", 
-    "20002": "Insufficient Irradiation",
-    "20003": "Starting Up",
-    "20004": "Operating at MPP",
-    "20005": "Fan Running",
-    "20006": "Operating at Maximum Power",
-    "20007": "Temperature Limitation",
-    "20008": "Grid Operation"
-  },
-  "alarm_codes": {
-    "0": "No Error",
-    "1": "External Error 1",
-    "2": "DC Side Isolation Error",
-    "4": "Earth Leakage Current Too High",
-    "8": "Neutral Point Earth Fuse Blown",
-    "16": "External Alarm 2",
-    "32": "Long-term Temperature Limitation",
-    "64": "AC Feed Error",
-    "128": "External Alarm 4",
-    "256": "Fan Defective",
-    "512": "Fuse Blown",
-    "1024": "Temperature Sensor Failure",
-    "2048": "Alarm 12",
-    "4096": "Alarm 13",
-    "8192": "Alarm 14",
-    "16384": "Alarm 15",
-    "32768": "Alarm 16",
-    "65536": "Alarm 17"
   }
 }
