@@ -146,8 +146,8 @@ class SolarmaxAPI:
 
         except Exception as e:
             _LOGGER.error(f"Error getting data from inverter: {e}")
-            # Return offline status data
-            return self.generate_offline_data()
+            # Re-raise the exception instead of returning mock data
+            raise
 
     def convert_to_json(self, field_map: Dict[str, str], data: str) -> Dict[str, Any]:
         """Convert inverter response to JSON format."""
@@ -178,19 +178,3 @@ class SolarmaxAPI:
         except Exception as e:
             _LOGGER.error(f"Error converting data to JSON: {e}")
             return {}
-
-    def generate_offline_data(self) -> Dict[str, Any]:
-        """Generate offline status data when inverter is not available."""
-        data = {}
-        for field in FIELD_MAP_INVERTER:
-            if field == "SYS":
-                data[field] = {
-                    "value": 20000,  # Raw value - translation handled at sensor level
-                    "raw_value": 20000,
-                }
-            else:
-                data[field] = {
-                    "value": 0,
-                    "raw_value": 0,
-                }
-        return data

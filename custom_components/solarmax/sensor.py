@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+from datetime import datetime
 from typing import Any
 
 from homeassistant.components.sensor import (
@@ -14,6 +15,7 @@ from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity import generate_entity_id
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
+from homeassistant.util import dt as dt_util
 
 from .const import (
     CONF_DEVICE_NAME,
@@ -137,6 +139,27 @@ class SolarmaxSensor(CoordinatorEntity[SolarmaxCoordinator], SensorEntity):
             "sw_version": "1.0.0",
         }
 
+    def _is_night_time(self) -> bool:
+        """Check if it's currently night time (between sunset and sunrise)."""
+        try:
+            now = dt_util.now()
+            
+            # Get sun component if available
+            sun_component = self.hass.states.get("sun.sun")
+            if sun_component:
+                # If we have the sun component, use its state
+                return sun_component.state == "below_horizon"
+            
+            # Fallback: simple time-based check (between 20:00 and 06:00)
+            current_hour = now.hour
+            return current_hour >= 20 or current_hour < 6
+            
+        except Exception as e:
+            _LOGGER.debug(f"Error checking night time: {e}")
+            # Fallback: simple time-based check
+            current_hour = dt_util.now().hour
+            return current_hour >= 20 or current_hour < 6
+
     @property
     def translation_key(self) -> str:
         """Return the translation key for this entity."""
@@ -145,6 +168,14 @@ class SolarmaxSensor(CoordinatorEntity[SolarmaxCoordinator], SensorEntity):
     @property
     def native_value(self) -> str | int | float | None:
         """Return the state of the sensor."""
+        # Special handling for SYS sensor when coordinator update fails
+        if not self.coordinator.last_update_success and self.sensor_key == "SYS":
+            # Return offline status code with translation
+            if self._language == "en":
+                return "Offline"
+            else:
+                return "Offline"  # German: "Offline" is commonly used, or could be "Nicht verfügbar"
+        
         if not self.coordinator.data:
             return None
 
@@ -193,6 +224,13 @@ class SolarmaxSensor(CoordinatorEntity[SolarmaxCoordinator], SensorEntity):
     @property
     def extra_state_attributes(self) -> dict[str, Any] | None:
         """Return additional state attributes."""
+        # Special handling for SYS sensor when coordinator update fails
+        if not self.coordinator.last_update_success and self.sensor_key == "SYS":
+            return {
+                "raw_value": "offline",
+                "code": "offline",
+            }
+        
         if not self.coordinator.data:
             return None
 
@@ -214,4 +252,22 @@ class SolarmaxSensor(CoordinatorEntity[SolarmaxCoordinator], SensorEntity):
     @property
     def available(self) -> bool:
         """Return if entity is available."""
-        return self.coordinator.last_update_success
+        # Always consider the coordinator's last update success first
+        if self.coordinator.last_update_success:
+            return True
+        
+        # If coordinator update failed, check if it's night time
+        is_night = self._is_night_time()
+        
+        # For SYS (status) sensor, always remain available to show offline status
+        if self.sensor_key == "SYS":
+            return True
+        
+        # For all other sensors during night time, become unavailable 
+        # when inverter is not reachable (expected behavior)
+        if is_night:
+            return False
+        
+        # During day time, if coordinator update failed, still show as available
+        # but sensors will show their last known values or None
+        return True
