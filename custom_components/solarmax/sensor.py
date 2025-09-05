@@ -143,17 +143,17 @@ class SolarmaxSensor(CoordinatorEntity[SolarmaxCoordinator], SensorEntity):
         """Check if it's currently night time (between sunset and sunrise)."""
         try:
             now = dt_util.now()
-            
+
             # Get sun component if available
             sun_component = self.hass.states.get("sun.sun")
             if sun_component:
                 # If we have the sun component, use its state
                 return sun_component.state == "below_horizon"
-            
+
             # Fallback: simple time-based check (between 20:00 and 06:00)
             current_hour = now.hour
             return current_hour >= 20 or current_hour < 6
-            
+
         except Exception as e:
             _LOGGER.debug(f"Error checking night time: {e}")
             # Fallback: simple time-based check
@@ -175,7 +175,7 @@ class SolarmaxSensor(CoordinatorEntity[SolarmaxCoordinator], SensorEntity):
                 return "Offline"
             else:
                 return "Offline"  # German: "Offline" is commonly used, or could be "Nicht verfügbar"
-        
+
         if not self.coordinator.data:
             return None
 
@@ -230,7 +230,7 @@ class SolarmaxSensor(CoordinatorEntity[SolarmaxCoordinator], SensorEntity):
                 "raw_value": "offline",
                 "code": "offline",
             }
-        
+
         if not self.coordinator.data:
             return None
 
@@ -255,19 +255,19 @@ class SolarmaxSensor(CoordinatorEntity[SolarmaxCoordinator], SensorEntity):
         # Always consider the coordinator's last update success first
         if self.coordinator.last_update_success:
             return True
-        
+
         # If coordinator update failed, check if it's night time
         is_night = self._is_night_time()
-        
+
         # For SYS (status) sensor, always remain available to show offline status
         if self.sensor_key == "SYS":
             return True
-        
-        # For all other sensors during night time, become unavailable 
+
+        # For all other sensors during night time, become unavailable
         # when inverter is not reachable (expected behavior)
         if is_night:
             return False
-        
+
         # During day time, if coordinator update failed, still show as available
         # but sensors will show their last known values or None
         return True
