@@ -7,6 +7,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- **Major**: Fixed connection timeout issues when inverter comes back online after being offline (night mode)
+- **Major**: Improved socket connection handling with proper cleanup and retry mechanisms
+- **Major**: Enhanced reconnection logic with exponential backoff to prevent overwhelming inverter
+- Consistent timeout handling across connection and data transfer operations
+- Better error differentiation between expected offline states (night) vs connection problems
+- Improved connection state tracking and failure diagnostics
+
+### Enhanced
+- Added intelligent retry logic for connection failures (3 attempts with 2 sub-retries each)
+- Enhanced error handling with context-aware logging (night vs day failures)
+- Improved sensor availability logic based on connection state and expected offline periods
+- Better status messages showing connection failure counts and offline reasons
+- Extended diagnostic attributes for troubleshooting connection issues
+- Added connection health tracking with timestamps for last successful updates
+
+### Added
+- New exception classes (`SolarmaxConnectionError`, `SolarmaxTimeoutError`) for better error handling
+- Connection state properties (`consecutive_failures`, `last_successful_update`, `is_expected_offline`)
+- Enhanced status translations for offline states and connection failures
+
 ### Added
 - Initial HACS compatibility
 - Comprehensive README documentation
