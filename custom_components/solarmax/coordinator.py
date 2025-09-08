@@ -40,7 +40,7 @@ class SolarmaxCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             name=DOMAIN,
             update_interval=update_interval,
         )
-        
+
         # Track connection state for better error handling
         self._consecutive_failures = 0
         self._last_successful_update = None
@@ -70,44 +70,50 @@ class SolarmaxCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         """Fetch data from the inverter with intelligent error handling."""
         try:
             data = await self.hass.async_add_executor_job(self.api.get_data)
-            
+
             if not data:
                 raise UpdateFailed("No data received from inverter")
-            
+
             # Reset failure tracking on successful update
             self._consecutive_failures = 0
             self._last_successful_update = datetime.now()
             self._is_expected_offline = False
-            
+
             _LOGGER.debug("Successfully updated data from inverter")
             return data
-            
+
         except (SolarmaxConnectionError, SolarmaxTimeoutError) as err:
             self._consecutive_failures += 1
             is_night = self._is_night_time()
-            
+
             # Enhanced error handling based on context
             if is_night:
                 # During night time, connection failures are expected
                 self._is_expected_offline = True
                 _LOGGER.debug(f"Inverter offline during night time (expected): {err}")
                 raise UpdateFailed(f"Inverter offline (night time): {err}") from err
-            
+
             elif self._consecutive_failures == 1:
                 # First failure during day - could be temporary, log as warning
                 _LOGGER.warning(f"First connection failure during day time: {err}")
                 raise UpdateFailed(f"Connection failed (attempt 1): {err}") from err
-            
+
             elif self._consecutive_failures <= 3:
                 # Multiple failures but not too many - could be inverter restart
-                _LOGGER.warning(f"Connection failure #{self._consecutive_failures} during day time: {err}")
-                raise UpdateFailed(f"Connection failed (attempt {self._consecutive_failures}): {err}") from err
-            
+                _LOGGER.warning(
+                    f"Connection failure #{self._consecutive_failures} during day time: {err}"
+                )
+                raise UpdateFailed(
+                    f"Connection failed (attempt {self._consecutive_failures}): {err}"
+                ) from err
+
             else:
                 # Many consecutive failures during day - something is wrong
-                _LOGGER.error(f"Persistent connection failure (#{self._consecutive_failures}) during day time: {err}")
+                _LOGGER.error(
+                    f"Persistent connection failure (#{self._consecutive_failures}) during day time: {err}"
+                )
                 raise UpdateFailed(f"Persistent connection failure: {err}") from err
-                
+
         except Exception as err:
             self._consecutive_failures += 1
             _LOGGER.error(f"Unexpected error communicating with inverter: {err}")

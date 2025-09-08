@@ -171,21 +171,24 @@ class SolarmaxSensor(CoordinatorEntity[SolarmaxCoordinator], SensorEntity):
         # Special handling for SYS sensor when coordinator update fails
         if not self.coordinator.last_update_success and self.sensor_key == "SYS":
             # Check if this is expected offline vs unexpected failure
-            if hasattr(self.coordinator, 'is_expected_offline') and self.coordinator.is_expected_offline:
+            if (
+                hasattr(self.coordinator, "is_expected_offline")
+                and self.coordinator.is_expected_offline
+            ):
                 if self._language == "en":
                     return "Offline (Night)"
                 else:
                     return "Offline (Nacht)"
             else:
                 # Unexpected failure during day
-                if hasattr(self.coordinator, 'consecutive_failures'):
+                if hasattr(self.coordinator, "consecutive_failures"):
                     failures = self.coordinator.consecutive_failures
                     if failures > 1:
                         if self._language == "en":
                             return f"Connection Failed ({failures})"
                         else:
                             return f"Verbindung fehlgeschlagen ({failures})"
-                
+
                 # Single failure or fallback
                 if self._language == "en":
                     return "Connection Failed"
@@ -246,21 +249,33 @@ class SolarmaxSensor(CoordinatorEntity[SolarmaxCoordinator], SensorEntity):
                 "raw_value": "offline",
                 "code": "offline",
             }
-            
+
             # Add diagnostic information
-            if hasattr(self.coordinator, 'consecutive_failures'):
-                attributes["consecutive_failures"] = self.coordinator.consecutive_failures
-            
-            if hasattr(self.coordinator, 'is_expected_offline'):
+            if hasattr(self.coordinator, "consecutive_failures"):
+                attributes["consecutive_failures"] = (
+                    self.coordinator.consecutive_failures
+                )
+
+            if hasattr(self.coordinator, "is_expected_offline"):
                 attributes["expected_offline"] = self.coordinator.is_expected_offline
-            
-            if hasattr(self.coordinator, 'last_successful_update') and self.coordinator.last_successful_update:
-                attributes["last_successful_update"] = self.coordinator.last_successful_update.isoformat()
-            
+
+            if (
+                hasattr(self.coordinator, "last_successful_update")
+                and self.coordinator.last_successful_update
+            ):
+                attributes["last_successful_update"] = (
+                    self.coordinator.last_successful_update.isoformat()
+                )
+
             # Add last API connection time if available
-            if hasattr(self.coordinator.api, 'last_successful_connection') and self.coordinator.api.last_successful_connection:
-                attributes["last_api_connection"] = self.coordinator.api.last_successful_connection.isoformat()
-            
+            if (
+                hasattr(self.coordinator.api, "last_successful_connection")
+                and self.coordinator.api.last_successful_connection
+            ):
+                attributes["last_api_connection"] = (
+                    self.coordinator.api.last_successful_connection.isoformat()
+                )
+
             return attributes
 
         if not self.coordinator.data:
@@ -281,11 +296,18 @@ class SolarmaxSensor(CoordinatorEntity[SolarmaxCoordinator], SensorEntity):
 
         # Add connection health information for diagnostic purposes
         if self.sensor_key == "SYS":
-            if hasattr(self.coordinator, 'consecutive_failures'):
-                attributes["consecutive_failures"] = self.coordinator.consecutive_failures
-            
-            if hasattr(self.coordinator, 'last_successful_update') and self.coordinator.last_successful_update:
-                attributes["last_successful_update"] = self.coordinator.last_successful_update.isoformat()
+            if hasattr(self.coordinator, "consecutive_failures"):
+                attributes["consecutive_failures"] = (
+                    self.coordinator.consecutive_failures
+                )
+
+            if (
+                hasattr(self.coordinator, "last_successful_update")
+                and self.coordinator.last_successful_update
+            ):
+                attributes["last_successful_update"] = (
+                    self.coordinator.last_successful_update.isoformat()
+                )
 
         return attributes
 
@@ -297,7 +319,10 @@ class SolarmaxSensor(CoordinatorEntity[SolarmaxCoordinator], SensorEntity):
             return True
 
         # Check if the coordinator indicates this is an expected offline state
-        if hasattr(self.coordinator, 'is_expected_offline') and self.coordinator.is_expected_offline:
+        if (
+            hasattr(self.coordinator, "is_expected_offline")
+            and self.coordinator.is_expected_offline
+        ):
             # For SYS (status) sensor, always remain available to show offline status
             if self.sensor_key == "SYS":
                 return True
@@ -317,7 +342,7 @@ class SolarmaxSensor(CoordinatorEntity[SolarmaxCoordinator], SensorEntity):
             return False
 
         # During day time, check consecutive failures
-        if hasattr(self.coordinator, 'consecutive_failures'):
+        if hasattr(self.coordinator, "consecutive_failures"):
             # If we have many consecutive failures during day, sensors become unavailable
             # This helps indicate there's a real problem vs temporary network hiccup
             if self.coordinator.consecutive_failures > 5:
