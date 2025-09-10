@@ -27,12 +27,18 @@ _LOGGER = logging.getLogger(__name__)
 
 STEP_USER_DATA_SCHEMA = vol.Schema(
     {
-        vol.Required(CONF_HOST): str,
-        vol.Required(CONF_PORT, default=DEFAULT_PORT): vol.Coerce(int),
-        vol.Optional(CONF_UPDATE_INTERVAL, default=DEFAULT_UPDATE_INTERVAL): vol.Coerce(
-            int
-        ),
-        vol.Optional(CONF_DEVICE_NAME, default=DEFAULT_DEVICE_NAME): str,
+        vol.Required(CONF_HOST, description={"suggested_value": "192.168.1.100"}): str,
+        vol.Required(CONF_PORT, default=DEFAULT_PORT, description={"suggested_value": DEFAULT_PORT}): vol.Coerce(int),
+        vol.Optional(
+            CONF_UPDATE_INTERVAL, 
+            default=DEFAULT_UPDATE_INTERVAL,
+            description={"suggested_value": DEFAULT_UPDATE_INTERVAL}
+        ): vol.Coerce(int),
+        vol.Optional(
+            CONF_DEVICE_NAME, 
+            default=DEFAULT_DEVICE_NAME,
+            description={"suggested_value": DEFAULT_DEVICE_NAME}
+        ): str,
     }
 )
 
@@ -67,7 +73,12 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
     ) -> FlowResult:
         """Handle the initial step."""
         errors: dict[str, str] = {}
+        
         if user_input is not None:
+            # Check for duplicate entries
+            await self.async_set_unique_id(f"{user_input[CONF_HOST]}:{user_input[CONF_PORT]}")
+            self._abort_if_unique_id_configured()
+            
             try:
                 info = await validate_input(self.hass, user_input)
             except CannotConnect:
@@ -81,7 +92,15 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 return self.async_create_entry(title=info["title"], data=user_input)
 
         return self.async_show_form(
-            step_id="user", data_schema=STEP_USER_DATA_SCHEMA, errors=errors
+            step_id="user", 
+            data_schema=STEP_USER_DATA_SCHEMA, 
+            errors=errors,
+            description_placeholders={
+                "host": "IP address of your Solarmax inverter",
+                "port": "Communication port (usually 12345)",
+                "update_interval": "How often to poll for data (seconds)",
+                "device_name": "Friendly name for this inverter"
+            }
         )
 
 

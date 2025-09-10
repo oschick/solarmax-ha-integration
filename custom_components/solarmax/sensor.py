@@ -28,6 +28,9 @@ from .coordinator import SolarmaxCoordinator
 
 _LOGGER = logging.getLogger(__name__)
 
+# Limit parallel updates to prevent overwhelming the inverter
+PARALLEL_UPDATES = 1
+
 
 async def async_setup_entry(
     hass: HomeAssistant,
@@ -35,7 +38,7 @@ async def async_setup_entry(
     async_add_entities: AddEntitiesCallback,
 ) -> None:
     """Set up Solarmax sensor platform."""
-    coordinator: SolarmaxCoordinator = hass.data[DOMAIN][entry.entry_id]
+    coordinator: SolarmaxCoordinator = entry.runtime_data
 
     entities = []
     device_name = entry.data.get(CONF_DEVICE_NAME, "Solarmax Inverter")

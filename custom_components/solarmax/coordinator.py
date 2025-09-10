@@ -39,6 +39,7 @@ class SolarmaxCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             _LOGGER,
             name=DOMAIN,
             update_interval=update_interval,
+            always_update=False,  # Only update when data changes
         )
 
         # Track connection state for better error handling
@@ -75,6 +76,8 @@ class SolarmaxCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 raise UpdateFailed("No data received from inverter")
 
             # Reset failure tracking on successful update
+            if self._consecutive_failures > 0:
+                _LOGGER.info("Connection restored after %d failed attempts", self._consecutive_failures)
             self._consecutive_failures = 0
             self._last_successful_update = datetime.now()
             self._is_expected_offline = False
@@ -109,9 +112,16 @@ class SolarmaxCoordinator(DataUpdateCoordinator[dict[str, Any]]):
 
             else:
                 # Many consecutive failures during day - something is wrong
-                _LOGGER.error(
-                    f"Persistent connection failure (#{self._consecutive_failures}) during day time: {err}"
-                )
+                if self._consecutive_failures == 4:  # Log once when becoming persistently unavailable
+                    _LOGGER.error(
+                        "Inverter persistently unavailable after %d attempts during day time", 
+                        self._consecutive_failures
+                    )
+                else:
+                    _LOGGER.debug(
+                        "Persistent connection failure (#%d) during day time: %s", 
+                        self._consecutive_failures, err
+                    )
                 raise UpdateFailed(f"Persistent connection failure: {err}") from err
 
         except Exception as err:

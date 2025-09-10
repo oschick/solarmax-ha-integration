@@ -8,12 +8,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **Quality**: Duplicate entry prevention using unique IDs (host:port combination)
+- **Quality**: Enhanced config flow with data descriptions and field context
+- **Quality**: Connection validation during integration setup with ConfigEntryNotReady handling
+- Comprehensive integration quality documentation and compliance checklist
+
+### Enhanced
+- **Quality**: Migrated from hass.data to ConfigEntry.runtime_data for proper resource management
+- **Quality**: Added PARALLEL_UPDATES = 1 to prevent overwhelming single inverter device
+- **Quality**: Improved logging strategy - log once when unavailable/restored, debug for subsequent failures
+- **Quality**: Enhanced entity availability logic with smarter failure detection
+- Proper config entry unloading with resource cleanup
+- Smart coordinator updates with `always_update=False` for efficiency
+
+## [1.0.3] - 2025-09-10
+
+### Added
 - **New Feature**: Integration reconfiguration support - Change host, port, update interval, and device name from Home Assistant UI
 - Options flow for modifying integration settings without removal/re-adding
 - Configuration validation with connection testing before applying changes
 - Automatic integration reload after successful configuration changes
 - Enhanced translations for reconfiguration UI (English and German)
-- Comprehensive reconfiguration documentation and user guide
 
 ### Fixed
 - **Major**: Fixed connection timeout issues when inverter comes back online after being offline (night mode)
@@ -32,7 +47,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Added connection health tracking with timestamps for last successful updates
 - Enhanced config flow with options flow support and update listeners
 
-### Added
+### Technical Improvements
 - New exception classes (`SolarmaxConnectionError`, `SolarmaxTimeoutError`) for better error handling
 - Connection state properties (`consecutive_failures`, `last_successful_update`, `is_expected_offline`)
 - Enhanced status translations for offline states and connection failures
