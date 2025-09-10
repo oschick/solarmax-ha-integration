@@ -43,9 +43,15 @@
     }
   },
   "exceptions": {
-    "connection_error": "Verbindung zum Wechselrichter bei {host}:{port} fehlgeschlagen",
-    "timeout_error": "Verbindungszeit nach {timeout} Sekunden überschritten",
-    "protocol_error": "Kommunikationsprotokoll-Fehler: {details}"
+    "connection_error": {
+      "message": "Verbindung zum Wechselrichter bei {host}:{port} fehlgeschlagen"
+    },
+    "timeout_error": {
+      "message": "Verbindungszeit nach {timeout} Sekunden überschritten"
+    },
+    "protocol_error": {
+      "message": "Kommunikationsprotokoll-Fehler: {details}"
+    }
   },
   "issues": {
     "connection_issues": {

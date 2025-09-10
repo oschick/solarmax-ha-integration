@@ -43,9 +43,15 @@
     }
   },
   "exceptions": {
-    "connection_error": "Failed to connect to inverter at {host}:{port}",
-    "timeout_error": "Connection timeout after {timeout} seconds",
-    "protocol_error": "Communication protocol error: {details}"
+    "connection_error": {
+      "message": "Failed to connect to inverter at {host}:{port}"
+    },
+    "timeout_error": {
+      "message": "Connection timeout after {timeout} seconds"
+    },
+    "protocol_error": {
+      "message": "Communication protocol error: {details}"
+    }
   },
   "issues": {
     "connection_issues": {
