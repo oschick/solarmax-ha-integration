@@ -6,7 +6,7 @@ import logging
 import socket
 import time
 from datetime import datetime
-from typing import Any, Dict, Union
+from typing import Any
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -197,7 +197,7 @@ class SolarmaxAPI:
         """Return the timestamp of the last successful connection."""
         return self._last_successful_connection
 
-    def build_request(self, field_map: Dict[str, str]) -> str:
+    def build_request(self, field_map: dict[str, str]) -> str:
         """Build the request message for the inverter."""
         fields = ";".join(field_map.keys())
         req = REQUEST_TEMPLATE.replace("&&", fields)
@@ -213,7 +213,7 @@ class SolarmaxAPI:
         _LOGGER.debug(f"Checksum calculation for '{data}': {checksum_value}")
         return format(checksum_value, "04X")
 
-    def map_data_value(self, field: str, value: int) -> Union[str, float, int]:
+    def map_data_value(self, field: str, value: int) -> str | float | int:
         """Convert raw inverter values to useful units."""
         if field == "SYS":
             # Return raw value - translation will be handled at sensor level
@@ -246,7 +246,7 @@ class SolarmaxAPI:
             _LOGGER.debug(f"Connection test failed: {e}")
             return False
 
-    def get_data(self) -> Dict[str, Any]:
+    def get_data(self) -> dict[str, Any]:
         """Get data from the inverter with retry logic."""
         retries = 3
         last_exception = None
@@ -305,7 +305,7 @@ class SolarmaxAPI:
         else:
             raise SolarmaxConnectionError("Failed to get data from inverter")
 
-    def convert_to_json(self, field_map: Dict[str, str], data: str) -> Dict[str, Any]:
+    def convert_to_json(self, field_map: dict[str, str], data: str) -> dict[str, Any]:
         """Convert inverter response to JSON format."""
         try:
             data_split = data.split(":")[1].split("|")[0].split(";")

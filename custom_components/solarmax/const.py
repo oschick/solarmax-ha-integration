@@ -1,6 +1,6 @@
 """Constants for the Solarmax Inverter integration."""
 
-from homeassistant.components.sensor import SensorEntityCategory
+from homeassistant.helpers.entity import EntityCategory
 
 DOMAIN = "solarmax"
 
@@ -44,7 +44,7 @@ SENSOR_TYPES = {
         "device_class": "power",
         "state_class": "measurement",
         "icon": "mdi:solar-power",
-        "entity_category": SensorEntityCategory.DIAGNOSTIC,  # Detailed diagnostic
+        "entity_category": EntityCategory.DIAGNOSTIC,  # Detailed diagnostic
         "enabled_by_default": False,  # Disable by default - advanced users only
     },
     "PD02": {
@@ -54,7 +54,7 @@ SENSOR_TYPES = {
         "device_class": "power",
         "state_class": "measurement",
         "icon": "mdi:solar-power",
-        "entity_category": SensorEntityCategory.DIAGNOSTIC,  # Detailed diagnostic
+        "entity_category": EntityCategory.DIAGNOSTIC,  # Detailed diagnostic
         "enabled_by_default": False,  # Disable by default - advanced users only
     },
     "UL1": {
@@ -64,7 +64,7 @@ SENSOR_TYPES = {
         "device_class": "voltage",
         "state_class": "measurement",
         "icon": "mdi:sine-wave",
-        "entity_category": SensorEntityCategory.DIAGNOSTIC,  # Detailed diagnostic
+        "entity_category": EntityCategory.DIAGNOSTIC,  # Detailed diagnostic
         "enabled_by_default": False,  # Disable by default - most users don't need this
     },
     "UL2": {
@@ -74,7 +74,7 @@ SENSOR_TYPES = {
         "device_class": "voltage",
         "state_class": "measurement",
         "icon": "mdi:sine-wave",
-        "entity_category": SensorEntityCategory.DIAGNOSTIC,  # Detailed diagnostic
+        "entity_category": EntityCategory.DIAGNOSTIC,  # Detailed diagnostic
         "enabled_by_default": False,  # Disable by default - most users don't need this
     },
     "UL3": {
@@ -84,7 +84,7 @@ SENSOR_TYPES = {
         "device_class": "voltage",
         "state_class": "measurement",
         "icon": "mdi:sine-wave",
-        "entity_category": SensorEntityCategory.DIAGNOSTIC,  # Detailed diagnostic
+        "entity_category": EntityCategory.DIAGNOSTIC,  # Detailed diagnostic
         "enabled_by_default": False,  # Disable by default - most users don't need this
     },
     "UD01": {
@@ -94,7 +94,7 @@ SENSOR_TYPES = {
         "device_class": "voltage",
         "state_class": "measurement",
         "icon": "mdi:sine-wave",
-        "entity_category": SensorEntityCategory.DIAGNOSTIC,  # Detailed diagnostic
+        "entity_category": EntityCategory.DIAGNOSTIC,  # Detailed diagnostic
         "enabled_by_default": False,  # Disable by default - advanced users only
     },
     "UD02": {
@@ -104,7 +104,7 @@ SENSOR_TYPES = {
         "device_class": "voltage",
         "state_class": "measurement",
         "icon": "mdi:sine-wave",
-        "entity_category": SensorEntityCategory.DIAGNOSTIC,  # Detailed diagnostic
+        "entity_category": EntityCategory.DIAGNOSTIC,  # Detailed diagnostic
         "enabled_by_default": False,  # Disable by default - advanced users only
     },
     "IL1": {
@@ -114,7 +114,7 @@ SENSOR_TYPES = {
         "device_class": "current",
         "state_class": "measurement",
         "icon": "mdi:current-ac",
-        "entity_category": SensorEntityCategory.DIAGNOSTIC,  # Detailed diagnostic
+        "entity_category": EntityCategory.DIAGNOSTIC,  # Detailed diagnostic
         "enabled_by_default": False,  # Disable by default - most users don't need this
     },
     "IL2": {
@@ -124,7 +124,7 @@ SENSOR_TYPES = {
         "device_class": "current",
         "state_class": "measurement",
         "icon": "mdi:current-ac",
-        "entity_category": SensorEntityCategory.DIAGNOSTIC,  # Detailed diagnostic
+        "entity_category": EntityCategory.DIAGNOSTIC,  # Detailed diagnostic
         "enabled_by_default": False,  # Disable by default - most users don't need this
     },
     "IL3": {
@@ -134,7 +134,7 @@ SENSOR_TYPES = {
         "device_class": "current",
         "state_class": "measurement",
         "icon": "mdi:current-ac",
-        "entity_category": SensorEntityCategory.DIAGNOSTIC,  # Detailed diagnostic
+        "entity_category": EntityCategory.DIAGNOSTIC,  # Detailed diagnostic
         "enabled_by_default": False,  # Disable by default - most users don't need this
     },
     "IDC": {
@@ -144,7 +144,7 @@ SENSOR_TYPES = {
         "device_class": "current",
         "state_class": "measurement",
         "icon": "mdi:current-dc",
-        "entity_category": SensorEntityCategory.DIAGNOSTIC,  # Detailed diagnostic
+        "entity_category": EntityCategory.DIAGNOSTIC,  # Detailed diagnostic
         "enabled_by_default": False,  # Disable by default - advanced users only
     },
     "ID01": {
@@ -154,7 +154,7 @@ SENSOR_TYPES = {
         "device_class": "current",
         "state_class": "measurement",
         "icon": "mdi:current-dc",
-        "entity_category": SensorEntityCategory.DIAGNOSTIC,  # Detailed diagnostic
+        "entity_category": EntityCategory.DIAGNOSTIC,  # Detailed diagnostic
         "enabled_by_default": False,  # Disable by default - advanced users only
     },
     "ID02": {
@@ -164,7 +164,7 @@ SENSOR_TYPES = {
         "device_class": "current",
         "state_class": "measurement",
         "icon": "mdi:current-dc",
-        "entity_category": SensorEntityCategory.DIAGNOSTIC,  # Detailed diagnostic
+        "entity_category": EntityCategory.DIAGNOSTIC,  # Detailed diagnostic
         "enabled_by_default": False,  # Disable by default - advanced users only
     },
     "KDY": {
@@ -214,7 +214,7 @@ SENSOR_TYPES = {
         "device_class": "temperature",
         "state_class": "measurement",
         "icon": "mdi:thermometer",
-        "entity_category": SensorEntityCategory.DIAGNOSTIC,  # Diagnostic
+        "entity_category": EntityCategory.DIAGNOSTIC,  # Diagnostic
         "enabled_by_default": False,  # Disable by default - not critical for most users
     },
     "KHR": {
@@ -223,7 +223,7 @@ SENSOR_TYPES = {
         "unit": "h",
         "state_class": "total_increasing",
         "icon": "mdi:clock-outline",
-        "entity_category": SensorEntityCategory.DIAGNOSTIC,  # Diagnostic
+        "entity_category": EntityCategory.DIAGNOSTIC,  # Diagnostic
         "enabled_by_default": False,  # Disable by default - diagnostic info
     },
     "CAC": {
@@ -231,21 +231,21 @@ SENSOR_TYPES = {
         "translation_key": "cac",
         "state_class": "total_increasing",
         "icon": "mdi:restart",
-        "entity_category": SensorEntityCategory.DIAGNOSTIC,  # Diagnostic
+        "entity_category": EntityCategory.DIAGNOSTIC,  # Diagnostic
         "enabled_by_default": False,  # Disable by default - diagnostic info
     },
     "SAL": {
         "name": "Alarm Codes",
         "translation_key": "sal",
         "icon": "mdi:alert-circle",
-        "entity_category": SensorEntityCategory.DIAGNOSTIC,  # Important diagnostic
+        "entity_category": EntityCategory.DIAGNOSTIC,  # Important diagnostic
         "enabled_by_default": True,  # Keep enabled - important for monitoring
     },
     "SYS": {
         "name": "Status Code",
         "translation_key": "sys",
         "icon": "mdi:information",
-        "entity_category": SensorEntityCategory.DIAGNOSTIC,  # Important diagnostic
+        "entity_category": EntityCategory.DIAGNOSTIC,  # Important diagnostic
         "enabled_by_default": True,  # Keep enabled - important for monitoring
     },
 }

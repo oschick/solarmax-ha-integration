@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.0.6] - 2025-09-11
+
+### Fixed
+- **Compatibility**: Fixed `SensorEntityCategory` import error for newer Home Assistant versions
+- Updated entity category import to use `EntityCategory` from `homeassistant.helpers.entity`
+- **Modernization**: Updated deprecated type hints (`Dict`, `Union` → `dict`, `|`)
+
 ## [1.0.5] - 2025-09-10
 
 ### Added - Gold Tier Compliance 🏆

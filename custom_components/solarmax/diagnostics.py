@@ -46,7 +46,7 @@ async def async_get_config_entry_diagnostics(
         "sensor_data": {},
         "system_info": {
             "ha_version": hass.config.as_dict().get("version"),
-            "integration_version": "1.0.5",
+            "integration_version": "1.0.6",
         },
     }
 
