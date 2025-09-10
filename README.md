@@ -59,6 +59,22 @@ The integration can be configured through the Home Assistant UI:
 | Update Interval | Data refresh interval (seconds) | 30 | No |
 | Device Name | Custom name for the inverter | Solarmax Inverter | No |
 
+### Reconfiguration Support
+
+The integration supports reconfiguration without needing to remove and re-add it:
+
+1. Go to **Settings** → **Devices & Services**
+2. Find your **Solarmax Inverter** integration
+3. Click **Configure** (gear icon)
+4. Modify any settings (host, port, update interval, device name)
+5. The integration will validate the new settings and reload automatically
+
+This is particularly useful when:
+- Your inverter's IP address changes
+- You want to adjust the update frequency
+- You need to rename the device
+
+
 ## Supported Inverters
 
 **Testing Status:** This integration has been specifically tested and verified on a **Solarmax 7TP2 Inverter**. While it should be compatible with most Solarmax inverters built before 2015, compatibility with other models has not been verified.

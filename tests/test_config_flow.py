@@ -1,4 +1,5 @@
 """Test the Solarmax config flow."""
+
 import pytest
 from homeassistant import config_entries
 from homeassistant.core import HomeAssistant

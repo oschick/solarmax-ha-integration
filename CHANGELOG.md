@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **New Feature**: Integration reconfiguration support - Change host, port, update interval, and device name from Home Assistant UI
+- Options flow for modifying integration settings without removal/re-adding
+- Configuration validation with connection testing before applying changes
+- Automatic integration reload after successful configuration changes
+- Enhanced translations for reconfiguration UI (English and German)
+- Comprehensive reconfiguration documentation and user guide
+
 ### Fixed
 - **Major**: Fixed connection timeout issues when inverter comes back online after being offline (night mode)
 - **Major**: Improved socket connection handling with proper cleanup and retry mechanisms
@@ -22,6 +30,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Better status messages showing connection failure counts and offline reasons
 - Extended diagnostic attributes for troubleshooting connection issues
 - Added connection health tracking with timestamps for last successful updates
+- Enhanced config flow with options flow support and update listeners
 
 ### Added
 - New exception classes (`SolarmaxConnectionError`, `SolarmaxTimeoutError`) for better error handling
