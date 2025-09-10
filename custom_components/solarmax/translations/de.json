@@ -42,6 +42,21 @@
       "unknown": "Unerwarteter Fehler aufgetreten"
     }
   },
+  "exceptions": {
+    "connection_error": "Verbindung zum Wechselrichter bei {host}:{port} fehlgeschlagen",
+    "timeout_error": "Verbindungszeit nach {timeout} Sekunden überschritten",
+    "protocol_error": "Kommunikationsprotokoll-Fehler: {details}"
+  },
+  "issues": {
+    "connection_issues": {
+      "title": "Wechselrichter Verbindungsprobleme",
+      "description": "Der Wechselrichter bei {host}:{port} hatte {failures} aufeinanderfolgende Verbindungsfehler. Überprüfen Sie die Netzwerkverbindung und den Wechselrichterstatus."
+    },
+    "configuration_issue": {
+      "title": "Konfigurationsproblem",
+      "description": "Es gibt ein Konfigurationsproblem mit Ihrem Solarmax Wechselrichter: {issue}"
+    }
+  },
   "entity": {
     "sensor": {
       "pac": {

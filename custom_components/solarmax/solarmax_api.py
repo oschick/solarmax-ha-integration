@@ -45,13 +45,33 @@ REQUEST_TEMPLATE = "{FB;01;!!|64:&&|$$$$}"
 class SolarmaxConnectionError(Exception):
     """Exception raised when connection to inverter fails."""
 
-    pass
+    def __init__(
+        self, message: str, translation_key: str = "connection_error", **kwargs
+    ):
+        """Initialize the exception with translation support."""
+        super().__init__(message)
+        self.translation_key = translation_key
+        self.translation_placeholders = kwargs
 
 
-class SolarmaxTimeoutError(SolarmaxConnectionError):
-    """Exception raised when connection times out."""
+class SolarmaxTimeoutError(Exception):
+    """Exception raised when a timeout occurs."""
 
-    pass
+    def __init__(self, message: str, translation_key: str = "timeout_error", **kwargs):
+        """Initialize the exception with translation support."""
+        super().__init__(message)
+        self.translation_key = translation_key
+        self.translation_placeholders = kwargs
+
+
+class SolarmaxProtocolError(Exception):
+    """Exception raised when protocol communication fails."""
+
+    def __init__(self, message: str, translation_key: str = "protocol_error", **kwargs):
+        """Initialize the exception with translation support."""
+        super().__init__(message)
+        self.translation_key = translation_key
+        self.translation_placeholders = kwargs
 
 
 class SolarmaxAPI:

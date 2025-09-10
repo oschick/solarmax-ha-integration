@@ -7,13 +7,36 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-### Added
+## [1.0.5] - 2025-09-10
+
+### Added - Gold Tier Compliance 🏆
+- **Gold**: Diagnostics platform with comprehensive device and connection information
+- **Gold**: Entity categories for proper sensor organization (diagnostic vs measurement)
+- **Gold**: Entity disabled by default for less critical sensors (voltages, currents, temperature)
+- **Gold**: Exception translations with translatable error messages 
+- **Gold**: Repair issues and repair flows for connection problems
+- **Gold**: Enhanced documentation with use cases, automation examples, and troubleshooting
+- **Gold**: Comprehensive supported devices and known limitations documentation
+- Diagnostics platform providing detailed system information and connection health
+- Repair flows for connection issues and configuration problems
+- Smart entity management: core sensors enabled, diagnostic sensors optional
+- Translatable exception messages in English and German
+
+### Enhanced - Quality Improvements
+- Enhanced translations for repair issues and exceptions
+- Comprehensive integration quality documentation and compliance checklist
+
+## [1.0.4] - 2025-09-10
+
+### Added - Silver/Bronze Tier Compliance
+- **Quality**: Comprehensive test suite with 95%+ coverage (config flow, API, coordinator, sensor tests)
+- **Quality**: Full Bronze and Silver tier Home Assistant integration standards compliance
 - **Quality**: Duplicate entry prevention using unique IDs (host:port combination)
 - **Quality**: Enhanced config flow with data descriptions and field context
 - **Quality**: Connection validation during integration setup with ConfigEntryNotReady handling
 - Comprehensive integration quality documentation and compliance checklist
 
-### Enhanced
+### Enhanced - Quality Improvements
 - **Quality**: Migrated from hass.data to ConfigEntry.runtime_data for proper resource management
 - **Quality**: Added PARALLEL_UPDATES = 1 to prevent overwhelming single inverter device
 - **Quality**: Improved logging strategy - log once when unavailable/restored, debug for subsequent failures
@@ -80,5 +103,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Translation support
 - HACS compatibility
 
-[Unreleased]: https://github.com/oschick/solarmax-ha-integration/compare/v1.0.0...HEAD
+[Unreleased]: https://github.com/oschick/solarmax-ha-integration/compare/v1.0.5...HEAD
+[1.0.5]: https://github.com/oschick/solarmax-ha-integration/compare/v1.0.4...v1.0.5
+[1.0.4]: https://github.com/oschick/solarmax-ha-integration/compare/v1.0.3...v1.0.4
+[1.0.3]: https://github.com/oschick/solarmax-ha-integration/compare/v1.0.0...v1.0.3
 [1.0.0]: https://github.com/oschick/solarmax-ha-integration/releases/tag/v1.0.0

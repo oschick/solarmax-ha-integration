@@ -29,7 +29,7 @@
         "description": "Update your Solarmax inverter configuration. Current settings: Host {current_host}:{current_port}",
         "data": {
           "host": "Host",
-          "port": "Port", 
+          "port": "Port",
           "update_interval": "Update interval (seconds)",
           "device_name": "Device name"
         }
@@ -40,6 +40,21 @@
       "invalid_host": "Invalid host address",
       "timeout": "Connection timeout",
       "unknown": "Unexpected error occurred"
+    }
+  },
+  "exceptions": {
+    "connection_error": "Failed to connect to inverter at {host}:{port}",
+    "timeout_error": "Connection timeout after {timeout} seconds",
+    "protocol_error": "Communication protocol error: {details}"
+  },
+  "issues": {
+    "connection_issues": {
+      "title": "Inverter Connection Issues",
+      "description": "The inverter at {host}:{port} has had {failures} consecutive connection failures. Check network connectivity and inverter status."
+    },
+    "configuration_issue": {
+      "title": "Configuration Issue",
+      "description": "There is a configuration issue with your Solarmax inverter: {issue}"
     }
   },
   "entity": {

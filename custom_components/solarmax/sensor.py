@@ -111,11 +111,20 @@ class SolarmaxSensor(CoordinatorEntity[SolarmaxCoordinator], SensorEntity):
         # Enable HA's translation system for entity names
         self._attr_has_entity_name = True
 
-        # Remove debug logging now that we've verified the logic works
-        # _LOGGER.warning(f"DEBUG Solarmax Sensor Init: sensor_key={sensor_key}, device_name='{device_name}', device_name_normalized='{device_name_normalized}', unique_id='{self._attr_unique_id}', suggested_object_id='{self._attr_suggested_object_id}'")
+        # Set entity category and enabled by default from sensor config
+        if "entity_category" in sensor_config:
+            self._attr_entity_category = sensor_config["entity_category"]
 
-        # Ensure entity is enabled by default
-        self._attr_entity_registry_enabled_default = True
+        if "enabled_by_default" in sensor_config:
+            self._attr_entity_registry_enabled_default = sensor_config[
+                "enabled_by_default"
+            ]
+        else:
+            # Fallback to True if not specified
+            self._attr_entity_registry_enabled_default = True
+
+        # Remove debug logging now that we've verified the logic works
+        # _LOGGER.warning(f"DEBUG Solarmax Sensor Init: sensor_key={sensor_key}, device_name='{device_name}', device_name_normalized='{device_name_normalized}', unique_id='{self._attr_unique_id}', suggested_object_id='{self._attr_suggested_object_id}')")
 
         # Force the exact entity ID we want using generate_entity_id
         desired_object_id = f"{device_name_normalized}_{sensor_type}"
