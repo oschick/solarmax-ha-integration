@@ -12,7 +12,7 @@ _LOGGER = logging.getLogger(__name__)
 
 # Field mapping for inverter parameters
 FIELD_MAP_INVERTER = {
-    "KDY": "Energy_Day (Wh)",
+    "KDY": "Energy_Day (kWh)",
     "KMT": "Energy_Month (kWh)",
     "KYR": "Energy_Year (kWh)",
     "KT0": "Energy_Total (kWh)",
@@ -223,7 +223,7 @@ class SolarmaxAPI:
             return value
         elif field in ["PAC", "PD01", "PD02", "PDC"]:
             return value / 2
-        elif field in ["UL1", "UL2", "UL3", "UDC", "UD01", "UD02"]:
+        elif field in ["UL1", "UL2", "UL3", "UDC", "UD01", "UD02" , "KDY"]:
             return value / 10.0
         elif field in ["IDC", "ID01", "ID02", "IL1", "IL2", "IL3"]:
             return value / 100.0
