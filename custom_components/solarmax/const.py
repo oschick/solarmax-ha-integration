@@ -170,7 +170,7 @@ SENSOR_TYPES = {
     "KDY": {
         "name": "Energy Day",
         "translation_key": "kdy",
-        "unit": "Wh",
+        "unit": "kWh",
         "device_class": "energy",
         "state_class": "total_increasing",
         "icon": "mdi:solar-power",
