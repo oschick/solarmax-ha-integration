@@ -14,7 +14,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Updated entity category import to use `EntityCategory` from `homeassistant.helpers.entity`
 - **Modernization**: Updated deprecated type hints (`Dict`, `Union` → `dict`, `|`)
 
-## [1.0.5] - 2025-09-10
+## [1.0.5] - 2025-09-10 
 
 ### Added - Gold Tier Compliance 🏆
 - **Gold**: Diagnostics platform with comprehensive device and connection information
