@@ -77,7 +77,9 @@ class SolarmaxProtocolError(Exception):
 class SolarmaxAPI:
     """API for communicating with Solarmax inverters."""
 
-    def __init__(self, host: str, port: int = 12345, address: int = 1, timeout: int = 10):
+    def __init__(
+        self, host: str, port: int = 12345, address: int = 1, timeout: int = 10
+    ):
         """Initialize the API."""
         self.host = host
         self.port = port
@@ -225,7 +227,7 @@ class SolarmaxAPI:
             return value
         elif field in ["PAC", "PD01", "PD02", "PDC"]:
             return value / 2
-        elif field in ["UL1", "UL2", "UL3", "UDC", "UD01", "UD02" , "KDY"]:
+        elif field in ["UL1", "UL2", "UL3", "UDC", "UD01", "UD02", "KDY"]:
             return value / 10.0
         elif field in ["IDC", "ID01", "ID02", "IL1", "IL2", "IL3"]:
             return value / 100.0
