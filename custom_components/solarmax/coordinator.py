@@ -12,9 +12,11 @@ from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, Upda
 from homeassistant.util import dt as dt_util
 
 from .const import (
+    CONF_ADDRESS,
     CONF_HOST,
     CONF_PORT,
     CONF_UPDATE_INTERVAL,
+    DEFAULT_ADDRESS,
     DOMAIN,
 )
 from .solarmax_api import SolarmaxAPI, SolarmaxConnectionError, SolarmaxTimeoutError
@@ -30,6 +32,7 @@ class SolarmaxCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         self.api = SolarmaxAPI(
             host=entry.data[CONF_HOST],
             port=entry.data[CONF_PORT],
+            address=entry.data.get(CONF_ADDRESS, DEFAULT_ADDRESS),
         )
 
         update_interval = timedelta(seconds=entry.data.get(CONF_UPDATE_INTERVAL, 30))

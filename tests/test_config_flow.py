@@ -12,8 +12,10 @@ from custom_components.solarmax.const import (
     DOMAIN,
     CONF_HOST,
     CONF_PORT,
+    CONF_ADDRESS,
     CONF_DEVICE_NAME,
     CONF_UPDATE_INTERVAL,
+    DEFAULT_ADDRESS,
 )
 
 
@@ -40,6 +42,7 @@ async def test_form_successful_connection(mock_api, hass: HomeAssistant) -> None
         {
             CONF_HOST: "192.168.1.100",
             CONF_PORT: 12345,
+            CONF_ADDRESS: 1,
             CONF_DEVICE_NAME: "Test Inverter",
             CONF_UPDATE_INTERVAL: 30,
         },
@@ -50,6 +53,7 @@ async def test_form_successful_connection(mock_api, hass: HomeAssistant) -> None
     assert result2["data"] == {
         CONF_HOST: "192.168.1.100",
         CONF_PORT: 12345,
+        CONF_ADDRESS: 1,
         CONF_DEVICE_NAME: "Test Inverter",
         CONF_UPDATE_INTERVAL: 30,
     }
@@ -114,6 +118,7 @@ async def test_duplicate_entry_prevention(mock_api, hass: HomeAssistant) -> None
         {
             CONF_HOST: "192.168.1.100",
             CONF_PORT: 12345,
+            CONF_ADDRESS: 1,
             CONF_DEVICE_NAME: "Test Inverter",
             CONF_UPDATE_INTERVAL: 30,
         },
@@ -130,6 +135,7 @@ async def test_duplicate_entry_prevention(mock_api, hass: HomeAssistant) -> None
         {
             CONF_HOST: "192.168.1.100",
             CONF_PORT: 12345,
+            CONF_ADDRESS: 1,
             CONF_DEVICE_NAME: "Test Inverter 2",
             CONF_UPDATE_INTERVAL: 60,
         },
@@ -153,6 +159,7 @@ async def test_options_flow(mock_api, hass: HomeAssistant) -> None:
         data={
             CONF_HOST: "192.168.1.100",
             CONF_PORT: 12345,
+            CONF_ADDRESS: 1,
             CONF_DEVICE_NAME: "Test Inverter",
             CONF_UPDATE_INTERVAL: 30,
         },
@@ -170,6 +177,7 @@ async def test_options_flow(mock_api, hass: HomeAssistant) -> None:
         user_input={
             CONF_HOST: "192.168.1.101",
             CONF_PORT: 12346,
+            CONF_ADDRESS: 2,
             CONF_DEVICE_NAME: "Updated Inverter",
             CONF_UPDATE_INTERVAL: 60,
         },
@@ -192,6 +200,7 @@ async def test_options_flow_connection_error(mock_api, hass: HomeAssistant) -> N
         data={
             CONF_HOST: "192.168.1.100",
             CONF_PORT: 12345,
+            CONF_ADDRESS: 1,
             CONF_DEVICE_NAME: "Test Inverter",
             CONF_UPDATE_INTERVAL: 30,
         },
@@ -209,6 +218,7 @@ async def test_options_flow_connection_error(mock_api, hass: HomeAssistant) -> N
         user_input={
             CONF_HOST: "192.168.1.999",  # Invalid IP
             CONF_PORT: 12345,
+            CONF_ADDRESS: 1,
             CONF_DEVICE_NAME: "Test Inverter",
             CONF_UPDATE_INTERVAL: 30,
         },

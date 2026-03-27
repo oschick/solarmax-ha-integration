@@ -12,10 +12,12 @@ from homeassistant.data_entry_flow import FlowResult
 from homeassistant.exceptions import HomeAssistantError
 
 from .const import (
+    CONF_ADDRESS,
     CONF_DEVICE_NAME,
     CONF_HOST,
     CONF_PORT,
     CONF_UPDATE_INTERVAL,
+    DEFAULT_ADDRESS,
     DEFAULT_DEVICE_NAME,
     DEFAULT_PORT,
     DEFAULT_UPDATE_INTERVAL,
@@ -33,6 +35,11 @@ STEP_USER_DATA_SCHEMA = vol.Schema(
             default=DEFAULT_PORT,
             description={"suggested_value": DEFAULT_PORT},
         ): vol.Coerce(int),
+        vol.Optional(
+            CONF_ADDRESS,
+            default=DEFAULT_ADDRESS,
+            description={"suggested_value": DEFAULT_ADDRESS},
+        ): vol.All(vol.Coerce(int), vol.Range(min=1, max=249)),
         vol.Optional(
             CONF_UPDATE_INTERVAL,
             default=DEFAULT_UPDATE_INTERVAL,
@@ -52,7 +59,7 @@ async def validate_input(hass: HomeAssistant, data: dict[str, Any]) -> dict[str,
 
     Data has the keys from STEP_USER_DATA_SCHEMA with values provided by the user.
     """
-    api = SolarmaxAPI(data[CONF_HOST], data[CONF_PORT])
+    api = SolarmaxAPI(data[CONF_HOST], data[CONF_PORT], data.get(CONF_ADDRESS, DEFAULT_ADDRESS))
 
     # Test the connection
     if not await hass.async_add_executor_job(api.test_connection):
@@ -155,6 +162,10 @@ class OptionsFlow(config_entries.OptionsFlow):
                 vol.Required(
                     CONF_PORT, default=current_data.get(CONF_PORT, DEFAULT_PORT)
                 ): vol.Coerce(int),
+                vol.Optional(
+                    CONF_ADDRESS,
+                    default=current_data.get(CONF_ADDRESS, DEFAULT_ADDRESS),
+                ): vol.All(vol.Coerce(int), vol.Range(min=1, max=249)),
                 vol.Optional(
                     CONF_UPDATE_INTERVAL,
                     default=current_data.get(

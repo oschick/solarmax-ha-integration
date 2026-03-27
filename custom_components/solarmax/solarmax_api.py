@@ -38,8 +38,8 @@ FIELD_MAP_INVERTER = {
     "SYS": "status_Code",
 }
 
-# Base request template
-REQUEST_TEMPLATE = "{FB;01;!!|64:&&|$$$$}"
+# Base request template (## is a placeholder for the inverter address in hex)
+REQUEST_TEMPLATE = "{FB;##;!!|64:&&|$$$$}"
 
 
 class SolarmaxConnectionError(Exception):
@@ -77,10 +77,11 @@ class SolarmaxProtocolError(Exception):
 class SolarmaxAPI:
     """API for communicating with Solarmax inverters."""
 
-    def __init__(self, host: str, port: int = 12345, timeout: int = 10):
+    def __init__(self, host: str, port: int = 12345, address: int = 1, timeout: int = 10):
         """Initialize the API."""
         self.host = host
         self.port = port
+        self.address = address
         self.timeout = timeout
         self._last_successful_connection = None
 
@@ -200,7 +201,8 @@ class SolarmaxAPI:
     def build_request(self, field_map: dict[str, str]) -> str:
         """Build the request message for the inverter."""
         fields = ";".join(field_map.keys())
-        req = REQUEST_TEMPLATE.replace("&&", fields)
+        req = REQUEST_TEMPLATE.replace("##", format(self.address, "02X"))
+        req = req.replace("&&", fields)
         # Replace !! with length of string in 2-digit hex
         req = req.replace("!!", format(len(req), "02X"))
         # Replace $$$$ with checksum
