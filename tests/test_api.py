@@ -19,11 +19,22 @@ def api():
 
 
 def test_build_request(api):
-    """Test request building."""
+    """Test request building with default address."""
     field_map = {"PAC": "AC_Power (W)"}
     request = api.build_request(field_map)
 
     assert request.startswith("{FB;01;")
+    assert "PAC" in request
+    assert request.endswith("}")
+
+
+def test_build_request_custom_address():
+    """Test request building with a custom inverter address."""
+    api_addr2 = SolarmaxAPI("192.168.1.100", 12345, address=2)
+    field_map = {"PAC": "AC_Power (W)"}
+    request = api_addr2.build_request(field_map)
+
+    assert request.startswith("{FB;02;")
     assert "PAC" in request
     assert request.endswith("}")
 

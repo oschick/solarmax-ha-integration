@@ -7,11 +7,13 @@ DOMAIN = "solarmax"
 # Configuration constants
 CONF_HOST = "host"
 CONF_PORT = "port"
+CONF_ADDRESS = "address"
 CONF_UPDATE_INTERVAL = "update_interval"
 CONF_DEVICE_NAME = "device_name"
 
 # Default values
 DEFAULT_PORT = 12345
+DEFAULT_ADDRESS = 1
 DEFAULT_UPDATE_INTERVAL = 30
 DEFAULT_DEVICE_NAME = "Solarmax Inverter"
 

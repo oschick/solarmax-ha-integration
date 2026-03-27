@@ -7,6 +7,7 @@
         "data": {
           "host": "Host",
           "port": "Port",
+          "address": "Inverter address (1-249)",
           "update_interval": "Update interval (seconds)",
           "device_name": "Device name"
         }
@@ -30,6 +31,7 @@
         "data": {
           "host": "Host",
           "port": "Port", 
+          "address": "Inverter address (1-249)",
           "update_interval": "Update interval (seconds)",
           "device_name": "Device name"
         }

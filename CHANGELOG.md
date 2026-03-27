@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.0.7] - 2026-03-27
+
+### New Feature
+- make inverter internal address configurable (#4) fixes #1
+
+### Fixed
+- Fixed daily energy unit (#3) fixes #2
+
 ## [1.0.6] - 2025-09-11
 
 ### Fixed
@@ -14,7 +22,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Updated entity category import to use `EntityCategory` from `homeassistant.helpers.entity`
 - **Modernization**: Updated deprecated type hints (`Dict`, `Union` → `dict`, `|`)
 
-## [1.0.5] - 2025-09-10
+## [1.0.5] - 2025-09-10 
 
 ### Added - Gold Tier Compliance 🏆
 - **Gold**: Diagnostics platform with comprehensive device and connection information
@@ -110,7 +118,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Translation support
 - HACS compatibility
 
-[Unreleased]: https://github.com/oschick/solarmax-ha-integration/compare/v1.0.5...HEAD
+[Unreleased]: https://github.com/oschick/solarmax-ha-integration/compare/v1.0.7...HEAD
+[1.0.7]: https://github.com/oschick/solarmax-ha-integration/compare/v1.0.6...v1.0.7
+[1.0.6]: https://github.com/oschick/solarmax-ha-integration/compare/v1.0.5...v1.0.6
 [1.0.5]: https://github.com/oschick/solarmax-ha-integration/compare/v1.0.4...v1.0.5
 [1.0.4]: https://github.com/oschick/solarmax-ha-integration/compare/v1.0.3...v1.0.4
 [1.0.3]: https://github.com/oschick/solarmax-ha-integration/compare/v1.0.0...v1.0.3
