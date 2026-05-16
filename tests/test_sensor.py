@@ -18,7 +18,7 @@ def mock_coordinator():
     """Create a mock coordinator."""
     coordinator = Mock(spec=SolarmaxCoordinator)
     coordinator.data = {
-        "SYS": {"value": 20019, "raw_value": 20019},
+        "SYS": {"value": 20004, "raw_value": 20004},
         "PAC": {"value": 1500.0, "raw_value": 3000},
     }
     coordinator.last_update_success = True
@@ -111,10 +111,10 @@ def test_other_sensor_available_during_day_when_coordinator_fails(
     assert sensor.available is True
 
 
-def test_sys_sensor_shows_offline_when_coordinator_fails(
+def test_sys_sensor_shows_connection_failed_when_coordinator_fails(
     mock_coordinator, mock_config_entry
 ):
-    """Test SYS sensor shows offline status when coordinator update fails."""
+    """Test SYS sensor shows connection_failed when coordinator update fails."""
     mock_coordinator.last_update_success = False
 
     sensor = SolarmaxSensor(
@@ -125,7 +125,7 @@ def test_sys_sensor_shows_offline_when_coordinator_fails(
         device_name="Test Inverter",
     )
 
-    assert sensor.native_value == "Offline"
+    assert sensor.native_value == "connection_failed"
 
 
 def test_sys_sensor_offline_attributes(mock_coordinator, mock_config_entry):
@@ -155,10 +155,10 @@ def test_normal_sensor_operation(mock_coordinator, mock_config_entry):
         device_name="Test Inverter",
     )
 
-    # Should show translated status
-    assert sensor.native_value == "Feed-in operation"
+    # Should show enum option key (HA handles translation)
+    assert sensor.native_value == "mpp_operation"
 
     # Should show normal attributes
     attributes = sensor.extra_state_attributes
-    assert attributes["raw_value"] == 20019
-    assert attributes["code"] == 20019
+    assert attributes["raw_value"] == 20004
+    assert attributes["code"] == 20004

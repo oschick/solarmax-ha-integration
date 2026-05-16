@@ -1,0 +1,180 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Onduleur Solarmax",
+        "description": "Configurer votre onduleur Solarmax",
+        "data": {
+          "host": "Hôte",
+          "port": "Port",
+          "address": "Adresse de l'onduleur (1-249)",
+          "update_interval": "Intervalle de mise à jour (secondes)",
+          "device_name": "Nom de l'appareil"
+        }
+      }
+    },
+    "error": {
+      "cannot_connect": "Impossible de se connecter à l'onduleur",
+      "invalid_host": "Adresse hôte invalide",
+      "timeout": "Délai de connexion dépassé",
+      "unknown": "Une erreur inattendue s'est produite"
+    },
+    "abort": {
+      "already_configured": "L'appareil est déjà configuré"
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "Options de l'onduleur Solarmax",
+        "description": "Mettre à jour la configuration de votre onduleur Solarmax. Paramètres actuels : Hôte {current_host}:{current_port}",
+        "data": {
+          "host": "Hôte",
+          "port": "Port",
+          "address": "Adresse de l'onduleur (1-249)",
+          "update_interval": "Intervalle de mise à jour (secondes)",
+          "device_name": "Nom de l'appareil"
+        }
+      }
+    },
+    "error": {
+      "cannot_connect": "Impossible de se connecter à l'onduleur avec les nouveaux paramètres",
+      "invalid_host": "Adresse hôte invalide",
+      "timeout": "Délai de connexion dépassé",
+      "unknown": "Une erreur inattendue s'est produite"
+    }
+  },
+  "exceptions": {
+    "connection_error": {
+      "message": "Impossible de se connecter à l'onduleur à {host}:{port}"
+    },
+    "timeout_error": {
+      "message": "Délai de connexion dépassé après {timeout} secondes"
+    },
+    "protocol_error": {
+      "message": "Erreur de protocole de communication : {details}"
+    }
+  },
+  "issues": {
+    "connection_issues": {
+      "title": "Problèmes de connexion de l'onduleur",
+      "description": "L'onduleur à {host}:{port} a eu {failures} échecs de connexion consécutifs. Vérifiez la connectivité réseau et l'état de l'onduleur."
+    },
+    "configuration_issue": {
+      "title": "Problème de configuration",
+      "description": "Il y a un problème de configuration avec votre onduleur Solarmax : {issue}"
+    }
+  },
+  "entity": {
+    "sensor": {
+      "pac": {
+        "name": "Puissance AC"
+      },
+      "pdc": {
+        "name": "Puissance DC"
+      },
+      "pd01": {
+        "name": "Puissance DC String 1"
+      },
+      "pd02": {
+        "name": "Puissance DC String 2"
+      },
+      "ul1": {
+        "name": "Tension AC Phase 1"
+      },
+      "ul2": {
+        "name": "Tension AC Phase 2"
+      },
+      "ul3": {
+        "name": "Tension AC Phase 3"
+      },
+      "ud01": {
+        "name": "Tension DC String 1"
+      },
+      "ud02": {
+        "name": "Tension DC String 2"
+      },
+      "il1": {
+        "name": "Courant AC Phase 1"
+      },
+      "il2": {
+        "name": "Courant AC Phase 2"
+      },
+      "il3": {
+        "name": "Courant AC Phase 3"
+      },
+      "idc": {
+        "name": "Courant DC"
+      },
+      "id01": {
+        "name": "Courant DC String 1"
+      },
+      "id02": {
+        "name": "Courant DC String 2"
+      },
+      "kdy": {
+        "name": "Énergie du jour"
+      },
+      "kmt": {
+        "name": "Énergie du mois"
+      },
+      "kyr": {
+        "name": "Énergie de l'année"
+      },
+      "kt0": {
+        "name": "Énergie totale"
+      },
+      "tkk": {
+        "name": "Température de l'onduleur"
+      },
+      "khr": {
+        "name": "Heures de fonctionnement"
+      },
+      "cac": {
+        "name": "Démarrages"
+      },
+      "sal": {
+        "name": "État d'alarme",
+        "state": {
+          "no_error": "Aucune erreur",
+          "external_fault_1": "Défaut externe 1",
+          "insulation_fault_dc": "Défaut d'isolation côté DC",
+          "earth_fault_current": "Courant de défaut à la terre trop élevé",
+          "fuse_break_center_earth": "Rupture de fusible terre centrale",
+          "external_alarm_2": "Alarme externe 2",
+          "long_term_temp_limit": "Limitation de température à long terme",
+          "ac_feed_in_error": "Erreur d'injection AC",
+          "external_alarm_4": "Alarme externe 4",
+          "fan_defect": "Ventilateur défectueux",
+          "fuse_break": "Rupture de fusible",
+          "temp_sensor_failure": "Défaillance du capteur de température",
+          "alarm_12": "Alarme 12",
+          "alarm_13": "Alarme 13",
+          "alarm_14": "Alarme 14",
+          "alarm_15": "Alarme 15",
+          "alarm_16": "Alarme 16",
+          "alarm_17": "Alarme 17",
+          "multiple_alarms": "Alarmes multiples",
+          "unknown_alarm": "Alarme inconnue"
+        }
+      },
+      "sys": {
+        "name": "Code d'état",
+        "state": {
+          "no_communication": "Pas de communication",
+          "in_operation": "En fonctionnement",
+          "low_irradiation": "Faible irradiation",
+          "starting_up": "Démarrage",
+          "mpp_operation": "Fonctionnement MPP",
+          "fan_running": "Ventilateur en marche",
+          "max_power_operation": "Fonctionnement à puissance maximale",
+          "temperature_limitation": "Limitation de température",
+          "grid_operation": "Fonctionnement réseau",
+          "offline_night": "Hors ligne (Nuit)",
+          "connection_failed": "Échec de connexion",
+          "unknown": "Inconnu"
+        }
+      }
+    }
+  }
+}
