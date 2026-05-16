@@ -379,6 +379,96 @@ If you encounter issues not covered here:
    - Error logs
    - Diagnostic data (remove sensitive information)
 
+## Translations
+
+The integration is fully localized using Home Assistant's built-in translation system. All UI strings, entity names, sensor states, and error messages are translated.
+
+### Available Languages
+
+| Language | Code | Status |
+|----------|------|--------|
+| English | `en` | ✅ Complete |
+| German | `de` | ✅ Complete |
+| French | `fr` | ✅ Complete |
+
+### What is Translated
+
+- **Config & options flow** — All setup and reconfiguration labels, descriptions, and error messages
+- **Entity names** — All sensor names displayed in the Home Assistant UI
+- **Status codes (SYS)** — Human-readable inverter operating states, e.g. "MPP operation", "Low irradiation"
+- **Alarm codes (SAL)** — Human-readable alarm descriptions, e.g. "Insulation fault DC side"
+- **Error & repair messages** — Connection errors, timeout messages, and repair issue descriptions
+
+### Status & Alarm Code Translations
+
+The **Status Code** and **Alarm Status** sensors use Home Assistant's enum sensor translation, meaning their values are automatically displayed in the user's configured language.
+
+**Status code states:**
+
+| Key | English | German | French |
+|-----|---------|--------|--------|
+| `no_communication` | No communication | Keine Kommunikation | Pas de communication |
+| `in_operation` | In operation | In Betrieb | En fonctionnement |
+| `low_irradiation` | Low irradiation | Zu wenig Einstrahlung | Faible irradiation |
+| `starting_up` | Starting up | Anfahren | Démarrage |
+| `mpp_operation` | MPP operation | Betrieb auf MPP | Fonctionnement MPP |
+| `fan_running` | Fan running | Ventilator läuft | Ventilateur en marche |
+| `max_power_operation` | Maximum power operation | Betrieb auf Maximalleistung | Fonctionnement à puissance maximale |
+| `temperature_limitation` | Temperature limitation | Temperaturbegrenzung | Limitation de température |
+| `grid_operation` | Grid operation | Netzbetrieb | Fonctionnement réseau |
+
+**Alarm code states** (bitmask — multiple alarms are detected, and the individual active alarms are listed in the `active_alarms` attribute):
+
+| Key | English | German | French |
+|-----|---------|--------|--------|
+| `no_error` | No error | Kein Fehler | Aucune erreur |
+| `external_fault_1` | External fault 1 | Externer Fehler 1 | Défaut externe 1 |
+| `insulation_fault_dc` | Insulation fault DC side | Isolationsfehler DC-Seite | Défaut d'isolation côté DC |
+| `earth_fault_current` | Earth fault current too high | Fehlerstrom Erde zu groß | Courant de défaut à la terre trop élevé |
+| `fuse_break_center_earth` | Fuse break center earth | Sicherungsbruch Mittelpunkterde | Rupture de fusible terre centrale |
+| `external_alarm_2` | External alarm 2 | Externer Alarm 2 | Alarme externe 2 |
+| `long_term_temp_limit` | Long-term temperature limitation | Langzeit-Temperaturbegrenzung | Limitation de température à long terme |
+| `ac_feed_in_error` | AC feed-in error | Fehler AC-Einspeisung | Erreur d'injection AC |
+| `external_alarm_4` | External alarm 4 | Externer Alarm 4 | Alarme externe 4 |
+| `fan_defect` | Fan defect | Ventilator defekt | Ventilateur défectueux |
+| `fuse_break` | Fuse break | Sicherungsbruch | Rupture de fusible |
+| `temp_sensor_failure` | Temperature sensor failure | Ausfall Temperatursensor | Défaillance du capteur de température |
+| `multiple_alarms` | Multiple alarms | Mehrere Alarme | Alarmes multiples |
+
+### Adding a New Language
+
+To contribute a new language translation:
+
+1. Copy `custom_components/solarmax/translations/en.json` to a new file named with the [BCP 47 language code](https://en.wikipedia.org/wiki/IETF_language_tag) (e.g. `es.json` for Spanish, `nl.json` for Dutch).
+2. Translate all string values — **do not change any keys**.
+3. Keep all placeholder variables intact (e.g. `{host}`, `{port}`, `{failures}`).
+4. Submit a pull request.
+
+Example for a new file `es.json`:
+```json
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Inversor Solarmax",
+        ...
+      }
+    }
+  },
+  "entity": {
+    "sensor": {
+      "sys": {
+        "name": "Código de estado",
+        "state": {
+          "grid_operation": "Operación en red",
+          ...
+        }
+      }
+    }
+  }
+}
+```
+
 ## Contributing
 
 Contributions are welcome! Please feel free to submit a Pull Request.
