@@ -8,7 +8,6 @@ from typing import Any
 
 from homeassistant.components.sensor import (
     SensorEntity,
-    SensorEntityDescription,
 )
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
@@ -22,7 +21,14 @@ from .const import (
     CONF_HOST,
     CONF_PORT,
     DOMAIN,
+    SAL_ALARM_MAP,
+    SAL_STATE_MULTIPLE,
+    SAL_STATE_UNKNOWN,
     SENSOR_TYPES,
+    SYS_STATE_CONNECTION_FAILED,
+    SYS_STATE_OFFLINE_NIGHT,
+    SYS_STATE_UNKNOWN,
+    SYS_STATUS_MAP,
 )
 from .coordinator import SolarmaxCoordinator
 
@@ -92,12 +98,6 @@ class SolarmaxSensor(CoordinatorEntity[SolarmaxCoordinator], SensorEntity):
         suggested_entity_id = f"{device_name_normalized}_{sensor_type}"
         self._attr_suggested_object_id = suggested_entity_id
 
-        # Get language from Home Assistant (use 'en' as fallback)
-        try:
-            self._language = coordinator.hass.config.language or "en"
-        except AttributeError:
-            self._language = "en"
-
         # Use descriptive name from sensor config or a meaningful fallback
         # We'll load the translated name in the name property to avoid blocking I/O here
         self._base_name = self.sensor_config.get("name", self.sensor_key.upper())
@@ -137,6 +137,8 @@ class SolarmaxSensor(CoordinatorEntity[SolarmaxCoordinator], SensorEntity):
             self._attr_native_unit_of_measurement = sensor_config["unit"]
         if "device_class" in sensor_config:
             self._attr_device_class = sensor_config["device_class"]
+        if "options" in sensor_config:
+            self._attr_options = sensor_config["options"]
         if "state_class" in sensor_config:
             self._attr_state_class = sensor_config["state_class"]
         if "icon" in sensor_config:
@@ -187,25 +189,9 @@ class SolarmaxSensor(CoordinatorEntity[SolarmaxCoordinator], SensorEntity):
                 hasattr(self.coordinator, "is_expected_offline")
                 and self.coordinator.is_expected_offline
             ):
-                if self._language == "en":
-                    return "Offline (Night)"
-                else:
-                    return "Offline (Nacht)"
+                return SYS_STATE_OFFLINE_NIGHT
             else:
-                # Unexpected failure during day
-                if hasattr(self.coordinator, "consecutive_failures"):
-                    failures = self.coordinator.consecutive_failures
-                    if failures > 1:
-                        if self._language == "en":
-                            return f"Connection Failed ({failures})"
-                        else:
-                            return f"Verbindung fehlgeschlagen ({failures})"
-
-                # Single failure or fallback
-                if self._language == "en":
-                    return "Connection Failed"
-                else:
-                    return "Verbindung fehlgeschlagen"
+                return SYS_STATE_CONNECTION_FAILED
 
         if not self.coordinator.data:
             return None
@@ -216,38 +202,25 @@ class SolarmaxSensor(CoordinatorEntity[SolarmaxCoordinator], SensorEntity):
 
         value = sensor_data.get("value")
 
-        # Translate status and alarm codes inline (no file I/O, non-blocking)
+        # Map status and alarm codes to enum option keys (HA handles translation)
         if self.sensor_key == "SYS" and isinstance(value, int):
-            status_translations = {
-                20019: (
-                    "Feed-in operation"
-                    if self._language == "en"
-                    else "Einspeisebetrieb"
-                ),
-                20018: "Starting up" if self._language == "en" else "Hochfahren",
-                20000: "Standby" if self._language == "en" else "Bereitschaft",
-                20017: "Shutdown" if self._language == "en" else "Herunterfahren",
-                20001: "Off" if self._language == "en" else "Aus",
-                20002: (
-                    "Grid monitoring" if self._language == "en" else "Netzüberwachung"
-                ),
-            }
-            return status_translations.get(value, f"Status Code: {value}")
+            return SYS_STATUS_MAP.get(value, SYS_STATE_UNKNOWN)
 
         elif self.sensor_key == "SAL" and isinstance(value, int):
-            alarm_translations = {
-                0: "No alarms" if self._language == "en" else "Keine Alarme",
-                1: "Grid failure" if self._language == "en" else "Netzfehler",
-                2: "DC overvoltage" if self._language == "en" else "DC Überspannung",
-                3: "DC undervoltage" if self._language == "en" else "DC Unterspannung",
-                4: (
-                    "Temperature too high"
-                    if self._language == "en"
-                    else "Temperatur zu hoch"
-                ),
-                5: "Insulation error" if self._language == "en" else "Isolationsfehler",
-            }
-            return alarm_translations.get(value, f"Alarm Code: {value}")
+            if value == 0:
+                return SAL_ALARM_MAP[0]
+            # Direct match for single-bit alarm
+            if value in SAL_ALARM_MAP:
+                return SAL_ALARM_MAP[value]
+            # Bitmask: check if multiple alarm bits are set
+            active = [
+                SAL_ALARM_MAP[bit]
+                for bit in sorted(SAL_ALARM_MAP)
+                if bit > 0 and value & bit
+            ]
+            if active:
+                return SAL_STATE_MULTIPLE
+            return SAL_STATE_UNKNOWN
 
         # For all other sensors, return raw value
         return value
@@ -305,6 +278,16 @@ class SolarmaxSensor(CoordinatorEntity[SolarmaxCoordinator], SensorEntity):
         value = sensor_data.get("value")
         if self.sensor_key in ["SYS", "SAL"] and isinstance(value, int):
             attributes["code"] = value
+
+        # For SAL, decode bitmask and add active alarm list as attribute
+        if self.sensor_key == "SAL" and isinstance(value, int) and value > 0:
+            active_alarms = [
+                SAL_ALARM_MAP[bit]
+                for bit in sorted(SAL_ALARM_MAP)
+                if bit > 0 and value & bit
+            ]
+            if active_alarms:
+                attributes["active_alarms"] = active_alarms
 
         # Add connection health information for diagnostic purposes
         if self.sensor_key == "SYS":

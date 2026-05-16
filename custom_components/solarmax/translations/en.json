@@ -134,10 +134,46 @@
         "name": "Startups"
       },
       "sal": {
-        "name": "Alarm Codes"
+        "name": "Alarm Status",
+        "state": {
+          "no_error": "No error",
+          "external_fault_1": "External fault 1",
+          "insulation_fault_dc": "Insulation fault DC side",
+          "earth_fault_current": "Earth fault current too high",
+          "fuse_break_center_earth": "Fuse break center earth",
+          "external_alarm_2": "External alarm 2",
+          "long_term_temp_limit": "Long-term temperature limitation",
+          "ac_feed_in_error": "AC feed-in error",
+          "external_alarm_4": "External alarm 4",
+          "fan_defect": "Fan defect",
+          "fuse_break": "Fuse break",
+          "temp_sensor_failure": "Temperature sensor failure",
+          "alarm_12": "Alarm 12",
+          "alarm_13": "Alarm 13",
+          "alarm_14": "Alarm 14",
+          "alarm_15": "Alarm 15",
+          "alarm_16": "Alarm 16",
+          "alarm_17": "Alarm 17",
+          "multiple_alarms": "Multiple alarms",
+          "unknown_alarm": "Unknown alarm"
+        }
       },
       "sys": {
-        "name": "Status Code"
+        "name": "Status Code",
+        "state": {
+          "no_communication": "No communication",
+          "in_operation": "In operation",
+          "low_irradiation": "Low irradiation",
+          "starting_up": "Starting up",
+          "mpp_operation": "MPP operation",
+          "fan_running": "Fan running",
+          "max_power_operation": "Maximum power operation",
+          "temperature_limitation": "Temperature limitation",
+          "grid_operation": "Grid operation",
+          "offline_night": "Offline (Night)",
+          "connection_failed": "Connection failed",
+          "unknown": "Unknown"
+        }
       }
     }
   }

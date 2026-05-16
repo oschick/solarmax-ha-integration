@@ -134,10 +134,46 @@
         "name": "Startvorgänge"
       },
       "sal": {
-        "name": "Alarm-Codes"
+        "name": "Alarm-Status",
+        "state": {
+          "no_error": "Kein Fehler",
+          "external_fault_1": "Externer Fehler 1",
+          "insulation_fault_dc": "Isolationsfehler DC-Seite",
+          "earth_fault_current": "Fehlerstrom Erde zu groß",
+          "fuse_break_center_earth": "Sicherungsbruch Mittelpunkterde",
+          "external_alarm_2": "Externer Alarm 2",
+          "long_term_temp_limit": "Langzeit-Temperaturbegrenzung",
+          "ac_feed_in_error": "Fehler AC-Einspeisung",
+          "external_alarm_4": "Externer Alarm 4",
+          "fan_defect": "Ventilator defekt",
+          "fuse_break": "Sicherungsbruch",
+          "temp_sensor_failure": "Ausfall Temperatursensor",
+          "alarm_12": "Alarm 12",
+          "alarm_13": "Alarm 13",
+          "alarm_14": "Alarm 14",
+          "alarm_15": "Alarm 15",
+          "alarm_16": "Alarm 16",
+          "alarm_17": "Alarm 17",
+          "multiple_alarms": "Mehrere Alarme",
+          "unknown_alarm": "Unbekannter Alarm"
+        }
       },
       "sys": {
-        "name": "Status-Code"
+        "name": "Status-Code",
+        "state": {
+          "no_communication": "Keine Kommunikation",
+          "in_operation": "In Betrieb",
+          "low_irradiation": "Zu wenig Einstrahlung",
+          "starting_up": "Anfahren",
+          "mpp_operation": "Betrieb auf MPP",
+          "fan_running": "Ventilator läuft",
+          "max_power_operation": "Betrieb auf Maximalleistung",
+          "temperature_limitation": "Temperaturbegrenzung",
+          "grid_operation": "Netzbetrieb",
+          "offline_night": "Offline (Nacht)",
+          "connection_failed": "Verbindung fehlgeschlagen",
+          "unknown": "Unbekannt"
+        }
       }
     }
   }

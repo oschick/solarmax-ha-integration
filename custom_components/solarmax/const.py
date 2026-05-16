@@ -17,6 +17,62 @@ DEFAULT_ADDRESS = 1
 DEFAULT_UPDATE_INTERVAL = 30
 DEFAULT_DEVICE_NAME = "Solarmax Inverter"
 
+# Status code mappings (SYS) - maps raw integer code to option key
+SYS_STATUS_MAP: dict[int, str] = {
+    20000: "no_communication",
+    20001: "in_operation",
+    20002: "low_irradiation",
+    20003: "starting_up",
+    20004: "mpp_operation",
+    20005: "fan_running",
+    20006: "max_power_operation",
+    20007: "temperature_limitation",
+    20008: "grid_operation",
+}
+
+# Special SYS states (not from inverter data)
+SYS_STATE_OFFLINE_NIGHT = "offline_night"
+SYS_STATE_CONNECTION_FAILED = "connection_failed"
+SYS_STATE_UNKNOWN = "unknown"
+
+# All possible SYS options for the enum sensor
+SYS_OPTIONS: list[str] = list(SYS_STATUS_MAP.values()) + [
+    SYS_STATE_OFFLINE_NIGHT,
+    SYS_STATE_CONNECTION_FAILED,
+    SYS_STATE_UNKNOWN,
+]
+
+# Alarm code mappings (SAL) - bitmask values, can be combined
+SAL_ALARM_MAP: dict[int, str] = {
+    0: "no_error",
+    1: "external_fault_1",
+    2: "insulation_fault_dc",
+    4: "earth_fault_current",
+    8: "fuse_break_center_earth",
+    16: "external_alarm_2",
+    32: "long_term_temp_limit",
+    64: "ac_feed_in_error",
+    128: "external_alarm_4",
+    256: "fan_defect",
+    512: "fuse_break",
+    1024: "temp_sensor_failure",
+    2048: "alarm_12",
+    4096: "alarm_13",
+    8192: "alarm_14",
+    16384: "alarm_15",
+    32768: "alarm_16",
+    65536: "alarm_17",
+}
+
+SAL_STATE_MULTIPLE = "multiple_alarms"
+SAL_STATE_UNKNOWN = "unknown_alarm"
+
+# All possible SAL options for the enum sensor
+SAL_OPTIONS: list[str] = list(SAL_ALARM_MAP.values()) + [
+    SAL_STATE_MULTIPLE,
+    SAL_STATE_UNKNOWN,
+]
+
 # Sensor types and their properties
 SENSOR_TYPES = {
     "PAC": {
@@ -239,6 +295,8 @@ SENSOR_TYPES = {
     "SAL": {
         "name": "Alarm Codes",
         "translation_key": "sal",
+        "device_class": "enum",
+        "options": SAL_OPTIONS,
         "icon": "mdi:alert-circle",
         "entity_category": EntityCategory.DIAGNOSTIC,  # Important diagnostic
         "enabled_by_default": True,  # Keep enabled - important for monitoring
@@ -246,6 +304,8 @@ SENSOR_TYPES = {
     "SYS": {
         "name": "Status Code",
         "translation_key": "sys",
+        "device_class": "enum",
+        "options": SYS_OPTIONS,
         "icon": "mdi:information",
         "entity_category": EntityCategory.DIAGNOSTIC,  # Important diagnostic
         "enabled_by_default": True,  # Keep enabled - important for monitoring
