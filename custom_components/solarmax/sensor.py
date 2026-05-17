@@ -152,6 +152,7 @@ class SolarmaxSensor(CoordinatorEntity[SolarmaxCoordinator], SensorEntity):
             "manufacturer": "Solarmax",
             "model": coordinator.device_model or "Inverter",
             "sw_version": coordinator.sw_version,
+            "serial_number": coordinator.serial_number,
         }
 
     def _is_night_time(self) -> bool:

@@ -11,10 +11,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 - **Extended Status Codes**: Thanks @olabaie & [https://github.com/t-pa/solarmaxcom](https://github.com/t-pa/solarmaxcom), Expanded SYS status map to ~110 entries (20000–20999)
-- **New Sensors**: 11 additional sensors from [https://github.com/t-pa/solarmaxcom](https://github.com/t-pa/solarmaxcom) (disabled by default, your Inverter may not support all): Energy Yesterday (KDL), Energy Last Month (KLM), Energy Last Year (KLY), Relative Power % (PRL), Installed Power (PIN), Grid Frequency (TNF), DC Power/Voltage/Current String 3 (PD03/UD03/ID03), Inverter Temperature 2/3 (TK2/TK3).
+- **New Sensors**: 11 additional sensors from @olabaie & [https://github.com/t-pa/solarmaxcom](https://github.com/t-pa/solarmaxcom) (disabled by default, your Inverter may not support all): Energy Yesterday (KDL), Energy Last Month (KLM), Energy Last Year (KLY), Relative Power % (PRL), Installed Power (PIN), Grid Frequency (TNF), DC Power/Voltage/Current String 3 (PD03/UD03/ID03), Inverter Temperature 2/3 (TK2/TK3), Grid Voltage Upper Limit (ULH), Grid Voltage Lower Limit (ULL), Grid Frequency Upper Limit (TNH), Grid Frequency Lower Limit (TNL).
 - **Inverter Type Detection**: Device info now shows the actual inverter model (e.g. "SolarMax 7TP2") instead of generic "Inverter", queried via the MaxComm TYP register
 - **Firmware Version Display**: Device info shows the real firmware version from the inverter (SWV key) instead of hardcoded "1.0.0"
-- **Device Type Map**: Complete mapping of all 116 SolarMax device types from the MaxComm protocol specification (Section 2.3)
+- **Serial Number**: Added serial number detection (DIN key) and display in device info for unique inverter identification
+- **Build/Release Number**: Added build/release number detection (BDN key) for detailed firmware information
+- **Device Type Map**: Complete mapping of all 116 SolarMax device types from the MaxComm protocol specification
 - **DC Voltage Sensor (UDC)**: Added official MaxComm protocol key for total DC input voltage
 - **Response Checksum Verification**: Validates CRC on every inverter response to detect corrupt data
 - **Protocol Error Handling**: Detects and reports MaxComm interface errors (IPR: invalid protocol, IPN: invalid port)
@@ -23,8 +25,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **CRC Verification Now Strict**: Response checksum mismatch raises `SolarmaxProtocolError` instead of logging a warning and continuing with potentially corrupt data
 - **Protocol Error Not Retried**: `SolarmaxProtocolError` (IPR/IPN) is raised immediately without retry since these errors are deterministic
 - **MaxComm Protocol Reference**: Integration fully refactored against the official "MaxComm Datenprotokoll" (August 2022) specification
-- **Protocol Error Not Retried**: `SolarmaxProtocolError` (IPR/IPN) is raised immediately without retry since these errors are deterministic and indicate a fundamental communication issue rather than a transient failure
-- **CRC Verification Now Strict**: Response checksum mismatch raises `SolarmaxProtocolError` instead of logging a warning and continuing with potentially corrupt data
 
 ## [1.1.0] - 2026-05-16
 

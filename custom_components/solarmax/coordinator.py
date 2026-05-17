@@ -54,6 +54,7 @@ class SolarmaxCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         # Device identification (populated on first successful data fetch)
         self._device_model: str | None = None
         self._sw_version: str | None = None
+        self._serial_number: str | None = None
 
     def _is_night_time(self) -> bool:
         """Check if it's currently night time (when inverter is expected to be offline)."""
@@ -107,6 +108,12 @@ class SolarmaxCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 if swv_value is not None:
                     self._sw_version = str(swv_value)
                     _LOGGER.debug("Detected firmware version: %s", self._sw_version)
+
+            if self._serial_number is None and "DIN" in data:
+                din_value = data["DIN"].get("raw_value")
+                if din_value is not None:
+                    self._serial_number = str(din_value)
+                    _LOGGER.debug("Detected serial number: %s", self._serial_number)
 
             _LOGGER.debug("Successfully updated data from inverter")
             return data
@@ -182,3 +189,8 @@ class SolarmaxCoordinator(DataUpdateCoordinator[dict[str, Any]]):
     def sw_version(self) -> str | None:
         """Return the detected firmware version (from SWV key)."""
         return self._sw_version
+
+    @property
+    def serial_number(self) -> str | None:
+        """Return the detected serial number (from DIN key)."""
+        return self._serial_number

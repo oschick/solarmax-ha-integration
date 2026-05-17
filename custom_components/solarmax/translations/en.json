@@ -169,6 +169,18 @@
       "tnf": {
         "name": "Grid Frequency"
       },
+      "ulh": {
+        "name": "Grid Voltage Upper Limit"
+      },
+      "ull": {
+        "name": "Grid Voltage Lower Limit"
+      },
+      "tnh": {
+        "name": "Grid Frequency Upper Limit"
+      },
+      "tnl": {
+        "name": "Grid Frequency Lower Limit"
+      },
       "sal": {
         "name": "Alarm Status",
         "state": {

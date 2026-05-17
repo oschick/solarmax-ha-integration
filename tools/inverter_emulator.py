@@ -62,6 +62,8 @@ class InverterState:
     # Device identification (per MaxComm protocol Section 2.3/2.4)
     typ: int = 20650  # Device Type: SolarMax 7TP2
     swv: int = 40  # Software Version: 40 (0x28)
+    din: int = 118767  # Serial Number (DIN)
+    bdn: int = 1851  # Build/Release Number (BDN)
 
     # Power values (raw values before division)
     pac: int = 3000  # AC Power: 3000/2 = 1500W
@@ -110,6 +112,12 @@ class InverterState:
     prl: int = 45  # Relative Power: 45%
     pin: int = 14000  # Installed Power: 14000/2 = 7000W
     tnf: int = 500  # Grid Frequency: 500/10 = 50.0 Hz
+
+    # Grid monitoring configuration (raw values)
+    ulh: int = 2640  # Grid Voltage Upper Limit: 2640/10 = 264.0V
+    ull: int = 1960  # Grid Voltage Lower Limit: 1960/10 = 196.0V
+    tnh: int = 5050  # Grid Frequency Upper Limit: 5050/100 = 50.50Hz
+    tnl: int = 4950  # Grid Frequency Lower Limit: 4950/100 = 49.50Hz
 
     # Simulation settings
     add_noise: bool = True  # Add small random variations
@@ -380,7 +388,23 @@ class SolarmaxEmulator:
             self.state.add_noise
             and raw > 0
             and field
-            not in ("SYS", "SAL", "KT0", "KHR", "CAC", "TYP", "SWV", "PIN", "TNF")
+            not in (
+                "SYS",
+                "SAL",
+                "KT0",
+                "KHR",
+                "CAC",
+                "TYP",
+                "SWV",
+                "DIN",
+                "BDN",
+                "PIN",
+                "TNF",
+                "ULH",
+                "ULL",
+                "TNH",
+                "TNL",
+            )
         ):
             noise = random.randint(-max(1, raw // 50), max(1, raw // 50))
             raw = max(0, raw + noise)

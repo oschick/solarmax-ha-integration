@@ -107,8 +107,15 @@ FIELD_MAP_INVERTER = {
     "SAL": "Alarm_Code",  # Register (bitmask)
     "TYP": "Device_Type",  # ohne_Einheit_2 (device type identifier)
     "SWV": "Software_Version",  # ohne_Einheit_2 (firmware version number)
+    "DIN": "Serial_Number",  # ohne_Einheit_2 (inverter serial number)
+    "BDN": "Build_Number",  # ohne_Einheit_2 (firmware build/release number)
     "PIN": "Installed_Power",  # Leistung (0.5 W/digit) — rated inverter power
     "PRL": "Relative_Power",  # ohne_Einheit_2 (1 %/digit) — % of rated power
+    # Grid monitoring configuration (read from inverter settings)
+    "ULH": "Grid_Voltage_Upper_Limit",  # Spannung_2 (0.1 V/digit)
+    "ULL": "Grid_Voltage_Lower_Limit",  # Spannung_2 (0.1 V/digit)
+    "TNH": "Grid_Frequency_Upper_Limit",  # Frequenz_2 (0.01 Hz/digit)
+    "TNL": "Grid_Frequency_Lower_Limit",  # Frequenz_2 (0.01 Hz/digit)
     # Model-specific keys (not in official MaxComm spec, but supported by some models)
     "PDC": "DC_Power",  # Leistung (0.5 W/digit)
     "PD01": "DC_Power_String_1",  # Leistung (0.5 W/digit)
@@ -376,7 +383,7 @@ class SolarmaxAPI:
         elif field in ("PAC", "PDC", "PD01", "PD02", "PD03", "PIN"):
             # Leistung: resolution 0.5 W/digit
             return value / 2
-        elif field in ("UL1", "UL2", "UL3", "UDC", "UD01", "UD02", "UD03"):
+        elif field in ("UL1", "UL2", "UL3", "UDC", "UD01", "UD02", "UD03", "ULH", "ULL"):
             # Spannung_2: resolution 0.1 V/digit
             return value / 10.0
         elif field in ("KDY", "KDL"):
@@ -385,9 +392,12 @@ class SolarmaxAPI:
         elif field in ("IDC", "ID01", "ID02", "ID03", "IL1", "IL2", "IL3"):
             # Strom_positiv_2: resolution 0.01 A/digit
             return value / 100.0
-        elif field == "TNF":
+        elif field in ("TNF",):
             # Frequenz: resolution 0.1 Hz/digit
             return value / 10.0
+        elif field in ("TNH", "TNL"):
+            # Frequenz_2: resolution 0.01 Hz/digit (grid limit registers)
+            return value / 100.0
         else:
             # Energie_2, Temperatur_positiv, ohne_Einheit: resolution 1/digit
             return value

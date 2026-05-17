@@ -158,7 +158,20 @@
       },
       "tnf": {
         "name": "Netzfrequenz"
-      },      "sal": {
+      },
+      "ulh": {
+        "name": "Netzspannung Obergrenze"
+      },
+      "ull": {
+        "name": "Netzspannung Untergrenze"
+      },
+      "tnh": {
+        "name": "Netzfrequenz Obergrenze"
+      },
+      "tnl": {
+        "name": "Netzfrequenz Untergrenze"
+      },
+      "sal": {
         "name": "Alarm-Status",
         "state": {
           "no_error": "Kein Fehler",

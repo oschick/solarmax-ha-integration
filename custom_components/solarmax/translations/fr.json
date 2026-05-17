@@ -163,6 +163,18 @@
       "tnf": {
         "name": "Fréquence réseau"
       },
+      "ulh": {
+        "name": "Tension réseau limite haute"
+      },
+      "ull": {
+        "name": "Tension réseau limite basse"
+      },
+      "tnh": {
+        "name": "Fréquence réseau limite haute"
+      },
+      "tnl": {
+        "name": "Fréquence réseau limite basse"
+      },
       "sal": {
         "name": "État d'alarme",
         "state": {
