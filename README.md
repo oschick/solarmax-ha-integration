@@ -6,7 +6,7 @@
 
 A Home Assistant custom integration for Solarmax solar inverters. This integration allows you to monitor your Solarmax inverter's performance directly within Home Assistant.
 
-> **⚠️ Compatibility Notice:** This integration has been tested specifically on a **Solarmax 7TP2 Inverter** and should work with most Solarmax inverters built before 2015. Compatibility with newer models is not guaranteed. Please test and report your results!
+> **⚠️ Compatibility Notice:** This integration has been tested specifically on a **Solarmax 7TP2 Inverter** and should work with most Solarmax inverters built mainly before 2015. Compatibility with newer models is not guaranteed. Please test and report your results!
 
 ## Features
 
@@ -29,12 +29,17 @@ A Home Assistant custom integration for Solarmax solar inverters. This integrati
 - **Solarmax 7TP2 Inverter** ✅ Fully tested and confirmed working
 
 ### Likely Compatible Models
-- Solarmax inverters manufactured **before 2015**
-- Models using the legacy Solarmax protocol over TCP/IP
+- Solarmax inverters manufactured **mainly before 2015**
+- Models using the **MaxComm protocol** over TCP/IP (port 12345)
 - Single-phase and three-phase models from the following series:
-  - TP series
-  - P series
-  - C series (older models)
+  - TP series (e.g. 4TP, 5TP2, 6TP2, 7TP2)
+  - P series (e.g. 2000P, 3000P, 4000P, 5000P)
+  - MT series (e.g. 10MT, 13MT3, 15MT3)
+  - S series (e.g. 2000S, 3000S, 4200S, 6000S)
+  - SP series (e.g. 1000SP, 2000SP, 3000SP)
+  - SHT series (e.g. 20SHT, 30SHT, 50SHT, 60SHT)
+  - TS-SV series
+  - C/E series (older models: 2000C, 3000C, 4000C, 6000C)
 
 ### Known Incompatible Models
 - Newer Solarmax models (2015+) that use different communication protocols
@@ -51,16 +56,17 @@ The integration provides multiple sensor entities organized by importance:
 #### Core Monitoring (Enabled by Default)
 - **AC Power (PAC)** - Current AC power output in Watts
 - **DC Power (PDC)** - Current DC power input in Watts  
-- **Energy Day (KDY)** - Daily energy production in Wh
+- **Energy Day (KDY)** - Daily energy production in kWh
 - **Energy Month (KMT)** - Monthly energy production in kWh
 - **Energy Year (KYR)** - Yearly energy production in kWh
 - **Energy Total (KT0)** - Total lifetime energy production in kWh
 - **Status Code (SYS)** - Current inverter operational status
-- **Alarm Codes (SAL)** - Current alarm/error codes
+- **Alarm Codes (SAL)** - Current alarm/error codes (bitmask)
 
 #### Diagnostic Sensors (Disabled by Default)
 - **DC Power Strings (PD01, PD02)** - Individual string power outputs
 - **AC Voltage Phases (UL1, UL2, UL3)** - Voltage per phase
+- **DC Voltage (UDC)** - Total DC input voltage
 - **DC Voltage Strings (UD01, UD02)** - Individual string voltages
 - **AC Current Phases (IL1, IL2, IL3)** - Current per phase
 - **DC Current (IDC, ID01, ID02)** - Total and individual string currents
@@ -120,20 +126,40 @@ You can modify the integration settings without removing and re-adding:
 
 ## Data Update Information
 
-The integration uses **local polling** to retrieve data from your inverter:
+The integration uses **local polling** via the **MaxComm protocol** to retrieve data from your inverter:
 
-- **Update Method**: Direct TCP/IP connection to inverter
+- **Protocol**: MaxComm (proprietary SolarMax TCP protocol, documented August 2022)
+- **Update Method**: Direct TCP/IP connection to inverter (default port 12345)
 - **Update Frequency**: Configurable (default: 30 seconds)
 - **Night Mode**: Automatically detects when inverter is offline at night
 - **Retry Logic**: Smart retry with exponential backoff for connection failures
 - **Connection Health**: Tracks consecutive failures and connection statistics
+- **Checksum Verification**: Validates response CRC to detect corrupt data
+
+### MaxComm Protocol Overview
+
+The MaxComm protocol is a Master-Slave TCP protocol used by SolarMax inverters:
+
+- **Communication**: Master-Slave (integration polls, inverter responds)
+- **Data Encoding**: All values transmitted as ASCII hex characters
+- **Response Time**: Typical 300ms, maximum timeout 3000ms
+- **Addressing**: Device addresses 1–249 (configurable on the inverter)
+- **Error Detection**: 4-character hex CRC checksum on every packet
+
+Request/response format:
+```
+{<Src>;<Dest>;<Length>|<Port>:<Data>|<CRC>}
+```
+
+The integration queries all supported data keys in a single request. Keys not recognized by the inverter are simply omitted from the response (graceful degradation).
 
 ### Update Process
-1. Integration connects to inverter via TCP socket
-2. Sends protocol-specific query for all available data points
-3. Parses response and updates sensor values
-4. Handles errors gracefully (temporary network issues, night mode, etc.)
-5. Logs diagnostic information for troubleshooting
+1. Integration connects to inverter via TCP socket (port 12345)
+2. Builds a MaxComm protocol request with all monitored data keys
+3. Receives and validates response (CRC checksum verification)
+4. Parses hex-encoded values and applies network variable scaling
+5. Handles errors gracefully (temporary network issues, night mode, etc.)
+6. Logs diagnostic information for troubleshooting
 
 ## Use Cases
 
@@ -255,9 +281,10 @@ automation:
 
 ### Protocol Limitations
 - **Single Device**: Integration designed for one inverter per instance
-- **Legacy Protocol**: Only supports pre-2015 Solarmax protocol
+- **MaxComm Only**: Only supports the MaxComm protocol (mainly pre-2015 SolarMax devices)
 - **TCP/IP Only**: Requires network connection (no RS485/serial support)
-- **Polling Only**: No push notifications from inverter
+- **Polling Only**: No push notifications from inverter (MaxComm is Master-Slave)
+- **Read-Only**: Only data queries (port 100/0x64); settings commands (port 200/0xC8) not implemented
 
 ### Network Requirements
 - **Direct Access**: Inverter must be accessible on local network
