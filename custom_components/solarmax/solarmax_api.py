@@ -383,7 +383,17 @@ class SolarmaxAPI:
         elif field in ("PAC", "PDC", "PD01", "PD02", "PD03", "PIN"):
             # Leistung: resolution 0.5 W/digit
             return value / 2
-        elif field in ("UL1", "UL2", "UL3", "UDC", "UD01", "UD02", "UD03", "ULH", "ULL"):
+        elif field in (
+            "UL1",
+            "UL2",
+            "UL3",
+            "UDC",
+            "UD01",
+            "UD02",
+            "UD03",
+            "ULH",
+            "ULL",
+        ):
             # Spannung_2: resolution 0.1 V/digit
             return value / 10.0
         elif field in ("KDY", "KDL"):
