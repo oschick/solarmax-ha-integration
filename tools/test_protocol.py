@@ -35,7 +35,7 @@ crc = api.calculate_checksum(resp_data)
 mock_resp = "{" + resp_data + crc + "}"
 print(f"Mock response: {mock_resp}")
 
-result = api.convert_to_json(FIELD_MAP_INVERTER, mock_resp)
+result = api.convert_to_json(mock_resp)
 print(f"Parsed PAC: {result['PAC']['value']}W (raw: 0x{result['PAC']['raw_value']:X})")
 print(f"Parsed UDC: {result['UDC']['value']}V (raw: 0x{result['UDC']['raw_value']:X})")
 
@@ -57,7 +57,7 @@ print("Bad checksum detection: PASS")
 sys_resp_data = "01;FB;15|64:SYS=4E24,0|"
 sys_crc = api.calculate_checksum(sys_resp_data)
 sys_mock = "{" + sys_resp_data + sys_crc + "}"
-sys_result = api.convert_to_json(FIELD_MAP_INVERTER, sys_mock)
+sys_result = api.convert_to_json(sys_mock)
 assert sys_result["SYS"]["value"] == 0x4E24  # 20004 decimal = mpp_operation
 print(f"SYS parsing: {sys_result['SYS']['value']} (0x4E24 = 20004 = mpp_operation)")
 
@@ -65,7 +65,7 @@ print(f"SYS parsing: {sys_result['SYS']['value']} (0x4E24 = 20004 = mpp_operatio
 typ_resp_data = "01;FB;17|64:TYP=50AA;SWV=28|"
 typ_crc = api.calculate_checksum(typ_resp_data)
 typ_mock = "{" + typ_resp_data + typ_crc + "}"
-typ_result = api.convert_to_json(FIELD_MAP_INVERTER, typ_mock)
+typ_result = api.convert_to_json(typ_mock)
 assert typ_result["TYP"]["raw_value"] == 20650  # SolarMax 7TP2
 assert typ_result["SWV"]["raw_value"] == 40  # Firmware v40
 print(
@@ -76,7 +76,7 @@ print(
 na_resp_data = "01;FB;12|64:PAC=1F4;FRT|"
 na_crc = api.calculate_checksum(na_resp_data)
 na_mock = "{" + na_resp_data + na_crc + "}"
-na_result = api.convert_to_json(FIELD_MAP_INVERTER, na_mock)
+na_result = api.convert_to_json(na_mock)
 assert "FRT" not in na_result  # Not applicable keys are skipped
 assert "PAC" in na_result
 print("Not-applicable key handling: PASS")

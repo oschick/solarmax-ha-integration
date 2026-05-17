@@ -415,7 +415,7 @@ class SolarmaxAPI:
                 if response:
                     # Mark successful connection
                     self._last_successful_connection = datetime.now()
-                    data = self.convert_to_json(FIELD_MAP_INVERTER, response)
+                    data = self.convert_to_json(response)
                     _LOGGER.debug(f"Successfully retrieved data from inverter")
                     return data
                 else:
@@ -454,7 +454,7 @@ class SolarmaxAPI:
         else:
             raise SolarmaxConnectionError("Failed to get data from inverter")
 
-    def convert_to_json(self, field_map: dict[str, str], data: str) -> dict[str, Any]:
+    def convert_to_json(self, data: str) -> dict[str, Any]:
         """Parse a MaxComm protocol response into a dictionary.
 
         Response format per MaxComm spec Section 2.1:
@@ -468,9 +468,9 @@ class SolarmaxAPI:
         try:
             # Verify response checksum (per protocol spec Section 1.1)
             if not self._verify_response_checksum(data):
-                _LOGGER.warning(
-                    "MaxComm response checksum verification failed, "
-                    "processing anyway (may contain corrupt data)"
+                raise SolarmaxProtocolError(
+                    "MaxComm response checksum verification failed: "
+                    "data may be corrupted"
                 )
 
             # Check for interface error messages (port 0x3E8 = 1000)
