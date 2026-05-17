@@ -103,7 +103,9 @@ def test_get_data_success(mock_socket, api):
     """Test successful data retrieval."""
     mock_sock = MagicMock()
     mock_socket.return_value = mock_sock
-    mock_sock.recv.return_value = b"{01|64:PAC=BB8;SYS=4E33,0|}"
+    inner = "01;FB;15|64:PAC=BB8;SYS=4E33,0|"
+    crc = api.calculate_checksum(inner)
+    mock_sock.recv.return_value = ("{" + inner + crc + "}").encode()
 
     result = api.get_data()
 
@@ -135,7 +137,9 @@ def test_get_data_timeout(mock_socket, api):
 
 def test_convert_to_json(api):
     """Test response conversion to JSON."""
-    response = "{01|64:PAC=BB8;SYS=4E33,0;SAL=0|}"
+    inner = "01;FB;1F|64:PAC=BB8;SYS=4E33,0;SAL=0|"
+    crc = api.calculate_checksum(inner)
+    response = "{" + inner + crc + "}"
     result = api.convert_to_json(response)
 
     assert isinstance(result, dict)
@@ -150,11 +154,9 @@ def test_convert_to_json(api):
 
 
 def test_convert_to_json_invalid_response(api):
-    """Test response conversion with invalid data."""
-    response = "invalid_response"
-    result = api.convert_to_json(response)
-
-    assert result == {}
+    """Test response conversion with invalid/unframed data raises SolarmaxProtocolError."""
+    with pytest.raises(SolarmaxProtocolError):
+        api.convert_to_json("invalid_response")
 
 
 def test_last_successful_connection_tracking(api):
@@ -164,7 +166,9 @@ def test_last_successful_connection_tracking(api):
     with patch("socket.socket") as mock_socket:
         mock_sock = MagicMock()
         mock_socket.return_value = mock_sock
-        mock_sock.recv.return_value = b"{01|64:PAC=BB8|}"
+        inner = "01;FB;0F|64:PAC=BB8|"
+        crc = api.calculate_checksum(inner)
+        mock_sock.recv.return_value = ("{" + inner + crc + "}").encode()
 
         api.get_data()
 
