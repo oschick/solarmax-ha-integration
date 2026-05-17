@@ -7,9 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-## [1.2.0] - 2026-05-17
-
 ### Added
+- **Extended Status Codes**: Thanks @olabaie, Added 24 additional SYS status codes (20009–20134) covering DC/AC current limiting, test mode, remote control, overvoltage/overload conditions, grid faults, island operation, and hardware errors
 - **Inverter Type Detection**: Device info now shows the actual inverter model (e.g. "SolarMax 7TP2") instead of generic "Inverter", queried via the MaxComm TYP register
 - **Firmware Version Display**: Device info shows the real firmware version from the inverter (SWV key) instead of hardcoded "1.0.0"
 - **Device Type Map**: Complete mapping of all 116 SolarMax device types from the MaxComm protocol specification (Section 2.3)
@@ -19,9 +18,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 - **MaxComm Protocol Reference**: Integration fully refactored against the official "MaxComm Datenprotokoll" (August 2022) specification
-
-### Fixed
-- **Energy Day Unit in README**: Corrected from "Wh" to "kWh" (per Energie_1 network variable, 0.1 kWh/digit)
+- **Protocol Error Not Retried**: `SolarmaxProtocolError` (IPR/IPN) is raised immediately without retry since these errors are deterministic and indicate a fundamental communication issue rather than a transient failure
+- **CRC Verification Now Strict**: Response checksum mismatch raises `SolarmaxProtocolError` instead of logging a warning and continuing with potentially corrupt data
 
 ## [1.1.0] - 2026-05-16
 
