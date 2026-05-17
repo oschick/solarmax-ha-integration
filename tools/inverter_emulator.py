@@ -91,10 +91,25 @@ class InverterState:
     kyr: int = 4200  # Energy Year: 4200 kWh
     kt0: int = 28500  # Energy Total: 28500 kWh
 
+    # String 3 (for 3-string inverters)
+    pd03: int = 0  # DC Power String 3: 0W (not all models have string 3)
+    ud03: int = 0  # DC Voltage String 3: 0V
+    id03: int = 0  # DC Current String 3: 0A
+
+    # Energy history
+    kdl: int = 72  # Energy Yesterday: 72/10 = 7.2 kWh
+    klm: int = 320  # Energy Last Month: 320 kWh
+    kly: int = 3800  # Energy Last Year: 3800 kWh
+
     # Other
     tkk: int = 42  # Temperature: 42°C
+    tk2: int = 38  # Temperature 2: 38°C
+    tk3: int = 35  # Temperature 3: 35°C
     khr: int = 15230  # Power On Hours
     cac: int = 1847  # Startups
+    prl: int = 45  # Relative Power: 45%
+    pin: int = 14000  # Installed Power: 14000/2 = 7000W
+    tnf: int = 500  # Grid Frequency: 500/10 = 50.0 Hz
 
     # Simulation settings
     add_noise: bool = True  # Add small random variations
@@ -110,14 +125,17 @@ def get_scenario_state(scenario: str) -> InverterState:
             pdc=0,
             pd01=0,
             pd02=0,
+            pd03=0,
             ul1=0,
             ul2=0,
             ul3=0,
             ud01=0,
             ud02=0,
+            ud03=0,
             idc=0,
             id01=0,
             id02=0,
+            id03=0,
             il1=0,
             il2=0,
             il3=0,
@@ -125,9 +143,17 @@ def get_scenario_state(scenario: str) -> InverterState:
             kmt=350,
             kyr=4200,
             kt0=28500,
+            kdl=72,
+            klm=320,
+            kly=3800,
             tkk=18,
+            tk2=16,
+            tk3=15,
             khr=15230,
             cac=1847,
+            prl=0,
+            pin=14000,
+            tnf=0,
             add_noise=False,
         )
     elif scenario == "starting":
@@ -138,14 +164,17 @@ def get_scenario_state(scenario: str) -> InverterState:
             pdc=100,
             pd01=50,
             pd02=50,
+            pd03=0,
             ul1=2300,
             ul2=2310,
             ul3=2295,
             ud01=2800,
             ud02=2750,
+            ud03=0,
             idc=10,
             id01=5,
             id02=5,
+            id03=0,
             il1=0,
             il2=0,
             il3=0,
@@ -153,9 +182,17 @@ def get_scenario_state(scenario: str) -> InverterState:
             kmt=350,
             kyr=4200,
             kt0=28500,
+            kdl=72,
+            klm=320,
+            kly=3800,
             tkk=22,
+            tk2=20,
+            tk3=19,
             khr=15230,
             cac=1848,
+            prl=0,
+            pin=14000,
+            tnf=500,
             add_noise=False,
         )
     elif scenario == "alarm":
@@ -166,14 +203,17 @@ def get_scenario_state(scenario: str) -> InverterState:
             pdc=600,
             pd01=300,
             pd02=300,
+            pd03=0,
             ul1=2300,
             ul2=2310,
             ul3=2295,
             ud01=3200,
             ud02=3180,
+            ud03=0,
             idc=200,
             id01=100,
             id02=100,
+            id03=0,
             il1=75,
             il2=72,
             il3=73,
@@ -181,9 +221,17 @@ def get_scenario_state(scenario: str) -> InverterState:
             kmt=350,
             kyr=4200,
             kt0=28500,
+            kdl=72,
+            klm=320,
+            kly=3800,
             tkk=38,
+            tk2=35,
+            tk3=33,
             khr=15230,
             cac=1847,
+            prl=7,
+            pin=14000,
+            tnf=500,
         )
     elif scenario == "multi_alarm":
         return InverterState(
@@ -193,14 +241,17 @@ def get_scenario_state(scenario: str) -> InverterState:
             pdc=250,
             pd01=125,
             pd02=125,
+            pd03=0,
             ul1=2280,
             ul2=2290,
             ul3=2275,
             ud01=3000,
             ud02=2980,
+            ud03=0,
             idc=80,
             id01=40,
             id02=40,
+            id03=0,
             il1=30,
             il2=28,
             il3=29,
@@ -208,9 +259,17 @@ def get_scenario_state(scenario: str) -> InverterState:
             kmt=350,
             kyr=4200,
             kt0=28500,
+            kdl=72,
+            klm=320,
+            kly=3800,
             tkk=45,
+            tk2=42,
+            tk3=40,
             khr=15230,
             cac=1847,
+            prl=3,
+            pin=14000,
+            tnf=500,
         )
     elif scenario == "max_power":
         return InverterState(
@@ -220,14 +279,17 @@ def get_scenario_state(scenario: str) -> InverterState:
             pdc=10500,
             pd01=5250,
             pd02=5250,
+            pd03=0,
             ul1=2350,
             ul2=2360,
             ul3=2345,
             ud01=5800,
             ud02=5750,
+            ud03=0,
             idc=1800,
             id01=900,
             id02=900,
+            id03=0,
             il1=1450,
             il2=1440,
             il3=1445,
@@ -235,9 +297,17 @@ def get_scenario_state(scenario: str) -> InverterState:
             kmt=1200,
             kyr=4800,
             kt0=29000,
+            kdl=240,
+            klm=1100,
+            kly=4500,
             tkk=58,
+            tk2=55,
+            tk3=52,
             khr=15230,
             cac=1847,
+            prl=100,
+            pin=10000,
+            tnf=500,
         )
     elif scenario == "low_irradiation":
         return InverterState(
@@ -247,14 +317,17 @@ def get_scenario_state(scenario: str) -> InverterState:
             pdc=150,
             pd01=75,
             pd02=75,
+            pd03=0,
             ul1=2300,
             ul2=2310,
             ul3=2295,
             ud01=2200,
             ud02=2150,
+            ud03=0,
             idc=30,
             id01=15,
             id02=15,
+            id03=0,
             il1=15,
             il2=14,
             il3=14,
@@ -262,9 +335,17 @@ def get_scenario_state(scenario: str) -> InverterState:
             kmt=350,
             kyr=4200,
             kt0=28500,
+            kdl=72,
+            klm=320,
+            kly=3800,
             tkk=25,
+            tk2=23,
+            tk3=22,
             khr=15230,
             cac=1847,
+            prl=1,
+            pin=14000,
+            tnf=500,
         )
     else:
         # Default: day / normal MPP operation
@@ -298,7 +379,8 @@ class SolarmaxEmulator:
         if (
             self.state.add_noise
             and raw > 0
-            and field not in ("SYS", "SAL", "KT0", "KHR", "CAC", "TYP", "SWV")
+            and field
+            not in ("SYS", "SAL", "KT0", "KHR", "CAC", "TYP", "SWV", "PIN", "TNF")
         ):
             noise = random.randint(-max(1, raw // 50), max(1, raw // 50))
             raw = max(0, raw + noise)
@@ -473,7 +555,13 @@ def interactive_loop(emulator: SolarmaxEmulator):
             print(f"  PDC (DC power):  {s.pdc} raw -> {s.pdc / 2}W")
             print(f"  UL1 (voltage):   {s.ul1} raw -> {s.ul1 / 10}V")
             print(f"  TKK (temp):      {s.tkk}°C")
+            print(f"  TK2 (temp 2):    {s.tk2}°C")
+            print(f"  TK3 (temp 3):    {s.tk3}°C")
+            print(f"  TNF (freq):      {s.tnf} raw -> {s.tnf / 10} Hz")
+            print(f"  PRL (rel power): {s.prl}%")
+            print(f"  PIN (installed): {s.pin} raw -> {s.pin / 2}W")
             print(f"  KDY (day):       {s.kdy} raw -> {s.kdy / 10} kWh")
+            print(f"  KDL (yesterday): {s.kdl} raw -> {s.kdl / 10} kWh")
             print(f"  KT0 (total):     {s.kt0} kWh")
             print(f"  Noise: {'on' if s.add_noise else 'off'}")
             print("")

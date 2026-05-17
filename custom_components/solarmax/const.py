@@ -164,6 +164,7 @@ DEVICE_TYPE_MAP: dict[int, str] = {
 }
 
 # Status code mappings (SYS) - maps raw integer code to option key
+# Info from https://github.com/t-pa/solarmaxcom/blob/main/src/main/java/solarmaxcom/protocol/StatusLookup.java
 SYS_STATUS_MAP: dict[int, str] = {
     20000: "no_communication",
     20001: "in_operation",
@@ -179,26 +180,105 @@ SYS_STATUS_MAP: dict[int, str] = {
     20011: "test_mode",
     20012: "remote_controlled",
     20013: "start_delay",
-    20110: "dc_link_overvoltage",
-    20111: "overvoltage",
-    20112: "overload",
+    20014: "external_limitation",
+    20015: "frequency_limitation",
+    20016: "restart_limitation",
+    20017: "booting",
+    20018: "insufficient_boot_power",
+    20019: "insufficient_power",
+    20021: "uninitialized",
+    20022: "disabled",
+    20023: "idle",
+    20024: "powerunit_not_ready",
+    20050: "program_firmware",
+    20101: "device_error_101",
+    20102: "device_error_102",
+    20103: "device_error_103",
+    20104: "device_error_104",
+    20105: "insulation_fault_dc",
+    20106: "insulation_fault_dc_2",
+    20107: "device_error_107",
+    20108: "device_error_108",
+    20109: "vdc_too_high",
+    20110: "device_error_110",
+    20111: "device_error_111",
+    20112: "device_error_112",
+    20113: "device_error_113",
     20114: "leakage_current_high",
     20115: "no_grid",
     20116: "grid_frequency_high",
     20117: "grid_frequency_low",
-    20118: "island_operation",
-    20119: "poor_grid_quality",
+    20118: "mains_error",
+    20119: "vac_10min_too_high",
+    20120: "device_error_120",
+    20121: "device_error_121",
     20122: "grid_voltage_high",
     20123: "grid_voltage_low",
     20124: "temperature_too_high",
     20125: "grid_current_asymmetric",
     20126: "external_input_error_1",
     20127: "external_input_error_2",
+    20128: "device_error_128",
     20129: "incorrect_rotation",
     20130: "wrong_device_type",
     20131: "main_switch_off",
     20132: "diode_overtemperature",
+    20133: "device_error_133",
     20134: "fan_defective",
+    20135: "device_error_135",
+    20136: "device_error_136",
+    20137: "device_error_137",
+    20138: "device_error_138",
+    20139: "device_error_139",
+    20140: "device_error_140",
+    20141: "device_error_141",
+    20142: "device_error_142",
+    20143: "device_error_143",
+    20144: "device_error_144",
+    20145: "dfdt_too_high",
+    20146: "device_error_146",
+    20147: "device_error_147",
+    20148: "device_error_148",
+    20150: "ierr_step_too_high",
+    20151: "ierr_step_too_high_2",
+    20153: "device_error_153",
+    20154: "shutdown_1",
+    20155: "shutdown_2",
+    20156: "device_error_156",
+    20157: "insulation_fault_dc_3",
+    20158: "device_error_158",
+    20159: "device_error_159",
+    20160: "device_error_160",
+    20161: "device_error_161",
+    20163: "device_error_163",
+    20164: "ierr_too_high_2",
+    20165: "no_mains_2",
+    20166: "frequency_too_high_2",
+    20167: "frequency_too_low_2",
+    20168: "mains_error_2",
+    20169: "vac_10min_too_high_2",
+    20170: "device_error_170",
+    20171: "device_error_171",
+    20172: "vac_too_high_2",
+    20173: "vac_too_low_2",
+    20174: "device_error_174",
+    20175: "device_error_175",
+    20176: "error_dc_polarity",
+    20177: "device_error_177",
+    20178: "device_error_178",
+    20179: "device_error_179",
+    20180: "vdc_too_low",
+    20181: "blocked_external",
+    20185: "device_error_185",
+    20186: "device_error_186",
+    20187: "device_error_187",
+    20188: "device_error_188",
+    20189: "l_n_interchanged",
+    20190: "below_average_yield",
+    20191: "limitation_error",
+    20198: "device_error_198",
+    20199: "device_error_199",
+    20999: "device_error_999",
 }
 
 # Special SYS states (not from inverter data)
@@ -245,6 +325,7 @@ SAL_OPTIONS: list[str] = list(SAL_ALARM_MAP.values()) + [
 ]
 
 # Sensor types and their properties
+# Info from MaxComm protocol spec, https://github.com/t-pa/solarmaxcom/blob/main/src/main/java/solarmaxcom/protocol/Keys.java & https://github.com/benchmarex/SOLARMAX_to_SQL/blob/master/main_solarmax_sql.py
 SENSOR_TYPES = {
     "PAC": {
         "name": "AC Power",
@@ -285,6 +366,16 @@ SENSOR_TYPES = {
         "icon": "mdi:solar-power",
         "entity_category": EntityCategory.DIAGNOSTIC,  # Detailed diagnostic
         "enabled_by_default": False,  # Disable by default - advanced users only
+    },
+    "PD03": {
+        "name": "DC Power String 3",
+        "translation_key": "pd03",
+        "unit": "W",
+        "device_class": "power",
+        "state_class": "measurement",
+        "icon": "mdi:solar-power",
+        "entity_category": EntityCategory.DIAGNOSTIC,
+        "enabled_by_default": False,
     },
     "UL1": {
         "name": "AC Voltage Phase 1",
@@ -346,6 +437,16 @@ SENSOR_TYPES = {
         "entity_category": EntityCategory.DIAGNOSTIC,  # Detailed diagnostic
         "enabled_by_default": False,  # Disable by default - advanced users only
     },
+    "UD03": {
+        "name": "DC Voltage String 3",
+        "translation_key": "ud03",
+        "unit": "V",
+        "device_class": "voltage",
+        "state_class": "measurement",
+        "icon": "mdi:flash",
+        "entity_category": EntityCategory.DIAGNOSTIC,
+        "enabled_by_default": False,
+    },
     "IL1": {
         "name": "AC Current Phase 1",
         "translation_key": "il1",
@@ -406,6 +507,16 @@ SENSOR_TYPES = {
         "entity_category": EntityCategory.DIAGNOSTIC,  # Detailed diagnostic
         "enabled_by_default": False,  # Disable by default - advanced users only
     },
+    "ID03": {
+        "name": "DC Current String 3",
+        "translation_key": "id03",
+        "unit": "A",
+        "device_class": "current",
+        "state_class": "measurement",
+        "icon": "mdi:current-dc",
+        "entity_category": EntityCategory.DIAGNOSTIC,
+        "enabled_by_default": False,
+    },
     "KDY": {
         "name": "Energy Day",
         "translation_key": "kdy",
@@ -446,6 +557,36 @@ SENSOR_TYPES = {
         "entity_category": None,  # Main measurement
         "enabled_by_default": True,
     },
+    "KDL": {
+        "name": "Energy Yesterday",
+        "translation_key": "kdl",
+        "unit": "kWh",
+        "device_class": "energy",
+        "state_class": "measurement",
+        "icon": "mdi:solar-power",
+        "entity_category": None,
+        "enabled_by_default": False,  # Disable by default - not provided by all inverters and less relevant for most users
+    },
+    "KLM": {
+        "name": "Energy Last Month",
+        "translation_key": "klm",
+        "unit": "kWh",
+        "device_class": "energy",
+        "state_class": "measurement",
+        "icon": "mdi:solar-power",
+        "entity_category": None,
+        "enabled_by_default": False,  # Disable by default - not provided by all inverters and less relevant for most users
+    },
+    "KLY": {
+        "name": "Energy Last Year",
+        "translation_key": "kly",
+        "unit": "kWh",
+        "device_class": "energy",
+        "state_class": "measurement",
+        "icon": "mdi:solar-power",
+        "entity_category": None,
+        "enabled_by_default": False,  # Disable by default - not provided by all inverters and less relevant for most users
+    },
     "TKK": {
         "name": "Inverter Temperature",
         "translation_key": "tkk",
@@ -455,6 +596,26 @@ SENSOR_TYPES = {
         "icon": "mdi:thermometer",
         "entity_category": EntityCategory.DIAGNOSTIC,  # Diagnostic
         "enabled_by_default": False,  # Disable by default - not critical for most users
+    },
+    "TK2": {
+        "name": "Inverter Temperature 2",
+        "translation_key": "tk2",
+        "unit": "°C",
+        "device_class": "temperature",
+        "state_class": "measurement",
+        "icon": "mdi:thermometer",
+        "entity_category": EntityCategory.DIAGNOSTIC,
+        "enabled_by_default": False,
+    },
+    "TK3": {
+        "name": "Inverter Temperature 3",
+        "translation_key": "tk3",
+        "unit": "°C",
+        "device_class": "temperature",
+        "state_class": "measurement",
+        "icon": "mdi:thermometer",
+        "entity_category": EntityCategory.DIAGNOSTIC,
+        "enabled_by_default": False,
     },
     "KHR": {
         "name": "Power On Hours",
@@ -472,6 +633,35 @@ SENSOR_TYPES = {
         "icon": "mdi:restart",
         "entity_category": EntityCategory.DIAGNOSTIC,  # Diagnostic
         "enabled_by_default": False,  # Disable by default - diagnostic info
+    },
+    "PRL": {
+        "name": "Relative Power",
+        "translation_key": "prl",
+        "unit": "%",
+        "state_class": "measurement",
+        "icon": "mdi:gauge",
+        "entity_category": None,
+        "enabled_by_default": False,  # Disable by default
+    },
+    "PIN": {
+        "name": "Installed Power",
+        "translation_key": "pin",
+        "unit": "W",
+        "device_class": "power",
+        "state_class": "measurement",
+        "icon": "mdi:information",
+        "entity_category": EntityCategory.DIAGNOSTIC,
+        "enabled_by_default": False,
+    },
+    "TNF": {
+        "name": "Grid Frequency",
+        "translation_key": "tnf",
+        "unit": "Hz",
+        "device_class": "frequency",
+        "state_class": "measurement",
+        "icon": "mdi:sine-wave",
+        "entity_category": EntityCategory.DIAGNOSTIC,
+        "enabled_by_default": False,
     },
     "SAL": {
         "name": "Alarm Codes",

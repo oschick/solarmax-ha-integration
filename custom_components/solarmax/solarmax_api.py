@@ -60,14 +60,15 @@ PROTO_ERROR_INVALID_PORT = "IPN"  # Invalid port number
 # Network Variable Types (per MaxComm protocol spec)
 # Defines the resolution/scaling for each data type.
 # =============================================================================
-# Spannung_2:         0.1 V/digit    (UDC, UL1, UL2, UL3, UD01, UD02)
-# Strom_positiv_2:    0.01 A/digit   (IDC, ID01, ID02, IL1, IL2, IL3)
-# Leistung:           0.5 W/digit    (PAC, PDC, PD01, PD02, PIN)
-# Energie_1:          0.1 kWh/digit  (KDY)
-# Energie_2:          1 kWh/digit    (KMT, KYR, KT0)
+# Spannung_2:         0.1 V/digit    (UDC, UL1, UL2, UL3, UD01, UD02, UD03)
+# Strom_positiv_2:    0.01 A/digit   (IDC, ID01, ID02, ID03, IL1, IL2, IL3)
+# Leistung:           0.5 W/digit    (PAC, PDC, PD01, PD02, PD03, PIN)
+# Energie_1:          0.1 kWh/digit  (KDY, KDL)
+# Energie_2:          1 kWh/digit    (KMT, KYR, KT0, KLM, KLY)
+# Frequenz:           0.1 Hz/digit   (TNF)
 # Temperatur_positiv: 1 °C/digit     (TKK)
 # ohne_Einheit_1:     1/digit 32-bit (KHR)
-# ohne_Einheit_2:     1/digit 16-bit (SWV, TYP)
+# ohne_Einheit_2:     1/digit 16-bit (SWV, TYP, PRL)
 # Register:           1/digit 16-bit (SYS, SAL)
 
 # =============================================================================
@@ -100,18 +101,29 @@ FIELD_MAP_INVERTER = {
     "KT0": "Energy_Total",  # Energie_2 (1 kWh/digit)
     "KHR": "Operating_Hours",  # ohne_Einheit_1 (1 h/digit)
     "TKK": "Temperature_Power_Unit",  # Temperatur_positiv (1 °C/digit)
+    "TK2": "Temperature_Power_Unit_2",  # Temperatur_positiv (1 °C/digit)
+    "TK3": "Temperature_Power_Unit_3",  # Temperatur_positiv (1 °C/digit)
     "SYS": "Status_Code",  # Register
     "SAL": "Alarm_Code",  # Register (bitmask)
     "TYP": "Device_Type",  # ohne_Einheit_2 (device type identifier)
     "SWV": "Software_Version",  # ohne_Einheit_2 (firmware version number)
+    "PIN": "Installed_Power",  # Leistung (0.5 W/digit) — rated inverter power
+    "PRL": "Relative_Power",  # ohne_Einheit_2 (1 %/digit) — % of rated power
     # Model-specific keys (not in official MaxComm spec, but supported by some models)
     "PDC": "DC_Power",  # Leistung (0.5 W/digit)
     "PD01": "DC_Power_String_1",  # Leistung (0.5 W/digit)
     "PD02": "DC_Power_String_2",  # Leistung (0.5 W/digit)
+    "PD03": "DC_Power_String_3",  # Leistung (0.5 W/digit)
     "UD01": "DC_Voltage_String_1",  # Spannung_2 (0.1 V/digit)
     "UD02": "DC_Voltage_String_2",  # Spannung_2 (0.1 V/digit)
+    "UD03": "DC_Voltage_String_3",  # Spannung_2 (0.1 V/digit)
     "ID01": "DC_Current_String_1",  # Strom_positiv_2 (0.01 A/digit)
     "ID02": "DC_Current_String_2",  # Strom_positiv_2 (0.01 A/digit)
+    "ID03": "DC_Current_String_3",  # Strom_positiv_2 (0.01 A/digit)
+    "KDL": "Energy_Yesterday",  # Energie_1 (0.1 kWh/digit)
+    "KLM": "Energy_Last_Month",  # Energie_2 (1 kWh/digit)
+    "KLY": "Energy_Last_Year",  # Energie_2 (1 kWh/digit)
+    "TNF": "Grid_Frequency",  # Frequenz (0.1 Hz/digit)
     "CAC": "Startups",  # ohne_Einheit_1
 }
 
@@ -361,16 +373,21 @@ class SolarmaxAPI:
         if field in ("SYS", "SAL"):
             # Register type: raw value, decoded at sensor level (enum/bitmask)
             return value
-        elif field in ("PAC", "PDC", "PD01", "PD02"):
+        elif field in ("PAC", "PDC", "PD01", "PD02", "PD03", "PIN"):
             # Leistung: resolution 0.5 W/digit
             return value / 2
-        elif field in ("UL1", "UL2", "UL3", "UDC", "UD01", "UD02", "KDY"):
+        elif field in ("UL1", "UL2", "UL3", "UDC", "UD01", "UD02", "UD03"):
             # Spannung_2: resolution 0.1 V/digit
-            # Energie_1 (KDY): resolution 0.1 kWh/digit (same divisor)
             return value / 10.0
-        elif field in ("IDC", "ID01", "ID02", "IL1", "IL2", "IL3"):
+        elif field in ("KDY", "KDL"):
+            # Energie_1: resolution 0.1 kWh/digit
+            return value / 10.0
+        elif field in ("IDC", "ID01", "ID02", "ID03", "IL1", "IL2", "IL3"):
             # Strom_positiv_2: resolution 0.01 A/digit
             return value / 100.0
+        elif field == "TNF":
+            # Frequenz: resolution 0.1 Hz/digit
+            return value / 10.0
         else:
             # Energie_2, Temperatur_positiv, ohne_Einheit: resolution 1/digit
             return value
