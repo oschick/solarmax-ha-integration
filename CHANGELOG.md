@@ -7,6 +7,39 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.2.0] - 2026-05-17
+
+### Added
+- **Inverter Type Detection**: Device info now shows the actual inverter model (e.g. "SolarMax 7TP2") instead of generic "Inverter", queried via the MaxComm TYP register
+- **Firmware Version Display**: Device info shows the real firmware version from the inverter (SWV key) instead of hardcoded "1.0.0"
+- **Device Type Map**: Complete mapping of all 116 SolarMax device types from the MaxComm protocol specification (Section 2.3)
+- **DC Voltage Sensor (UDC)**: Added official MaxComm protocol key for total DC input voltage
+- **Response Checksum Verification**: Validates CRC on every inverter response to detect corrupt data
+- **Protocol Error Handling**: Detects and reports MaxComm interface errors (IPR: invalid protocol, IPN: invalid port)
+
+### Changed
+- **MaxComm Protocol Reference**: Integration fully refactored against the official "MaxComm Datenprotokoll" (August 2022) specification
+
+### Fixed
+- **Energy Day Unit in README**: Corrected from "Wh" to "kWh" (per Energie_1 network variable, 0.1 kWh/digit)
+
+## [1.1.0] - 2026-05-16
+
+### Added
+- **French Translation**: Full French localization for all UI strings, entity names, status codes, and alarm states
+- **Inverter Emulator**: TCP test tool (`tools/inverter_emulator.py`) for offline development with 7 scenarios and interactive mode
+- **Translations Section in README**: Documentation on supported languages, status/alarm code tables, and how to contribute new languages
+
+### Changed
+- **Enum Sensor Pattern**: Status (SYS) and alarm (SAL) sensors now use Home Assistant's enum device class with translation-based state display
+- **Status Code Mapping**: Corrected to actual Solarmax protocol codes (20000–20008) with proper English option keys
+- **Alarm Bitmask Decoding**: Proper bitmask handling (power-of-2 values: 1, 2, 4, 8, ... 65536) with `active_alarms` attribute for multiple simultaneous alarms
+- **strings.json Rebuilt**: Fully synced with all 24 sensor definitions (was missing 20 sensors, had 3 stale entries)
+
+### Fixed
+- **Status/Alarm Translation Bug**: Sensors no longer show hardcoded German strings — HA automatically translates via the enum state translation system based on user's language setting
+- **Status Code Display**: Now shows human-readable translated text (e.g. "MPP operation") instead of raw numeric code
+
 ## [1.0.7] - 2026-03-27
 
 ### New Feature
