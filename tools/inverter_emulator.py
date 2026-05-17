@@ -59,6 +59,10 @@ class InverterState:
     # Alarm (SAL) - bitmask
     sal: int = 0  # No error
 
+    # Device identification (per MaxComm protocol Section 2.3/2.4)
+    typ: int = 20650  # Device Type: SolarMax 7TP2
+    swv: int = 40  # Software Version: 40 (0x28)
+
     # Power values (raw values before division)
     pac: int = 3000  # AC Power: 3000/2 = 1500W
     pdc: int = 3200  # DC Power: 3200/2 = 1600W
@@ -69,6 +73,7 @@ class InverterState:
     ul1: int = 2300  # AC Voltage Phase 1: 2300/10 = 230.0V
     ul2: int = 2310  # AC Voltage Phase 2: 2310/10 = 231.0V
     ul3: int = 2295  # AC Voltage Phase 3: 2295/10 = 229.5V
+    udc: int = 3490  # DC Voltage: 3490/10 = 349.0V
     ud01: int = 3500  # DC Voltage String 1: 3500/10 = 350.0V
     ud02: int = 3480  # DC Voltage String 2: 3480/10 = 348.0V
 
@@ -200,7 +205,7 @@ class SolarmaxEmulator:
             raw = getattr(self.state, field.lower(), 0)
 
         # Add small random noise for realism
-        if self.state.add_noise and raw > 0 and field not in ("SYS", "SAL", "KT0", "KHR", "CAC"):
+        if self.state.add_noise and raw > 0 and field not in ("SYS", "SAL", "KT0", "KHR", "CAC", "TYP", "SWV"):
             noise = random.randint(-max(1, raw // 50), max(1, raw // 50))
             raw = max(0, raw + noise)
 

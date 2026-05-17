@@ -88,6 +88,9 @@
       "ul3": {
         "name": "AC-Spannung Phase 3"
       },
+      "udc": {
+        "name": "DC-Spannung"
+      },
       "ud01": {
         "name": "DC-Spannung String 1"
       },

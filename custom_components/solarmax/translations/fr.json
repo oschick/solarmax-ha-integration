@@ -88,6 +88,9 @@
       "ul3": {
         "name": "Tension AC Phase 3"
       },
+      "udc": {
+        "name": "Tension DC"
+      },
       "ud01": {
         "name": "Tension DC String 1"
       },

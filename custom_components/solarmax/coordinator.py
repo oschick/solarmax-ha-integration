@@ -17,6 +17,7 @@ from .const import (
     CONF_PORT,
     CONF_UPDATE_INTERVAL,
     DEFAULT_ADDRESS,
+    DEVICE_TYPE_MAP,
     DOMAIN,
 )
 from .solarmax_api import SolarmaxAPI, SolarmaxConnectionError, SolarmaxTimeoutError
@@ -49,6 +50,10 @@ class SolarmaxCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         self._consecutive_failures = 0
         self._last_successful_update = None
         self._is_expected_offline = False
+
+        # Device identification (populated on first successful data fetch)
+        self._device_model: str | None = None
+        self._sw_version: str | None = None
 
     def _is_night_time(self) -> bool:
         """Check if it's currently night time (when inverter is expected to be offline)."""
@@ -87,6 +92,21 @@ class SolarmaxCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             self._consecutive_failures = 0
             self._last_successful_update = datetime.now()
             self._is_expected_offline = False
+
+            # Extract device identification from TYP and SWV keys (once)
+            if self._device_model is None and "TYP" in data:
+                typ_value = data["TYP"].get("raw_value")
+                if typ_value is not None:
+                    self._device_model = DEVICE_TYPE_MAP.get(
+                        typ_value, f"Unknown ({typ_value})"
+                    )
+                    _LOGGER.info("Detected inverter type: %s", self._device_model)
+
+            if self._sw_version is None and "SWV" in data:
+                swv_value = data["SWV"].get("raw_value")
+                if swv_value is not None:
+                    self._sw_version = str(swv_value)
+                    _LOGGER.debug("Detected firmware version: %s", self._sw_version)
 
             _LOGGER.debug("Successfully updated data from inverter")
             return data
@@ -152,3 +172,13 @@ class SolarmaxCoordinator(DataUpdateCoordinator[dict[str, Any]]):
     def last_successful_update(self) -> datetime | None:
         """Return the timestamp of the last successful update."""
         return self._last_successful_update
+
+    @property
+    def device_model(self) -> str | None:
+        """Return the detected inverter model name (from TYP key)."""
+        return self._device_model
+
+    @property
+    def sw_version(self) -> str | None:
+        """Return the detected firmware version (from SWV key)."""
+        return self._sw_version

@@ -144,14 +144,29 @@ class SolarmaxSensor(CoordinatorEntity[SolarmaxCoordinator], SensorEntity):
         if "icon" in sensor_config:
             self._attr_icon = sensor_config["icon"]
 
-        # Device info
+        # Store references for dynamic device info
+        self._device_name = device_name
+        self._entry_id = entry.entry_id
+
+        # Device info - model and sw_version are updated dynamically once detected
         self._attr_device_info = {
             "identifiers": {(DOMAIN, entry.entry_id)},
             "name": device_name,
             "manufacturer": "Solarmax",
-            "model": "Inverter",
-            "sw_version": "1.0.0",
+            "model": coordinator.device_model or "Inverter",
+            "sw_version": coordinator.sw_version,
         }
+
+    @property
+    def device_info(self):
+        """Return device info, dynamically updated with detected model."""
+        model = self.coordinator.device_model or "Inverter"
+        sw_version = self.coordinator.sw_version
+        # Update device info if model was detected after initial setup
+        if model != self._attr_device_info.get("model") or sw_version != self._attr_device_info.get("sw_version"):
+            self._attr_device_info["model"] = model
+            self._attr_device_info["sw_version"] = sw_version
+        return self._attr_device_info
 
     def _is_night_time(self) -> bool:
         """Check if it's currently night time (between sunset and sunrise)."""

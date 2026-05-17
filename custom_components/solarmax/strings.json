@@ -88,6 +88,9 @@
       "ul3": {
         "name": "AC Voltage Phase 3"
       },
+      "udc": {
+        "name": "DC Voltage"
+      },
       "ud01": {
         "name": "DC Voltage String 1"
       },

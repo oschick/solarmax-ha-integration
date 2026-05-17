@@ -17,6 +17,152 @@ DEFAULT_ADDRESS = 1
 DEFAULT_UPDATE_INTERVAL = 30
 DEFAULT_DEVICE_NAME = "Solarmax Inverter"
 
+# =============================================================================
+# Device Type Map (TYP key) - per MaxComm Protocol Section 2.3
+# Maps the TYP register value (decimal) to the device model name.
+# =============================================================================
+DEVICE_TYPE_MAP: dict[int, str] = {
+    # TS-SV MT series
+    20812: "SolarMax 1440TS-SV MT",
+    20809: "SolarMax 1080TS-SV MT",
+    20806: "SolarMax 720TS-SV MT",
+    20803: "SolarMax 360TS-SV MT",
+    # TS-SV ST series
+    20712: "SolarMax 1440TS-SV ST",
+    20709: "SolarMax 1080TS-SV ST",
+    20706: "SolarMax 720TS-SV ST",
+    20703: "SolarMax 360TS-SV ST",
+    20700: "SolarMax 360TS-SV",
+    # TP series
+    20653: "SolarMax 4TP",
+    20652: "SolarMax 5TP2",
+    20651: "SolarMax 6TP2",
+    20650: "SolarMax 7TP2",
+    # P series
+    20640: "SolarMax 5000P",
+    20635: "SolarMax 4600P",
+    20630: "SolarMax 4000P",
+    20620: "SolarMax 3000P",
+    20610: "SolarMax 2000P",
+    # TS-SV MT (1320 series)
+    20512: "SolarMax 1320TS-SV MT",
+    20509: "SolarMax 990TS-SV MT",
+    20506: "SolarMax 660TS-SV MT",
+    20503: "SolarMax 330TS-SV MT",
+    # TS-SV ST (1320 series)
+    20412: "SolarMax 1320TS-SV ST",
+    20409: "SolarMax 990TS-SV ST",
+    20406: "SolarMax 660TS-SV ST",
+    20403: "SolarMax 330TS-SV ST",
+    # TS series
+    20318: "SolarMax 300TS MT",
+    20316: "SolarMax 300TS ST",
+    20314: "SolarMax 100TS",
+    20312: "SolarMax 80TS",
+    20310: "SolarMax 50TS",
+    # HT series
+    20266: "SolarMax 32HT2",
+    20262: "SolarMax 32HT4",
+    20260: "SolarMax 30HT4",
+    20258: "SolarMax 25HT4",
+    20257: "SolarMax 25HT2",
+    20256: "SolarMax 20HT4",
+    20255: "SolarMax 20HT2",
+    # MT series A
+    20254: "SolarMax 18MT3 A",
+    20252: "SolarMax 15MT3 A",
+    20250: "SolarMax 12MT2 A",
+    # MT series SV
+    20240: "SolarMax 18MT3 SV",
+    # MT series
+    20215: "SolarMax 8MT2",
+    20213: "SolarMax 15MT2",
+    20211: "SolarMax 13MT2",
+    20210: "SolarMax 10MT2",
+    20208: "SolarMax 15MT3",
+    20206: "SolarMax 13MT3",
+    20202: "SolarMax 10MT",
+    # S series
+    20110: "SolarMax 35S",
+    20100: "SolarMax 20S",
+    20040: "SolarMax 6000S",
+    20030: "SolarMax 4200S",
+    20020: "SolarMax 3000S",
+    20010: "SolarMax 2000S",
+    # SXT series
+    12060: "SolarMax 110SXT",
+    12055: "SolarMax 255SXT",
+    12054: "SolarMax 250SXT",
+    # SHT-S series
+    11130: "SolarMax 60SHT-S",
+    11125: "SolarMax 50SHT-S",
+    11120: "SolarMax 60SHT-S2",
+    11115: "SolarMax 50SHT-S2",
+    # SHT series
+    11110: "SolarMax 60SHT",
+    11105: "SolarMax 50SHT",
+    11100: "SolarMax 30SHT",
+    11095: "SolarMax 28SHT",
+    11090: "SolarMax 25SHT",
+    11085: "SolarMax 22SHT",
+    11080: "SolarMax 20SHT",
+    11075: "SolarMax 17SHT",
+    # SMT series
+    11070: "SolarMax 15SMT",
+    11065: "SolarMax 13SMT",
+    11060: "SolarMax 10SMT",
+    11055: "SolarMax 8SMT",
+    11050: "SolarMax 6SMT",
+    # SP series
+    11045: "SolarMax 6000SP",
+    11040: "SolarMax 5000SP",
+    11035: "SolarMax 4600SP",
+    11030: "SolarMax 4000SP",
+    11025: "SolarMax 3600SP",
+    11020: "SolarMax 3000SP",
+    11015: "SolarMax 2500SP",
+    11010: "SolarMax 2000SP",
+    11005: "SolarMax 1500SP",
+    11000: "SolarMax 1000SP",
+    # MaxCount / MaxMeteo
+    10300: "MaxCount",
+    10210: "MaxMeteo plus2T",
+    10200: "MaxMeteo",
+    # C/E series (6000)
+    6010: "SolarMax 6000C",
+    6000: "SolarMax 6000E",
+    # C/E series (4000)
+    4200: "SolarMax 4200C",
+    4010: "SolarMax 4000C",
+    4001: "SolarMax 4000",
+    4000: "SolarMax 4000E",
+    # C/E series (3000)
+    3010: "SolarMax 3000C",
+    3001: "SolarMax 3000E",
+    3000: "SolarMax 3000",
+    # C/E series (2000)
+    2010: "SolarMax 2000C",
+    2001: "SolarMax 2000E",
+    2000: "SolarMax 2000",
+    # Smaller models
+    330: "SolarMax 330C-SV",
+    300: "SolarMax 300C",
+    126: "SolarMax 125",
+    101: "SolarMax 100",
+    100: "SolarMax 100C",
+    80: "SolarMax 80C",
+    61: "SolarMax 60",
+    50: "SolarMax 50C",
+    46: "SolarMax 45",
+    41: "SolarMax 40",
+    35: "SolarMax 35C",
+    31: "SolarMax 30",
+    30: "SolarMax 30C",
+    25: "SolarMax 25C",
+    21: "SolarMax 20",
+    20: "SolarMax 20C",
+}
+
 # Status code mappings (SYS) - maps raw integer code to option key
 SYS_STATUS_MAP: dict[int, str] = {
     20000: "no_communication",
@@ -145,13 +291,23 @@ SENSOR_TYPES = {
         "entity_category": EntityCategory.DIAGNOSTIC,  # Detailed diagnostic
         "enabled_by_default": False,  # Disable by default - most users don't need this
     },
+    "UDC": {
+        "name": "DC Voltage",
+        "translation_key": "udc",
+        "unit": "V",
+        "device_class": "voltage",
+        "state_class": "measurement",
+        "icon": "mdi:flash",
+        "entity_category": EntityCategory.DIAGNOSTIC,  # Detailed diagnostic
+        "enabled_by_default": False,  # Disable by default - advanced users only
+    },
     "UD01": {
         "name": "DC Voltage String 1",
         "translation_key": "ud01",
         "unit": "V",
         "device_class": "voltage",
         "state_class": "measurement",
-        "icon": "mdi:sine-wave",
+        "icon": "mdi:flash",
         "entity_category": EntityCategory.DIAGNOSTIC,  # Detailed diagnostic
         "enabled_by_default": False,  # Disable by default - advanced users only
     },
@@ -161,7 +317,7 @@ SENSOR_TYPES = {
         "unit": "V",
         "device_class": "voltage",
         "state_class": "measurement",
-        "icon": "mdi:sine-wave",
+        "icon": "mdi:flash",
         "entity_category": EntityCategory.DIAGNOSTIC,  # Detailed diagnostic
         "enabled_by_default": False,  # Disable by default - advanced users only
     },
