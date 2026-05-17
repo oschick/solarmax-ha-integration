@@ -27,6 +27,8 @@ A Home Assistant custom integration for Solarmax solar inverters. This integrati
 
 ### Tested Models
 - **Solarmax 7TP2 Inverter** ✅ Fully tested and confirmed working
+- **Solarmax 4200S Inverter** ✅ Confirmed working by user reports
+- **Solarmax 3000S Inverter** ✅ Confirmed working by user reports
 
 ### Likely Compatible Models
 - Solarmax inverters manufactured **mainly before 2015**
@@ -46,7 +48,7 @@ A Home Assistant custom integration for Solarmax solar inverters. This integrati
 - Models that only support Modbus RTU/TCP
 - Cloud-only models without local network access
 
-> **Note:** If you're unsure about compatibility, try the integration in test mode. It will fail gracefully if your model isn't supported.
+> **Note:** If you're unsure about compatibility, try the integration. It will fail gracefully if your model isn't supported.
 
 ## Supported Functions
 
