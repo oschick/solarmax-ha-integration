@@ -68,7 +68,9 @@ typ_mock = "{" + typ_resp_data + typ_crc + "}"
 typ_result = api.convert_to_json(FIELD_MAP_INVERTER, typ_mock)
 assert typ_result["TYP"]["raw_value"] == 20650  # SolarMax 7TP2
 assert typ_result["SWV"]["raw_value"] == 40  # Firmware v40
-print(f"TYP/SWV parsing: TYP={typ_result['TYP']['raw_value']} SWV={typ_result['SWV']['raw_value']} PASS")
+print(
+    f"TYP/SWV parsing: TYP={typ_result['TYP']['raw_value']} SWV={typ_result['SWV']['raw_value']} PASS"
+)
 
 # Test "not applicable" key handling (key returned without value)
 na_resp_data = "01;FB;12|64:PAC=1F4;FRT|"
@@ -86,5 +88,7 @@ print(f"  {full_req}")
 print(f"  Length: {len(full_req)} bytes")
 
 print(f"\nFIELD_MAP_INVERTER: {len(FIELD_MAP_INVERTER)} keys")
-print(f"Protocol constants: STX={PROTO_STX!r} ETX={PROTO_ETX!r} PORT_DATA=0x{PROTO_PORT_DATA:X}")
+print(
+    f"Protocol constants: STX={PROTO_STX!r} ETX={PROTO_ETX!r} PORT_DATA=0x{PROTO_PORT_DATA:X}"
+)
 print("\nAll MaxComm protocol tests PASSED!")

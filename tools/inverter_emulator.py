@@ -106,75 +106,165 @@ def get_scenario_state(scenario: str) -> InverterState:
         return InverterState(
             sys=20000,  # No communication
             sal=0,
-            pac=0, pdc=0, pd01=0, pd02=0,
-            ul1=0, ul2=0, ul3=0,
-            ud01=0, ud02=0,
-            idc=0, id01=0, id02=0,
-            il1=0, il2=0, il3=0,
-            kdy=85, kmt=350, kyr=4200, kt0=28500,
-            tkk=18, khr=15230, cac=1847,
+            pac=0,
+            pdc=0,
+            pd01=0,
+            pd02=0,
+            ul1=0,
+            ul2=0,
+            ul3=0,
+            ud01=0,
+            ud02=0,
+            idc=0,
+            id01=0,
+            id02=0,
+            il1=0,
+            il2=0,
+            il3=0,
+            kdy=85,
+            kmt=350,
+            kyr=4200,
+            kt0=28500,
+            tkk=18,
+            khr=15230,
+            cac=1847,
             add_noise=False,
         )
     elif scenario == "starting":
         return InverterState(
             sys=20003,  # Starting up
             sal=0,
-            pac=0, pdc=100, pd01=50, pd02=50,
-            ul1=2300, ul2=2310, ul3=2295,
-            ud01=2800, ud02=2750,
-            idc=10, id01=5, id02=5,
-            il1=0, il2=0, il3=0,
-            kdy=0, kmt=350, kyr=4200, kt0=28500,
-            tkk=22, khr=15230, cac=1848,
+            pac=0,
+            pdc=100,
+            pd01=50,
+            pd02=50,
+            ul1=2300,
+            ul2=2310,
+            ul3=2295,
+            ud01=2800,
+            ud02=2750,
+            idc=10,
+            id01=5,
+            id02=5,
+            il1=0,
+            il2=0,
+            il3=0,
+            kdy=0,
+            kmt=350,
+            kyr=4200,
+            kt0=28500,
+            tkk=22,
+            khr=15230,
+            cac=1848,
             add_noise=False,
         )
     elif scenario == "alarm":
         return InverterState(
             sys=20001,  # In operation
             sal=2,  # Insulation fault DC side
-            pac=500, pdc=600, pd01=300, pd02=300,
-            ul1=2300, ul2=2310, ul3=2295,
-            ud01=3200, ud02=3180,
-            idc=200, id01=100, id02=100,
-            il1=75, il2=72, il3=73,
-            kdy=30, kmt=350, kyr=4200, kt0=28500,
-            tkk=38, khr=15230, cac=1847,
+            pac=500,
+            pdc=600,
+            pd01=300,
+            pd02=300,
+            ul1=2300,
+            ul2=2310,
+            ul3=2295,
+            ud01=3200,
+            ud02=3180,
+            idc=200,
+            id01=100,
+            id02=100,
+            il1=75,
+            il2=72,
+            il3=73,
+            kdy=30,
+            kmt=350,
+            kyr=4200,
+            kt0=28500,
+            tkk=38,
+            khr=15230,
+            cac=1847,
         )
     elif scenario == "multi_alarm":
         return InverterState(
             sys=20001,  # In operation
             sal=5,  # External fault 1 (1) + Earth fault current (4) = 5
-            pac=200, pdc=250, pd01=125, pd02=125,
-            ul1=2280, ul2=2290, ul3=2275,
-            ud01=3000, ud02=2980,
-            idc=80, id01=40, id02=40,
-            il1=30, il2=28, il3=29,
-            kdy=15, kmt=350, kyr=4200, kt0=28500,
-            tkk=45, khr=15230, cac=1847,
+            pac=200,
+            pdc=250,
+            pd01=125,
+            pd02=125,
+            ul1=2280,
+            ul2=2290,
+            ul3=2275,
+            ud01=3000,
+            ud02=2980,
+            idc=80,
+            id01=40,
+            id02=40,
+            il1=30,
+            il2=28,
+            il3=29,
+            kdy=15,
+            kmt=350,
+            kyr=4200,
+            kt0=28500,
+            tkk=45,
+            khr=15230,
+            cac=1847,
         )
     elif scenario == "max_power":
         return InverterState(
             sys=20006,  # Max power operation
             sal=0,
-            pac=10000, pdc=10500, pd01=5250, pd02=5250,
-            ul1=2350, ul2=2360, ul3=2345,
-            ud01=5800, ud02=5750,
-            idc=1800, id01=900, id02=900,
-            il1=1450, il2=1440, il3=1445,
-            kdy=250, kmt=1200, kyr=4800, kt0=29000,
-            tkk=58, khr=15230, cac=1847,
+            pac=10000,
+            pdc=10500,
+            pd01=5250,
+            pd02=5250,
+            ul1=2350,
+            ul2=2360,
+            ul3=2345,
+            ud01=5800,
+            ud02=5750,
+            idc=1800,
+            id01=900,
+            id02=900,
+            il1=1450,
+            il2=1440,
+            il3=1445,
+            kdy=250,
+            kmt=1200,
+            kyr=4800,
+            kt0=29000,
+            tkk=58,
+            khr=15230,
+            cac=1847,
         )
     elif scenario == "low_irradiation":
         return InverterState(
             sys=20002,  # Low irradiation
             sal=0,
-            pac=100, pdc=150, pd01=75, pd02=75,
-            ul1=2300, ul2=2310, ul3=2295,
-            ud01=2200, ud02=2150,
-            idc=30, id01=15, id02=15,
-            il1=15, il2=14, il3=14,
-            kdy=5, kmt=350, kyr=4200, kt0=28500,
-            tkk=25, khr=15230, cac=1847,
+            pac=100,
+            pdc=150,
+            pd01=75,
+            pd02=75,
+            ul1=2300,
+            ul2=2310,
+            ul3=2295,
+            ud01=2200,
+            ud02=2150,
+            idc=30,
+            id01=15,
+            id02=15,
+            il1=15,
+            il2=14,
+            il3=14,
+            kdy=5,
+            kmt=350,
+            kyr=4200,
+            kt0=28500,
+            tkk=25,
+            khr=15230,
+            cac=1847,
         )
     else:
         # Default: day / normal MPP operation
@@ -205,7 +295,11 @@ class SolarmaxEmulator:
             raw = getattr(self.state, field.lower(), 0)
 
         # Add small random noise for realism
-        if self.state.add_noise and raw > 0 and field not in ("SYS", "SAL", "KT0", "KHR", "CAC", "TYP", "SWV"):
+        if (
+            self.state.add_noise
+            and raw > 0
+            and field not in ("SYS", "SAL", "KT0", "KHR", "CAC", "TYP", "SWV")
+        ):
             noise = random.randint(-max(1, raw // 50), max(1, raw // 50))
             raw = max(0, raw + noise)
 
@@ -270,7 +364,9 @@ class SolarmaxEmulator:
 
                 if fields:
                     response = self.build_response(fields)
-                    _LOGGER.info(f"  Request:  {len(fields)} fields: {', '.join(fields)}")
+                    _LOGGER.info(
+                        f"  Request:  {len(fields)} fields: {', '.join(fields)}"
+                    )
                     _LOGGER.debug(f"  Response: {response}")
                     client_socket.send(response.encode("utf-8"))
                 else:
@@ -364,7 +460,9 @@ def interactive_loop(emulator: SolarmaxEmulator):
         elif command == "help":
             print("Commands:")
             print("  set <field> <value>   - Set a field (pac, pdc, sys, sal, etc.)")
-            print("  scenario <name>       - day, night, starting, alarm, multi_alarm, max_power, low_irradiation")
+            print(
+                "  scenario <name>       - day, night, starting, alarm, multi_alarm, max_power, low_irradiation"
+            )
             print("  status                - Show current state")
             print("  quit                  - Stop emulator")
         elif command == "status":
@@ -430,7 +528,16 @@ def main():
         "--scenario",
         type=str,
         default="day",
-        choices=["day", "night", "starting", "alarm", "multi_alarm", "max_power", "low_irradiation", "custom"],
+        choices=[
+            "day",
+            "night",
+            "starting",
+            "alarm",
+            "multi_alarm",
+            "max_power",
+            "low_irradiation",
+            "custom",
+        ],
         help="Simulation scenario (default: day)",
     )
     parser.add_argument(

@@ -163,7 +163,9 @@ class SolarmaxSensor(CoordinatorEntity[SolarmaxCoordinator], SensorEntity):
         model = self.coordinator.device_model or "Inverter"
         sw_version = self.coordinator.sw_version
         # Update device info if model was detected after initial setup
-        if model != self._attr_device_info.get("model") or sw_version != self._attr_device_info.get("sw_version"):
+        if model != self._attr_device_info.get(
+            "model"
+        ) or sw_version != self._attr_device_info.get("sw_version"):
             self._attr_device_info["model"] = model
             self._attr_device_info["sw_version"] = sw_version
         return self._attr_device_info
