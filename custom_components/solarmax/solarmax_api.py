@@ -421,6 +421,10 @@ class SolarmaxAPI:
                 else:
                     raise SolarmaxTimeoutError("Empty response received")
 
+            except SolarmaxProtocolError as e:
+                # Protocol errors (IPR/IPN) are deterministic — don't retry
+                _LOGGER.error(f"Protocol error from inverter: {e}")
+                raise
             except (SolarmaxConnectionError, SolarmaxTimeoutError) as e:
                 last_exception = e
                 _LOGGER.debug(f"Data retrieval attempt {attempt + 1} failed: {e}")
@@ -470,7 +474,13 @@ class SolarmaxAPI:
                 )
 
             # Check for interface error messages (port 0x3E8 = 1000)
-            if f"{PROTO_FRS}{format(PROTO_PORT_MESSAGE, 'X')}{PROTO_US}" in data:
+            # Match both "3E8" and "03E8" (some devices zero-pad the port field)
+            port_hex = format(PROTO_PORT_MESSAGE, "X")
+            port_hex_padded = format(PROTO_PORT_MESSAGE, "04X")
+            if (
+                f"{PROTO_FRS}{port_hex}{PROTO_US}" in data
+                or f"{PROTO_FRS}{port_hex_padded}{PROTO_US}" in data
+            ):
                 error_data = data.split(PROTO_US)[1].split(PROTO_FRS)[0]
                 if PROTO_ERROR_INVALID_PROTOCOL in error_data:
                     raise SolarmaxProtocolError(
