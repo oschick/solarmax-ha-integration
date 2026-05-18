@@ -10,6 +10,7 @@ from custom_components.solarmax.solarmax_api import (
     SolarmaxProtocolError,
     SolarmaxTimeoutError,
     FIELD_MAP_INVERTER,
+    FIELD_MAP_DEVICE_INFO,
 )
 
 
@@ -352,3 +353,29 @@ def test_get_data_multi_frame_recv(mock_socket, api):
 
     assert "PAC" in result
     assert "UDC" in result
+
+
+def test_build_request_overflow_guard(api):
+    """Test that build_request raises when request exceeds 255 bytes."""
+    # Create a field map with enough keys to exceed the 255-byte limit
+    huge_map = {f"K{i:03d}": f"Field_{i}" for i in range(100)}
+    with pytest.raises(SolarmaxProtocolError, match="Request too large"):
+        api.build_request(huge_map)
+
+
+def test_build_request_within_limit(api):
+    """Test that build_request succeeds for FIELD_MAP_INVERTER (under 255 bytes)."""
+    request = api.build_request(FIELD_MAP_INVERTER)
+    assert len(request) <= 255
+    assert request.startswith("{")
+    assert request.endswith("}")
+
+
+def test_build_request_device_info(api):
+    """Test that build_request succeeds for FIELD_MAP_DEVICE_INFO."""
+    request = api.build_request(FIELD_MAP_DEVICE_INFO)
+    assert len(request) <= 255
+    assert "TYP" in request
+    assert "SWV" in request
+    assert "DIN" in request
+    assert "BDN" in request

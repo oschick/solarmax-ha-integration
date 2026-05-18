@@ -105,10 +105,6 @@ FIELD_MAP_INVERTER = {
     "TK3": "Temperature_Power_Unit_3",  # Temperatur_positiv (1 °C/digit)
     "SYS": "Status_Code",  # Register
     "SAL": "Alarm_Code",  # Register (bitmask)
-    "TYP": "Device_Type",  # ohne_Einheit_2 (device type identifier)
-    "SWV": "Software_Version",  # ohne_Einheit_2 (firmware version number)
-    "DIN": "Serial_Number",  # ohne_Einheit_2 (inverter serial number)
-    "BDN": "Build_Number",  # ohne_Einheit_2 (firmware build/release number)
     "PIN": "Installed_Power",  # Leistung (0.5 W/digit) — rated inverter power
     "PRL": "Relative_Power",  # ohne_Einheit_2 (1 %/digit) — % of rated power
     # Grid monitoring configuration (read from inverter settings)
@@ -132,6 +128,15 @@ FIELD_MAP_INVERTER = {
     "KLY": "Energy_Last_Year",  # Energie_2 (1 kWh/digit)
     "TNF": "Grid_Frequency",  # Frequenz (0.1 Hz/digit)
     "CAC": "Startups",  # ohne_Einheit_1
+}
+
+# Static identification keys — queried once for device info, not on every poll.
+# These values do not change during operation.
+FIELD_MAP_DEVICE_INFO = {
+    "TYP": "Device_Type",  # ohne_Einheit_2 (device type identifier)
+    "SWV": "Software_Version",  # ohne_Einheit_2 (firmware version number)
+    "DIN": "Serial_Number",  # ohne_Einheit_2 (inverter serial number)
+    "BDN": "Build_Number",  # ohne_Einheit_2 (firmware build/release number)
 }
 
 # MaxComm request template
@@ -287,8 +292,12 @@ class SolarmaxAPI:
                     buf = sock.recv(4096)
                     if len(buf) > 0:
                         response += buf.decode("utf-8", errors="ignore")
-                        # After receiving data, use a short timeout to check
-                        # for additional frames (continuation packets)
+                        # If the response ends with '}' (final frame ETX),
+                        # we have the complete response — no need to wait.
+                        # Continuation frames end with ')' instead.
+                        if response.endswith(PROTO_ETX):
+                            break
+                        # Still waiting for more frames, use short timeout
                         sock.settimeout(0.5)
                     else:
                         break
@@ -325,10 +334,20 @@ class SolarmaxAPI:
 
         The CRC is the sum of ASCII values of all characters from Src-Adr
         up to and including the FRS before the CRC field (Section 1.1).
+
+        Raises SolarmaxProtocolError if the request exceeds 255 bytes
+        (the maximum representable in the 2-hex-char length field).
         """
         fields = PROTO_FS.join(field_map.keys())
         req = REQUEST_TEMPLATE.replace("##", format(self.address, "02X"))
         req = req.replace("&&", fields)
+
+        if len(req) > 255:
+            raise SolarmaxProtocolError(
+                f"Request too large ({len(req)} bytes, max 255). "
+                f"Reduce the number of queried fields."
+            )
+
         # Length = total packet length (including STX/ETX, per protocol spec)
         req = req.replace("!!", format(len(req), "02X"))
         # CRC covers: from Src-Adr to (and including) the FRS before CRC
@@ -505,6 +524,30 @@ class SolarmaxAPI:
             raise last_exception
         else:
             raise SolarmaxConnectionError("Failed to get data from inverter")
+
+    def get_device_info(self) -> dict[str, Any]:
+        """Query static device identification keys (TYP, SWV, DIN, BDN).
+
+        These values do not change during operation and should only be
+        queried once (e.g. during setup or first refresh).
+        """
+        sock = None
+        try:
+            sock = self._create_socket_connection(retries=2)
+            request = self.build_request(FIELD_MAP_DEVICE_INFO)
+            response = self._send_request_and_receive_response(sock, request)
+
+            if response:
+                self._last_successful_connection = datetime.now()
+                return self.convert_to_json(response)
+            else:
+                raise SolarmaxTimeoutError("Empty response received")
+        finally:
+            if sock:
+                try:
+                    sock.close()
+                except:
+                    pass
 
     def _split_response_frames(self, data: str) -> list[str]:
         """Split a multi-frame response into individual frames.
