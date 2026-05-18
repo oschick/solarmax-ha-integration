@@ -57,24 +57,38 @@ The integration provides multiple sensor entities organized by importance:
 
 #### Core Monitoring (Enabled by Default)
 - **AC Power (PAC)** - Current AC power output in Watts
-- **DC Power (PDC)** - Current DC power input in Watts  
+- **DC Power (PDC)** - Current DC power input in Watts
 - **Energy Day (KDY)** - Daily energy production in kWh
 - **Energy Month (KMT)** - Monthly energy production in kWh
 - **Energy Year (KYR)** - Yearly energy production in kWh
 - **Energy Total (KT0)** - Total lifetime energy production in kWh
-- **Status Code (SYS)** - Current inverter operational status
+- **Status Code (SYS)** - Current inverter operational status (enum, ~110 states)
 - **Alarm Codes (SAL)** - Current alarm/error codes (bitmask)
 
+#### Production History (Disabled by Default)
+- **Energy Yesterday (KDL)** - Previous day's energy production in kWh
+- **Energy Last Month (KLM)** - Previous month's energy production in kWh
+- **Energy Last Year (KLY)** - Previous year's energy production in kWh
+- **Relative Power (PRL)** - Current output as % of rated power
+
 #### Diagnostic Sensors (Disabled by Default)
-- **DC Power Strings (PD01, PD02)** - Individual string power outputs
+- **DC Power Strings (PD01, PD02, PD03)** - Individual string power outputs
 - **AC Voltage Phases (UL1, UL2, UL3)** - Voltage per phase
 - **DC Voltage (UDC)** - Total DC input voltage
-- **DC Voltage Strings (UD01, UD02)** - Individual string voltages
+- **DC Voltage Strings (UD01, UD02, UD03)** - Individual string voltages
 - **AC Current Phases (IL1, IL2, IL3)** - Current per phase
-- **DC Current (IDC, ID01, ID02)** - Total and individual string currents
-- **Inverter Temperature (TKK)** - Internal operating temperature
+- **DC Current (IDC, ID01, ID02, ID03)** - Total and individual string currents
+- **Inverter Temperature (TKK, TK2, TK3)** - Internal operating temperatures (up to 3 sensors)
 - **Power On Hours (KHR)** - Total operational hours
 - **Startups (CAC)** - Number of startup cycles
+- **Installed Power (PIN)** - Rated peak power of the inverter in Watts
+- **Grid Frequency (TNF)** - Current AC grid frequency in Hz
+- **Grid Voltage Upper Limit (ULH)** - Configured maximum grid voltage in V
+- **Grid Voltage Lower Limit (ULL)** - Configured minimum grid voltage in V
+- **Grid Frequency Upper Limit (TNH)** - Configured maximum grid frequency in Hz
+- **Grid Frequency Lower Limit (TNL)** - Configured minimum grid frequency in Hz
+
+> **Note:** Not all inverter models support all sensors. Keys not recognised by the inverter are silently omitted from the response — unsupported sensors will show as unavailable.
 
 ### Platforms
 - **Sensor Platform** - All monitoring data
@@ -432,19 +446,73 @@ The integration is fully localized using Home Assistant's built-in translation s
 
 The **Status Code** and **Alarm Status** sensors use Home Assistant's enum sensor translation, meaning their values are automatically displayed in the user's configured language.
 
-**Status code states:**
+**Status code states** (SYS register, ~110 codes mapped — only a subset shown; the full list is in `const.py`):
 
-| Key | English | German | French |
-|-----|---------|--------|--------|
-| `no_communication` | No communication | Keine Kommunikation | Pas de communication |
-| `in_operation` | In operation | In Betrieb | En fonctionnement |
-| `low_irradiation` | Low irradiation | Zu wenig Einstrahlung | Faible irradiation |
-| `starting_up` | Starting up | Anfahren | Démarrage |
-| `mpp_operation` | MPP operation | Betrieb auf MPP | Fonctionnement MPP |
-| `fan_running` | Fan running | Ventilator läuft | Ventilateur en marche |
-| `max_power_operation` | Maximum power operation | Betrieb auf Maximalleistung | Fonctionnement à puissance maximale |
-| `temperature_limitation` | Temperature limitation | Temperaturbegrenzung | Limitation de température |
-| `grid_operation` | Grid operation | Netzbetrieb | Fonctionnement réseau |
+| Code | Key | English |
+|------|-----|---------|
+| 20000 | `no_communication` | No communication |
+| 20001 | `in_operation` | In operation |
+| 20002 | `low_irradiation` | Low irradiation |
+| 20003 | `starting_up` | Starting up |
+| 20004 | `mpp_operation` | MPP operation |
+| 20005 | `fan_running` | Fan running |
+| 20006 | `max_power_operation` | Maximum power operation |
+| 20007 | `temperature_limitation` | Temperature limitation |
+| 20008 | `grid_operation` | Grid operation |
+| 20009 | `dc_current_limited` | DC current limited |
+| 20010 | `ac_current_limited` | AC current limited |
+| 20011 | `test_mode` | Test mode |
+| 20012 | `remote_controlled` | Remote controlled |
+| 20013 | `start_delay` | Start delay |
+| 20014 | `external_limitation` | External limitation |
+| 20015 | `frequency_limitation` | Frequency limitation |
+| 20016 | `restart_limitation` | Restart limitation |
+| 20017 | `booting` | Booting |
+| 20018 | `insufficient_boot_power` | Insufficient boot power |
+| 20019 | `insufficient_power` | Insufficient power |
+| 20021 | `uninitialized` | Uninitialized |
+| 20022 | `disabled` | Disabled |
+| 20023 | `idle` | Idle |
+| 20024 | `powerunit_not_ready` | Power unit not ready |
+| 20050 | `program_firmware` | Programming firmware |
+| 20105 | `insulation_fault_dc` | Insulation fault DC |
+| 20109 | `vdc_too_high` | DC voltage too high |
+| 20114 | `leakage_current_high` | Leakage current too high |
+| 20115 | `no_grid` | No grid |
+| 20116 | `grid_frequency_high` | Grid frequency too high |
+| 20117 | `grid_frequency_low` | Grid frequency too low |
+| 20118 | `mains_error` | Mains error |
+| 20119 | `vac_10min_too_high` | AC voltage 10min too high |
+| 20122 | `grid_voltage_high` | Grid voltage too high |
+| 20123 | `grid_voltage_low` | Grid voltage too low |
+| 20124 | `temperature_too_high` | Temperature too high |
+| 20125 | `grid_current_asymmetric` | Grid current asymmetric |
+| 20126 | `external_input_error_1` | External input error 1 |
+| 20127 | `external_input_error_2` | External input error 2 |
+| 20129 | `incorrect_rotation` | Incorrect rotation direction |
+| 20130 | `wrong_device_type` | Wrong device type |
+| 20131 | `main_switch_off` | Main switch off |
+| 20132 | `diode_overtemperature` | Diode overtemperature |
+| 20134 | `fan_defective` | Fan defective |
+| 20145 | `dfdt_too_high` | df/dt too high |
+| 20150 | `ierr_step_too_high` | Ierr step too high |
+| 20154 | `shutdown_1` | Shutdown 1 |
+| 20155 | `shutdown_2` | Shutdown 2 |
+| 20157 | `insulation_fault_dc_3` | Insulation fault DC (3) |
+| 20172 | `vac_too_high_2` | AC voltage too high (2) |
+| 20173 | `vac_too_low_2` | AC voltage too low (2) |
+| 20176 | `error_dc_polarity` | Error DC polarity |
+| 20180 | `vdc_too_low` | DC voltage too low |
+| 20181 | `blocked_external` | Blocked external |
+| 20189 | `l_n_interchanged` | L and N interchanged |
+| 20190 | `below_average_yield` | Below-average yield |
+| 20191 | `limitation_error` | Limitation error |
+| 20999 | `device_error_999` | Device error 999 |
+| — | `offline_night` | Offline (Night) |
+| — | `connection_failed` | Connection failed |
+| — | `unknown` | Unknown |
+
+Codes 20101–20199 not listed above are mapped as generic `device_error_NNN` states. All states are translated into English, German, and French.
 
 **Alarm code states** (bitmask — multiple alarms are detected, and the individual active alarms are listed in the `active_alarms` attribute):
 
