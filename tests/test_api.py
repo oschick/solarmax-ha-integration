@@ -266,3 +266,89 @@ def test_get_data_protocol_error_no_retry(api):
 
         # Should only have connected once (no retries for protocol errors)
         assert mock_sock.connect.call_count == 1
+
+
+def test_convert_to_json_multi_frame(api):
+    """Test parsing of multi-frame responses (continuation frames end with ')')."""
+    # Build a realistic multi-frame response like a real inverter sends
+    # Frame 1 ends with ')' (continuation), Frame 2 ends with '}' (final)
+    inner1 = "01;FB;FF|64:PAC=2FA;UDC=D23;IDC=89;UL1=91C;UL2=8F0;UL3=8FD;IL1=84;IL2=82;IL3=87;KDY=D;KMT=102;KYR=602;KT0=9225;KHR=7848;TKK=24;SYS=4E28,0;SAL=0;TYP=50AA;DIN=9973BB;BDN=391;PIN=41A0;PRL=4;ULH=A55;ULL=730;TNH=141E;TNL=128E;PDC=340;PD01=1BE;PD02=182;U|"
+    crc1 = api.calculate_checksum(inner1)
+    frame1 = "{" + inner1 + crc1 + ")"  # Continuation frame ends with ')'
+
+    inner2 = (
+        "01;FB;53|D01=D23;UD02=AA0;ID01=43;ID02=46;KLM=294;KLY=11DF;TNF=138A;CAC=193D|"
+    )
+    crc2 = api.calculate_checksum(inner2)
+    frame2 = "{" + inner2 + crc2 + "}"  # Final frame ends with '}'
+
+    response = frame1 + frame2
+    result = api.convert_to_json(response)
+
+    # Field split across frames: "U" + "D01=D23" -> "UD01"
+    assert "UD01" in result
+    assert result["UD01"]["raw_value"] == 0xD23
+
+    # Fields from first frame
+    assert "PAC" in result
+    assert result["PAC"]["value"] == 0x2FA / 2
+
+    # Fields from second frame
+    assert "CAC" in result
+    assert result["CAC"]["raw_value"] == 0x193D
+    assert "TNF" in result
+    assert result["TNF"]["value"] == 0x138A / 10.0
+
+
+def test_split_response_frames(api):
+    """Test frame splitting with continuation delimiter ')'."""
+    inner1 = "01;FB;10|64:PAC=1F4|"
+    crc1 = api.calculate_checksum(inner1)
+    frame1 = "{" + inner1 + crc1 + ")"
+
+    inner2 = "01;FB;10|UDC=BB8|"
+    crc2 = api.calculate_checksum(inner2)
+    frame2 = "{" + inner2 + crc2 + "}"
+
+    response = frame1 + frame2
+    frames = api._split_response_frames(response)
+
+    assert len(frames) == 2
+    assert frames[0].endswith(")")
+    assert frames[1].endswith("}")
+
+
+def test_verify_response_checksum_continuation_frame(api):
+    """Test CRC verification works for continuation frames (ending with ')')."""
+    inner = "01;FB;10|64:PAC=1F4|"
+    crc = api.calculate_checksum(inner)
+    frame = "{" + inner + crc + ")"  # Continuation frame
+
+    assert api._verify_response_checksum(frame) is True
+
+
+@patch("socket.socket")
+def test_get_data_multi_frame_recv(mock_socket, api):
+    """Test that get_data reads multiple TCP chunks for multi-frame responses."""
+    mock_sock = MagicMock()
+    mock_socket.return_value = mock_sock
+
+    inner1 = "01;FB;15|64:PAC=BB8;SYS=4E33,0|"
+    crc1 = api.calculate_checksum(inner1)
+    frame1 = "{" + inner1 + crc1 + ")"
+
+    inner2 = "01;FB;0E|UDC=BB8|"
+    crc2 = api.calculate_checksum(inner2)
+    frame2 = "{" + inner2 + crc2 + "}"
+
+    # Simulate data arriving in two TCP chunks
+    mock_sock.recv.side_effect = [
+        frame1.encode(),
+        frame2.encode(),
+        socket.timeout(),
+    ]
+
+    result = api.get_data()
+
+    assert "PAC" in result
+    assert "UDC" in result

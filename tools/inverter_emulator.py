@@ -416,8 +416,13 @@ class SolarmaxEmulator:
             return format(raw, "X")
 
     def build_response(self, requested_fields: list[str]) -> str:
-        """Build a response message for the requested fields."""
-        # Response format: {ADR;FB;LEN|64:FIELD1=VAL1;FIELD2=VAL2|CHECKSUM}
+        """Build a response message for the requested fields.
+
+        Mimics real inverter behavior: if the response exceeds 255 bytes,
+        it is split into multiple frames. Non-final frames use ')' as ETX,
+        the final frame uses '}'. Field names may be split at frame boundaries.
+        """
+        MAX_FRAME = 255
         addr_hex = format(self.address, "02X")
 
         # Build field responses
@@ -428,19 +433,53 @@ class SolarmaxEmulator:
 
         fields_str = ";".join(field_responses)
 
-        # Build response without length and checksum first
-        # Format: {ADR;FB;LEN|64:FIELDS|CHECKSUM}
-        response_body = f"FB;{addr_hex};!!|64:{fields_str}|$$$$"
-        response = "{" + response_body + "}"
+        # Check if single frame suffices
+        # Template: {ADR;FB;LEN|64:FIELDS|CHECKSUM}
+        # With placeholders: 1({) + header + fields + 1(|) + 4(CRC) + 1(}) = total
+        header = f"{addr_hex};FB;!!|64:"
+        single_frame_len = 1 + len(header) + len(fields_str) + 1 + 4 + 1
 
-        # Calculate and insert length
-        response = response.replace("!!", format(len(response), "02X"))
+        if single_frame_len <= MAX_FRAME:
+            # Single frame — current behavior
+            response = "{" + header + fields_str + "|$$$$}"
+            response = response.replace("!!", format(len(response), "02X"))
+            checksum_data = response[1:-5]
+            response = response.replace("$$$$", self.calculate_checksum(checksum_data))
+            return response
 
-        # Calculate and insert checksum
-        checksum_data = response[1:-5]  # Between { and |$$$$}
-        response = response.replace("$$$$", self.calculate_checksum(checksum_data))
+        # Multi-frame response: split data across frames
+        frames = []
+        remaining = fields_str
 
-        return response
+        # First frame includes port prefix "64:"
+        first_header = f"{addr_hex};FB;FF|64:"
+        # Available space for data: MAX_FRAME - { - header - | - CRC(4) - )
+        max_data_first = MAX_FRAME - 1 - len(first_header) - 1 - 4 - 1
+        first_data = remaining[:max_data_first]
+        remaining = remaining[max_data_first:]
+
+        # Build first frame (continuation: ends with ')')
+        crc_content = first_header + first_data + "|"
+        crc = self.calculate_checksum(crc_content)
+        frames.append("{" + crc_content + crc + ")")
+
+        # Continuation frames (no port prefix, just data)
+        while remaining:
+            # Header placeholder for length calculation
+            cont_header = f"{addr_hex};FB;!!|"
+            # Available data space
+            max_data_cont = MAX_FRAME - 1 - len(cont_header) - 1 - 4 - 1
+            cont_data = remaining[:max_data_cont]
+            remaining = remaining[max_data_cont:]
+
+            etx = ")" if remaining else "}"
+            frame = "{" + cont_header + cont_data + "|$$$$" + etx
+            frame = frame.replace("!!", format(len(frame), "02X"))
+            checksum_data = frame[1:-5]
+            frame = frame.replace("$$$$", self.calculate_checksum(checksum_data))
+            frames.append(frame)
+
+        return "".join(frames)
 
     def parse_request(self, data: str) -> list[str]:
         """Parse incoming request and extract requested field names."""

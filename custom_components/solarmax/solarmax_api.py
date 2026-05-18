@@ -261,28 +261,36 @@ class SolarmaxAPI:
     def _send_request_and_receive_response(
         self, sock: socket.socket, request: str
     ) -> str:
-        """Send request and receive response with proper timeout handling."""
+        """Send request and receive response with proper timeout handling.
+
+        The inverter may split large responses into multiple frames (each max
+        255 bytes). We keep reading until no more data arrives.
+        """
         try:
             # Send request
             _LOGGER.debug(f"Sending request: {request}")
             sock.send(bytes(request, "utf-8"))
 
-            # Receive response with consistent timeout
+            # Receive response — read all available data (may be multiple frames)
             response = ""
             start_time = time.time()
 
-            # Use the same timeout as socket connection for consistency
             while (time.time() - start_time) < self.timeout:
                 try:
-                    sock.settimeout(
-                        1.0
-                    )  # Short timeout for recv to allow checking overall timeout
-                    buf = sock.recv(1024)
+                    sock.settimeout(1.0)
+                    buf = sock.recv(4096)
                     if len(buf) > 0:
                         response += buf.decode("utf-8", errors="ignore")
+                        # After receiving data, use a short timeout to check
+                        # for additional frames (continuation packets)
+                        sock.settimeout(0.5)
+                    else:
                         break
                 except socket.timeout:
-                    # Continue loop to check overall timeout
+                    # If we already have data, the timeout means no more frames
+                    if response:
+                        break
+                    # Otherwise keep waiting for the first response
                     continue
                 except socket.error as e:
                     raise SolarmaxConnectionError(f"Error receiving data: {e}")
@@ -335,14 +343,18 @@ class SolarmaxAPI:
     calculate_checksum = _calculate_checksum
 
     def _verify_response_checksum(self, response: str) -> bool:
-        """Verify the CRC checksum of a MaxComm response.
+        """Verify the CRC checksum of a MaxComm response frame.
 
         Returns True if checksum is valid, False otherwise.
         Per protocol spec: if CRC or Length don't match, the data should be
         considered corrupted (Section 3.1).
+
+        Accepts both '}' (final frame) and ')' (continuation frame) as ETX.
         """
         try:
-            if not response or response[0] != PROTO_STX or response[-1] != PROTO_ETX:
+            if not response or response[0] != PROTO_STX:
+                return False
+            if response[-1] != PROTO_ETX and response[-1] != ")":
                 return False
 
             # Extract the stated CRC (last 4 chars before ETX)
@@ -402,10 +414,7 @@ class SolarmaxAPI:
         elif field in ("IDC", "ID01", "ID02", "ID03", "IL1", "IL2", "IL3"):
             # Strom_positiv_2: resolution 0.01 A/digit
             return value / 100.0
-        elif field in ("TNF",):
-            # Frequenz: resolution 0.1 Hz/digit
-            return value / 10.0
-        elif field in ("TNH", "TNL"):
+        elif field in ("TNH", "TNL", "TNF"):
             # Frequenz_2: resolution 0.01 Hz/digit (grid limit registers)
             return value / 100.0
         else:
@@ -491,11 +500,69 @@ class SolarmaxAPI:
         else:
             raise SolarmaxConnectionError("Failed to get data from inverter")
 
+    def _split_response_frames(self, data: str) -> list[str]:
+        """Split a multi-frame response into individual frames.
+
+        The inverter splits responses exceeding 255 bytes into multiple
+        frames, each with its own {Src;Dest;Len|...|CRC} structure.
+        Non-final frames use ')' as ETX, the final frame uses '}'.
+        """
+        frames = []
+        current = ""
+        for char in data:
+            current += char
+            if char == PROTO_ETX or char == ")":
+                if current.startswith(PROTO_STX):
+                    frames.append(current)
+                current = ""
+        return frames
+
+    def _extract_data_from_frames(self, frames: list[str]) -> str:
+        """Extract and merge data sections from multiple response frames.
+
+        Frame 1 format: {Src;Dest;Len|Port:Data|CRC}  or  {Src;Dest;Len|Port:Data|CRC)
+        Continuation frames: {Src;Dest;Len|Data|CRC}
+
+        The inverter may split a field name at the frame boundary, e.g.:
+        Frame 1 ends with "...;U" and Frame 2 starts with "D01=D38;..."
+        Concatenation reconstructs the full field: "...;UD01=D38;..."
+        """
+        data_parts = []
+        for i, frame in enumerate(frames):
+            # Strip STX and (CRC + ETX): frame[1:-5] gives "Header|Payload|"
+            # Then strip the trailing FRS (the '|' before CRC)
+            inner = frame[1:-5]
+            if inner.endswith(PROTO_FRS):
+                inner = inner[:-1]
+
+            # Split on first | to separate header from payload
+            pipe_pos = inner.find(PROTO_FRS)
+            if pipe_pos < 0:
+                continue
+            payload = inner[pipe_pos + 1 :]
+
+            if i == 0:
+                # First frame has "Port:Data" — extract after the colon
+                colon_pos = payload.find(PROTO_US)
+                if colon_pos >= 0:
+                    data_parts.append(payload[colon_pos + 1 :])
+                else:
+                    data_parts.append(payload)
+            else:
+                # Continuation frames have just data (no port prefix)
+                data_parts.append(payload)
+
+        # Direct concatenation reconstructs split field names at boundaries
+        return "".join(data_parts)
+
     def convert_to_json(self, data: str) -> dict[str, Any]:
         """Parse a MaxComm protocol response into a dictionary.
 
         Response format per MaxComm spec Section 2.1:
             {<Src>;<Dest>;<Len>|<Port>:<Key1>=<Val1>;<Key2>=<Val2>|<CRC>}
+
+        Handles multi-frame responses where the inverter splits large responses
+        into multiple frames (each max 255 bytes).
 
         Error cases handled per Section 1.6:
         - Key without '=' → "not applicable" (key known but currently unavailable)
@@ -503,22 +570,28 @@ class SolarmaxAPI:
         - Port 3E8 responses → interface error messages (IPR, IPN)
         """
         try:
-            # Verify response checksum (per protocol spec Section 1.1)
-            if not self._verify_response_checksum(data):
-                raise SolarmaxProtocolError(
-                    "MaxComm response checksum verification failed: "
-                    "data may be corrupted"
-                )
+            # Split into individual frames
+            frames = self._split_response_frames(data)
+            if not frames:
+                raise SolarmaxProtocolError("No valid MaxComm frames found in response")
+
+            # Verify checksum on each frame
+            for frame in frames:
+                if not self._verify_response_checksum(frame):
+                    raise SolarmaxProtocolError(
+                        "MaxComm response checksum verification failed: "
+                        "data may be corrupted"
+                    )
 
             # Check for interface error messages (port 0x3E8 = 1000)
-            # Match both "3E8" and "03E8" (some devices zero-pad the port field)
+            # Only need to check the first frame (error responses are single-frame)
             port_hex = format(PROTO_PORT_MESSAGE, "X")
             port_hex_padded = format(PROTO_PORT_MESSAGE, "04X")
             if (
-                f"{PROTO_FRS}{port_hex}{PROTO_US}" in data
-                or f"{PROTO_FRS}{port_hex_padded}{PROTO_US}" in data
+                f"{PROTO_FRS}{port_hex}{PROTO_US}" in frames[0]
+                or f"{PROTO_FRS}{port_hex_padded}{PROTO_US}" in frames[0]
             ):
-                error_data = data.split(PROTO_US)[1].split(PROTO_FRS)[0]
+                error_data = frames[0].split(PROTO_US)[1].split(PROTO_FRS)[0]
                 if PROTO_ERROR_INVALID_PROTOCOL in error_data:
                     raise SolarmaxProtocolError(
                         "Inverter reported invalid protocol (IPR): "
@@ -529,9 +602,8 @@ class SolarmaxAPI:
                         "Inverter reported invalid port number (IPN)"
                     )
 
-            # Parse data section: split on US ':' to get past the port,
-            # then split on FRS '|' to isolate data from CRC
-            data_section = data.split(PROTO_US)[1].split(PROTO_FRS)[0]
+            # Extract and merge data from all frames
+            data_section = self._extract_data_from_frames(frames)
             data_split = data_section.split(PROTO_FS)
             result_dict = {}
 
