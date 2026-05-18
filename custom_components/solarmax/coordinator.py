@@ -106,7 +106,11 @@ class SolarmaxCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             if self._sw_version is None and "SWV" in data:
                 swv_value = data["SWV"].get("raw_value")
                 if swv_value is not None:
-                    self._sw_version = str(swv_value)
+                    bdn_value = data.get("BDN", {}).get("raw_value")
+                    if bdn_value is not None:
+                        self._sw_version = f"{swv_value} (build {bdn_value})"
+                    else:
+                        self._sw_version = str(swv_value)
                     _LOGGER.debug("Detected firmware version: %s", self._sw_version)
 
             if self._serial_number is None and "DIN" in data:

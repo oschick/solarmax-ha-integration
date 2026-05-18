@@ -150,7 +150,8 @@
       },
       "cac": {
         "name": "Startvorgänge"
-      },      "prl": {
+      },
+      "prl": {
         "name": "Relative Leistung"
       },
       "pin": {

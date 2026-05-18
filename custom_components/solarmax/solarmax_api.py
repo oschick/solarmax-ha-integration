@@ -564,5 +564,6 @@ class SolarmaxAPI:
         except (SolarmaxProtocolError, SolarmaxConnectionError):
             raise
         except Exception as e:
-            _LOGGER.error(f"Error parsing MaxComm response: {e}")
-            return {}
+            raise SolarmaxProtocolError(
+                f"Unexpected error parsing MaxComm response: {e}"
+            ) from e

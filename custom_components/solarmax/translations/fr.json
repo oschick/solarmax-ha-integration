@@ -78,9 +78,11 @@
       },
       "pd02": {
         "name": "Puissance DC String 2"
-      },      "pd03": {
-        "name": "Puissance DC Chaîne 3"
-      },      "ul1": {
+      },
+      "pd03": {
+        "name": "Puissance DC String 3"
+      },
+      "ul1": {
         "name": "Tension AC Phase 1"
       },
       "ul2": {
@@ -97,9 +99,11 @@
       },
       "ud02": {
         "name": "Tension DC String 2"
-      },      "ud03": {
-        "name": "Tension DC Chaîne 3"
-      },      "il1": {
+      },
+      "ud03": {
+        "name": "Tension DC String 3"
+      },
+      "il1": {
         "name": "Courant AC Phase 1"
       },
       "il2": {
@@ -116,8 +120,9 @@
       },
       "id02": {
         "name": "Courant DC String 2"
-      },      "id03": {
-        "name": "Courant DC Chaîne 3"
+      },
+      "id03": {
+        "name": "Courant DC String 3"
       },      "kdy": {
         "name": "Énergie du jour"
       },
