@@ -144,13 +144,15 @@ class SolarmaxSensor(CoordinatorEntity[SolarmaxCoordinator], SensorEntity):
         if "icon" in sensor_config:
             self._attr_icon = sensor_config["icon"]
 
-        # Device info
+        # Device info - model is already resolved since async_config_entry_first_refresh
+        # runs before sensor platform setup
         self._attr_device_info = {
             "identifiers": {(DOMAIN, entry.entry_id)},
             "name": device_name,
             "manufacturer": "Solarmax",
-            "model": "Inverter",
-            "sw_version": "1.0.0",
+            "model": coordinator.device_model or "Inverter",
+            "sw_version": coordinator.sw_version,
+            "serial_number": coordinator.serial_number,
         }
 
     def _is_night_time(self) -> bool:

@@ -7,8 +7,10 @@ import socket
 from custom_components.solarmax.solarmax_api import (
     SolarmaxAPI,
     SolarmaxConnectionError,
+    SolarmaxProtocolError,
     SolarmaxTimeoutError,
     FIELD_MAP_INVERTER,
+    FIELD_MAP_DEVICE_INFO,
 )
 
 
@@ -102,7 +104,9 @@ def test_get_data_success(mock_socket, api):
     """Test successful data retrieval."""
     mock_sock = MagicMock()
     mock_socket.return_value = mock_sock
-    mock_sock.recv.return_value = b"{01|64:PAC=BB8;SYS=4E33,0|}"
+    inner = "01;FB;15|64:PAC=BB8;SYS=4E33,0|"
+    crc = api.calculate_checksum(inner)
+    mock_sock.recv.return_value = ("{" + inner + crc + "}").encode()
 
     result = api.get_data()
 
@@ -134,8 +138,10 @@ def test_get_data_timeout(mock_socket, api):
 
 def test_convert_to_json(api):
     """Test response conversion to JSON."""
-    response = "{01|64:PAC=BB8;SYS=4E33,0;SAL=0|}"
-    result = api.convert_to_json(FIELD_MAP_INVERTER, response)
+    inner = "01;FB;1F|64:PAC=BB8;SYS=4E33,0;SAL=0|"
+    crc = api.calculate_checksum(inner)
+    response = "{" + inner + crc + "}"
+    result = api.convert_to_json(response)
 
     assert isinstance(result, dict)
     assert "PAC" in result
@@ -149,11 +155,9 @@ def test_convert_to_json(api):
 
 
 def test_convert_to_json_invalid_response(api):
-    """Test response conversion with invalid data."""
-    response = "invalid_response"
-    result = api.convert_to_json(FIELD_MAP_INVERTER, response)
-
-    assert result == {}
+    """Test response conversion with invalid/unframed data raises SolarmaxProtocolError."""
+    with pytest.raises(SolarmaxProtocolError):
+        api.convert_to_json("invalid_response")
 
 
 def test_last_successful_connection_tracking(api):
@@ -163,8 +167,215 @@ def test_last_successful_connection_tracking(api):
     with patch("socket.socket") as mock_socket:
         mock_sock = MagicMock()
         mock_socket.return_value = mock_sock
-        mock_sock.recv.return_value = b"{01|64:PAC=BB8|}"
+        inner = "01;FB;0F|64:PAC=BB8|"
+        crc = api.calculate_checksum(inner)
+        mock_sock.recv.return_value = ("{" + inner + crc + "}").encode()
 
         api.get_data()
 
         assert api.last_successful_connection is not None
+
+
+def test_convert_to_json_valid_crc(api):
+    """Test response with valid CRC is parsed successfully."""
+    # Build a response with correct CRC
+    inner = "01;FB;1A|64:PAC=1F4;UDC=BB8|"
+    crc = api.calculate_checksum(inner)
+    response = "{" + inner + crc + "}"
+    result = api.convert_to_json(response)
+
+    assert "PAC" in result
+    assert result["PAC"]["value"] == 250.0  # 500 / 2
+    assert result["UDC"]["value"] == 300.0  # 3000 / 10
+
+
+def test_convert_to_json_invalid_crc(api):
+    """Test response with invalid CRC raises SolarmaxProtocolError."""
+    # Use a response with wrong CRC
+    response = "{01;FB;1A|64:PAC=1F4;UDC=BB8|0000}"
+    with pytest.raises(SolarmaxProtocolError, match="checksum verification failed"):
+        api.convert_to_json(response)
+
+
+def test_convert_to_json_ipr_error(api):
+    """Test IPR (invalid protocol) error response raises SolarmaxProtocolError."""
+    inner = "01;FB;0E|3E8:IPR|"
+    crc = api.calculate_checksum(inner)
+    response = "{" + inner + crc + "}"
+    with pytest.raises(SolarmaxProtocolError, match="invalid protocol"):
+        api.convert_to_json(response)
+
+
+def test_convert_to_json_ipn_error(api):
+    """Test IPN (invalid port) error response raises SolarmaxProtocolError."""
+    inner = "01;FB;0E|3E8:IPN|"
+    crc = api.calculate_checksum(inner)
+    response = "{" + inner + crc + "}"
+    with pytest.raises(SolarmaxProtocolError, match="invalid port"):
+        api.convert_to_json(response)
+
+
+def test_convert_to_json_ipr_zero_padded_port(api):
+    """Test IPR detection with zero-padded port (03E8)."""
+    inner = "01;FB;0F|03E8:IPR|"
+    crc = api.calculate_checksum(inner)
+    response = "{" + inner + crc + "}"
+    with pytest.raises(SolarmaxProtocolError, match="invalid protocol"):
+        api.convert_to_json(response)
+
+
+def test_convert_to_json_typ_swv(api):
+    """Test parsing of TYP and SWV keys."""
+    # TYP=20650 (0x50AA), SWV=40 (0x28)
+    inner = "01;FB;1A|64:TYP=50AA;SWV=28|"
+    crc = api.calculate_checksum(inner)
+    response = "{" + inner + crc + "}"
+    result = api.convert_to_json(response)
+
+    assert result["TYP"]["value"] == 20650
+    assert result["TYP"]["raw_value"] == 0x50AA
+    assert result["SWV"]["value"] == 40
+    assert result["SWV"]["raw_value"] == 0x28
+
+
+def test_convert_to_json_not_applicable_key(api):
+    """Test 'not applicable' keys (no '=' sign) are skipped gracefully."""
+    # PAC has a value, UDC is "not applicable" (no '=')
+    inner = "01;FB;1A|64:PAC=1F4;UDC|"
+    crc = api.calculate_checksum(inner)
+    response = "{" + inner + crc + "}"
+    result = api.convert_to_json(response)
+
+    assert "PAC" in result
+    assert "UDC" not in result  # Not applicable keys are skipped
+
+
+def test_get_data_protocol_error_no_retry(api):
+    """Test that SolarmaxProtocolError is not retried."""
+    # Build an IPR response
+    inner = "01;FB;0E|3E8:IPR|"
+    crc = api.calculate_checksum(inner)
+    response = "{" + inner + crc + "}"
+
+    with patch("socket.socket") as mock_socket:
+        mock_sock = MagicMock()
+        mock_socket.return_value = mock_sock
+        mock_sock.recv.return_value = response.encode()
+
+        with pytest.raises(SolarmaxProtocolError):
+            api.get_data()
+
+        # Should only have connected once (no retries for protocol errors)
+        assert mock_sock.connect.call_count == 1
+
+
+def test_convert_to_json_multi_frame(api):
+    """Test parsing of multi-frame responses (continuation frames end with ')')."""
+    # Build a realistic multi-frame response like a real inverter sends
+    # Frame 1 ends with ')' (continuation), Frame 2 ends with '}' (final)
+    inner1 = "01;FB;FF|64:PAC=2FA;UDC=D23;IDC=89;UL1=91C;UL2=8F0;UL3=8FD;IL1=84;IL2=82;IL3=87;KDY=D;KMT=102;KYR=602;KT0=9225;KHR=7848;TKK=24;SYS=4E28,0;SAL=0;TYP=50AA;DIN=9973BB;BDN=391;PIN=41A0;PRL=4;ULH=A55;ULL=730;TNH=141E;TNL=128E;PDC=340;PD01=1BE;PD02=182;U|"
+    crc1 = api.calculate_checksum(inner1)
+    frame1 = "{" + inner1 + crc1 + ")"  # Continuation frame ends with ')'
+
+    inner2 = (
+        "01;FB;53|D01=D23;UD02=AA0;ID01=43;ID02=46;KLM=294;KLY=11DF;TNF=138A;CAC=193D|"
+    )
+    crc2 = api.calculate_checksum(inner2)
+    frame2 = "{" + inner2 + crc2 + "}"  # Final frame ends with '}'
+
+    response = frame1 + frame2
+    result = api.convert_to_json(response)
+
+    # Field split across frames: "U" + "D01=D23" -> "UD01"
+    assert "UD01" in result
+    assert result["UD01"]["raw_value"] == 0xD23
+
+    # Fields from first frame
+    assert "PAC" in result
+    assert result["PAC"]["value"] == 0x2FA / 2
+
+    # Fields from second frame
+    assert "CAC" in result
+    assert result["CAC"]["raw_value"] == 0x193D
+    assert "TNF" in result
+    assert result["TNF"]["value"] == 0x138A / 10.0
+
+
+def test_split_response_frames(api):
+    """Test frame splitting with continuation delimiter ')'."""
+    inner1 = "01;FB;10|64:PAC=1F4|"
+    crc1 = api.calculate_checksum(inner1)
+    frame1 = "{" + inner1 + crc1 + ")"
+
+    inner2 = "01;FB;10|UDC=BB8|"
+    crc2 = api.calculate_checksum(inner2)
+    frame2 = "{" + inner2 + crc2 + "}"
+
+    response = frame1 + frame2
+    frames = api._split_response_frames(response)
+
+    assert len(frames) == 2
+    assert frames[0].endswith(")")
+    assert frames[1].endswith("}")
+
+
+def test_verify_response_checksum_continuation_frame(api):
+    """Test CRC verification works for continuation frames (ending with ')')."""
+    inner = "01;FB;10|64:PAC=1F4|"
+    crc = api.calculate_checksum(inner)
+    frame = "{" + inner + crc + ")"  # Continuation frame
+
+    assert api._verify_response_checksum(frame) is True
+
+
+@patch("socket.socket")
+def test_get_data_multi_frame_recv(mock_socket, api):
+    """Test that get_data reads multiple TCP chunks for multi-frame responses."""
+    mock_sock = MagicMock()
+    mock_socket.return_value = mock_sock
+
+    inner1 = "01;FB;15|64:PAC=BB8;SYS=4E33,0|"
+    crc1 = api.calculate_checksum(inner1)
+    frame1 = "{" + inner1 + crc1 + ")"
+
+    inner2 = "01;FB;0E|UDC=BB8|"
+    crc2 = api.calculate_checksum(inner2)
+    frame2 = "{" + inner2 + crc2 + "}"
+
+    # Simulate data arriving in two TCP chunks
+    mock_sock.recv.side_effect = [
+        frame1.encode(),
+        frame2.encode(),
+        socket.timeout(),
+    ]
+
+    result = api.get_data()
+
+    assert "PAC" in result
+    assert "UDC" in result
+
+
+def test_build_request_overflow_guard(api):
+    """Test that build_request raises when request exceeds 255 bytes."""
+    # Create a field map with enough keys to exceed the 255-byte limit
+    huge_map = {f"K{i:03d}": f"Field_{i}" for i in range(100)}
+    with pytest.raises(SolarmaxProtocolError, match="Request too large"):
+        api.build_request(huge_map)
+
+
+def test_build_request_within_limit(api):
+    """Test that build_request succeeds for FIELD_MAP_INVERTER (under 255 bytes)."""
+    request = api.build_request(FIELD_MAP_INVERTER)
+    assert len(request) <= 255
+    assert request.startswith("{")
+    assert request.endswith("}")
+
+
+def test_build_request_device_info(api):
+    """Test that build_request succeeds for FIELD_MAP_DEVICE_INFO."""
+    request = api.build_request(FIELD_MAP_DEVICE_INFO)
+    assert len(request) <= 255
+    assert "TYP" in request
+    assert "SWV" in request
+    assert "DIN" in request
+    assert "BDN" in request

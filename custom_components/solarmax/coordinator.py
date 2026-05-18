@@ -16,7 +16,10 @@ from .const import (
     CONF_HOST,
     CONF_PORT,
     CONF_UPDATE_INTERVAL,
+    CONF_VERIFY_CHECKSUM,
     DEFAULT_ADDRESS,
+    DEFAULT_VERIFY_CHECKSUM,
+    DEVICE_TYPE_MAP,
     DOMAIN,
 )
 from .solarmax_api import SolarmaxAPI, SolarmaxConnectionError, SolarmaxTimeoutError
@@ -33,6 +36,9 @@ class SolarmaxCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             host=entry.data[CONF_HOST],
             port=entry.data[CONF_PORT],
             address=entry.data.get(CONF_ADDRESS, DEFAULT_ADDRESS),
+            verify_checksum=entry.data.get(
+                CONF_VERIFY_CHECKSUM, DEFAULT_VERIFY_CHECKSUM
+            ),
         )
 
         update_interval = timedelta(seconds=entry.data.get(CONF_UPDATE_INTERVAL, 30))
@@ -49,6 +55,11 @@ class SolarmaxCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         self._consecutive_failures = 0
         self._last_successful_update = None
         self._is_expected_offline = False
+
+        # Device identification (populated on first successful data fetch)
+        self._device_model: str | None = None
+        self._sw_version: str | None = None
+        self._serial_number: str | None = None
 
     def _is_night_time(self) -> bool:
         """Check if it's currently night time (when inverter is expected to be offline)."""
@@ -87,6 +98,10 @@ class SolarmaxCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             self._consecutive_failures = 0
             self._last_successful_update = datetime.now()
             self._is_expected_offline = False
+
+            # Fetch device identification once (separate query for static keys)
+            if self._device_model is None:
+                await self._async_fetch_device_info()
 
             _LOGGER.debug("Successfully updated data from inverter")
             return data
@@ -143,6 +158,39 @@ class SolarmaxCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         """Return if the inverter is expected to be offline (e.g., night time)."""
         return self._is_expected_offline
 
+    async def _async_fetch_device_info(self) -> None:
+        """Fetch static device identification keys (one-time query)."""
+        try:
+            info = await self.hass.async_add_executor_job(self.api.get_device_info)
+
+            if "TYP" in info:
+                typ_value = info["TYP"].get("raw_value")
+                if typ_value is not None:
+                    self._device_model = DEVICE_TYPE_MAP.get(
+                        typ_value, f"Unknown ({typ_value})"
+                    )
+                    _LOGGER.info("Detected inverter type: %s", self._device_model)
+
+            if "SWV" in info:
+                swv_value = info["SWV"].get("raw_value")
+                if swv_value is not None:
+                    bdn_value = info.get("BDN", {}).get("raw_value")
+                    if bdn_value is not None:
+                        self._sw_version = f"{swv_value} (build {bdn_value})"
+                    else:
+                        self._sw_version = str(swv_value)
+                    _LOGGER.debug("Detected firmware version: %s", self._sw_version)
+
+            if "DIN" in info:
+                din_value = info["DIN"].get("raw_value")
+                if din_value is not None:
+                    self._serial_number = str(din_value)
+                    _LOGGER.debug("Detected serial number: %s", self._serial_number)
+
+        except Exception as err:
+            _LOGGER.debug("Failed to fetch device info: %s", err)
+            # Non-fatal — will retry on next successful data poll
+
     @property
     def consecutive_failures(self) -> int:
         """Return the number of consecutive update failures."""
@@ -152,3 +200,18 @@ class SolarmaxCoordinator(DataUpdateCoordinator[dict[str, Any]]):
     def last_successful_update(self) -> datetime | None:
         """Return the timestamp of the last successful update."""
         return self._last_successful_update
+
+    @property
+    def device_model(self) -> str | None:
+        """Return the detected inverter model name (from TYP key)."""
+        return self._device_model
+
+    @property
+    def sw_version(self) -> str | None:
+        """Return the detected firmware version (from SWV key)."""
+        return self._sw_version
+
+    @property
+    def serial_number(self) -> str | None:
+        """Return the detected serial number (from DIN key)."""
+        return self._serial_number

@@ -17,10 +17,12 @@ from .const import (
     CONF_HOST,
     CONF_PORT,
     CONF_UPDATE_INTERVAL,
+    CONF_VERIFY_CHECKSUM,
     DEFAULT_ADDRESS,
     DEFAULT_DEVICE_NAME,
     DEFAULT_PORT,
     DEFAULT_UPDATE_INTERVAL,
+    DEFAULT_VERIFY_CHECKSUM,
     DOMAIN,
 )
 from .solarmax_api import SolarmaxAPI
@@ -50,6 +52,10 @@ STEP_USER_DATA_SCHEMA = vol.Schema(
             default=DEFAULT_DEVICE_NAME,
             description={"suggested_value": DEFAULT_DEVICE_NAME},
         ): str,
+        vol.Optional(
+            CONF_VERIFY_CHECKSUM,
+            default=DEFAULT_VERIFY_CHECKSUM,
+        ): bool,
     }
 )
 
@@ -175,6 +181,12 @@ class OptionsFlow(config_entries.OptionsFlow):
                     CONF_DEVICE_NAME,
                     default=current_data.get(CONF_DEVICE_NAME, DEFAULT_DEVICE_NAME),
                 ): str,
+                vol.Optional(
+                    CONF_VERIFY_CHECKSUM,
+                    default=current_data.get(
+                        CONF_VERIFY_CHECKSUM, DEFAULT_VERIFY_CHECKSUM
+                    ),
+                ): bool,
             }
         )
 

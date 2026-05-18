@@ -9,7 +9,8 @@
           "port": "Port",
           "address": "Wechselrichter-Adresse (1-249)",
           "update_interval": "Aktualisierungsintervall (Sekunden)",
-          "device_name": "Gerätename"
+          "device_name": "Gerätename",
+          "verify_checksum": "Antwort-Prüfsumme verifizieren"
         }
       }
     },
@@ -33,7 +34,8 @@
           "port": "Port",
           "address": "Wechselrichter-Adresse (1-249)",
           "update_interval": "Aktualisierungsintervall (Sekunden)",
-          "device_name": "Gerätename"
+          "device_name": "Gerätename",
+          "verify_checksum": "Antwort-Prüfsumme verifizieren"
         }
       }
     },
@@ -79,6 +81,9 @@
       "pd02": {
         "name": "DC-Leistung String 2"
       },
+      "pd03": {
+        "name": "DC-Leistung String 3"
+      },
       "ul1": {
         "name": "AC-Spannung Phase 1"
       },
@@ -88,11 +93,17 @@
       "ul3": {
         "name": "AC-Spannung Phase 3"
       },
+      "udc": {
+        "name": "DC-Spannung"
+      },
       "ud01": {
         "name": "DC-Spannung String 1"
       },
       "ud02": {
         "name": "DC-Spannung String 2"
+      },
+      "ud03": {
+        "name": "DC-Spannung String 3"
       },
       "il1": {
         "name": "AC-Strom Phase 1"
@@ -112,6 +123,9 @@
       "id02": {
         "name": "DC-Strom String 2"
       },
+      "id03": {
+        "name": "DC-Strom String 3"
+      },
       "kdy": {
         "name": "Energie Tag"
       },
@@ -127,11 +141,38 @@
       "tkk": {
         "name": "Wechselrichter-Temperatur"
       },
+      "tk2": {
+        "name": "Wechselrichter-Temperatur 2"
+      },
+      "tk3": {
+        "name": "Wechselrichter-Temperatur 3"
+      },
       "khr": {
         "name": "Betriebsstunden"
       },
       "cac": {
         "name": "Startvorgänge"
+      },
+      "prl": {
+        "name": "Relative Leistung"
+      },
+      "pin": {
+        "name": "Installierte Leistung"
+      },
+      "tnf": {
+        "name": "Netzfrequenz"
+      },
+      "ulh": {
+        "name": "Netzspannung Obergrenze"
+      },
+      "ull": {
+        "name": "Netzspannung Untergrenze"
+      },
+      "tnh": {
+        "name": "Netzfrequenz Obergrenze"
+      },
+      "tnl": {
+        "name": "Netzfrequenz Untergrenze"
       },
       "sal": {
         "name": "Alarm-Status",
@@ -170,6 +211,110 @@
           "max_power_operation": "Betrieb auf Maximalleistung",
           "temperature_limitation": "Temperaturbegrenzung",
           "grid_operation": "Netzbetrieb",
+          "dc_current_limited": "DC-Strom begrenzt",
+          "ac_current_limited": "AC-Strom begrenzt",
+          "test_mode": "Testmodus",
+          "remote_controlled": "Ferngesteuert",
+          "start_delay": "Startverzögerung",
+          "external_limitation": "Externe Begrenzung",
+          "frequency_limitation": "Frequenzbegrenzung",
+          "restart_limitation": "Neustart-Begrenzung",
+          "booting": "Hochfahren",
+          "insufficient_boot_power": "Unzureichende Startleistung",
+          "insufficient_power": "Unzureichende Leistung",
+          "uninitialized": "Nicht initialisiert",
+          "disabled": "Deaktiviert",
+          "idle": "Leerlauf",
+          "powerunit_not_ready": "Leistungseinheit nicht bereit",
+          "program_firmware": "Firmware-Programmierung",
+          "device_error_101": "Gerätefehler 101",
+          "device_error_102": "Gerätefehler 102",
+          "device_error_103": "Gerätefehler 103",
+          "device_error_104": "Gerätefehler 104",
+          "insulation_fault_dc": "Isolationsfehler DC",
+          "insulation_fault_dc_2": "Isolationsfehler DC (2)",
+          "device_error_107": "Gerätefehler 107",
+          "device_error_108": "Gerätefehler 108",
+          "vdc_too_high": "DC-Spannung zu hoch",
+          "device_error_110": "Gerätefehler 110",
+          "device_error_111": "Gerätefehler 111",
+          "device_error_112": "Gerätefehler 112",
+          "device_error_113": "Gerätefehler 113",
+          "leakage_current_high": "Leckstrom zu hoch",
+          "no_grid": "Kein Netz",
+          "grid_frequency_high": "Netzfrequenz zu hoch",
+          "grid_frequency_low": "Netzfrequenz zu niedrig",
+          "mains_error": "Netzfehler",
+          "vac_10min_too_high": "AC-Spannung 10min zu hoch",
+          "device_error_120": "Gerätefehler 120",
+          "device_error_121": "Gerätefehler 121",
+          "grid_voltage_high": "Netzspannung zu hoch",
+          "grid_voltage_low": "Netzspannung zu niedrig",
+          "device_error_124": "Gerätefehler 124",
+          "device_error_125": "Gerätefehler 125",
+          "external_input_error_1": "Fehler externer Eingang 1",
+          "external_input_error_2": "Fehler externer Eingang 2",
+          "device_error_128": "Gerätefehler 128",
+          "incorrect_rotation": "Falscher Drehsinn",
+          "wrong_device_type": "Falscher Gerätetyp",
+          "main_switch_off": "Hauptschalter aus",
+          "diode_overtemperature": "Diode Übertemperatur",
+          "device_error_133": "Gerätefehler 133",
+          "fan_defective": "Lüfter defekt",
+          "device_error_135": "Gerätefehler 135",
+          "device_error_136": "Gerätefehler 136",
+          "device_error_137": "Gerätefehler 137",
+          "device_error_138": "Gerätefehler 138",
+          "device_error_139": "Gerätefehler 139",
+          "device_error_140": "Gerätefehler 140",
+          "device_error_141": "Gerätefehler 141",
+          "device_error_142": "Gerätefehler 142",
+          "device_error_143": "Gerätefehler 143",
+          "device_error_144": "Gerätefehler 144",
+          "dfdt_too_high": "df/dt zu hoch",
+          "device_error_146": "Gerätefehler 146",
+          "device_error_147": "Gerätefehler 147",
+          "device_error_148": "Gerätefehler 148",
+          "ierr_step_too_high": "Ierr-Sprung zu hoch",
+          "ierr_step_too_high_2": "Ierr-Sprung zu hoch (2)",
+          "device_error_153": "Gerätefehler 153",
+          "shutdown_1": "Abschaltung 1",
+          "shutdown_2": "Abschaltung 2",
+          "device_error_156": "Gerätefehler 156",
+          "insulation_fault_dc_3": "Isolationsfehler DC (3)",
+          "device_error_158": "Gerätefehler 158",
+          "device_error_159": "Gerätefehler 159",
+          "device_error_160": "Gerätefehler 160",
+          "device_error_161": "Gerätefehler 161",
+          "device_error_163": "Gerätefehler 163",
+          "ierr_too_high_2": "Ierr zu hoch (2)",
+          "no_mains_2": "Kein Netz (2)",
+          "frequency_too_high_2": "Frequenz zu hoch (2)",
+          "frequency_too_low_2": "Frequenz zu niedrig (2)",
+          "mains_error_2": "Netzfehler (2)",
+          "vac_10min_too_high_2": "AC-Spannung 10min zu hoch (2)",
+          "device_error_170": "Gerätefehler 170",
+          "device_error_171": "Gerätefehler 171",
+          "vac_too_high_2": "AC-Spannung zu hoch (2)",
+          "vac_too_low_2": "AC-Spannung zu niedrig (2)",
+          "device_error_174": "Gerätefehler 174",
+          "device_error_175": "Gerätefehler 175",
+          "error_dc_polarity": "Fehler DC-Polarität",
+          "device_error_177": "Gerätefehler 177",
+          "device_error_178": "Gerätefehler 178",
+          "device_error_179": "Gerätefehler 179",
+          "vdc_too_low": "DC-Spannung zu niedrig",
+          "blocked_external": "Extern blockiert",
+          "device_error_185": "Gerätefehler 185",
+          "device_error_186": "Gerätefehler 186",
+          "device_error_187": "Gerätefehler 187",
+          "device_error_188": "Gerätefehler 188",
+          "l_n_interchanged": "L und N vertauscht",
+          "below_average_yield": "Unterdurchschnittlicher Ertrag",
+          "limitation_error": "Begrenzungsfehler",
+          "device_error_198": "Gerätefehler 198",
+          "device_error_199": "Gerätefehler 199",
+          "device_error_999": "Gerätefehler 999",
           "offline_night": "Offline (Nacht)",
           "connection_failed": "Verbindung fehlgeschlagen",
           "unknown": "Unbekannt"

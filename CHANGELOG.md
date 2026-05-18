@@ -7,6 +7,48 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.2.0] - 2026-05-18
+
+### Breaking Changes
+- **Checksum verification is now enabled by default**. If your inverter uses a non-standard CRC implementation, you may see "checksum verification failed" errors after upgrading. Disable the "Verify response checksum" option in the integration configuration to restore the previous behaviour.
+
+### Added
+- **Extended Status Codes**: Thanks @olabaie & [https://github.com/t-pa/solarmaxcom](https://github.com/t-pa/solarmaxcom), Expanded SYS status map to ~110 entries (20000–20999)
+- **New Sensors**: 11 additional sensors from @olabaie & [https://github.com/t-pa/solarmaxcom](https://github.com/t-pa/solarmaxcom) (disabled by default, your Inverter may not support all): Energy Yesterday (KDL), Energy Last Month (KLM), Energy Last Year (KLY), Relative Power % (PRL), Installed Power (PIN), Grid Frequency (TNF), DC Power/Voltage/Current String 3 (PD03/UD03/ID03), Inverter Temperature 2/3 (TK2/TK3), Grid Voltage Upper Limit (ULH), Grid Voltage Lower Limit (ULL), Grid Frequency Upper Limit (TNH), Grid Frequency Lower Limit (TNL).
+- **Inverter Type Detection**: Device info now shows the actual inverter model (e.g. "SolarMax 7TP2") instead of generic "Inverter", queried via the MaxComm TYP register
+- **Firmware Version Display**: Device info shows the real firmware version from the inverter (SWV key) instead of hardcoded "1.0.0"
+- **Serial Number**: Added serial number detection (DIN key) and display in device info for unique inverter identification
+- **Build/Release Number**: Added build/release number detection (BDN key) for detailed firmware information
+- **Device Type Map**: Complete mapping of all 116 SolarMax device types from the MaxComm protocol specification
+- **DC Voltage Sensor (UDC)**: Added official MaxComm protocol key for total DC input voltage
+- **Response Checksum Verification**: Validates CRC on every inverter response to detect corrupt data
+- **Protocol Error Handling**: Detects and reports MaxComm interface errors (IPR: invalid protocol, IPN: invalid port)
+
+### Changed
+- **CRC Verification Now Strict**: Response checksum mismatch raises `SolarmaxProtocolError` instead of logging a warning and continuing with potentially corrupt data. **If upgrading from v1.1.x and your inverter stops working**, disable "Verify response checksum" in the integration options.
+- **Multi-Frame Response Support**: Large responses (>255 bytes) from the inverter are now correctly handled — the inverter splits them into multiple frames with individual CRCs
+- **Protocol Error Not Retried**: `SolarmaxProtocolError` (IPR/IPN) is raised immediately without retry since these errors are deterministic
+- **MaxComm Protocol Reference**: Integration fully refactored against the official "MaxComm Datenprotokoll" (August 2022) specification
+- **Configurable Checksum Verification**: New option to disable CRC verification for inverters with non-standard checksum implementations
+
+
+## [1.1.0] - 2026-05-16
+
+### Added
+- **French Translation**: Full French localization for all UI strings, entity names, status codes, and alarm states
+- **Inverter Emulator**: TCP test tool (`tools/inverter_emulator.py`) for offline development with 7 scenarios and interactive mode
+- **Translations Section in README**: Documentation on supported languages, status/alarm code tables, and how to contribute new languages
+
+### Changed
+- **Enum Sensor Pattern**: Status (SYS) and alarm (SAL) sensors now use Home Assistant's enum device class with translation-based state display
+- **Status Code Mapping**: Corrected to actual Solarmax protocol codes (20000–20008) with proper English option keys
+- **Alarm Bitmask Decoding**: Proper bitmask handling (power-of-2 values: 1, 2, 4, 8, ... 65536) with `active_alarms` attribute for multiple simultaneous alarms
+- **strings.json Rebuilt**: Fully synced with all 24 sensor definitions (was missing 20 sensors, had 3 stale entries)
+
+### Fixed
+- **Status/Alarm Translation Bug**: Sensors no longer show hardcoded German strings — HA automatically translates via the enum state translation system based on user's language setting
+- **Status Code Display**: Now shows human-readable translated text (e.g. "MPP operation") instead of raw numeric code
+
 ## [1.0.7] - 2026-03-27
 
 ### New Feature
