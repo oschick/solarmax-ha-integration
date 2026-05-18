@@ -16,7 +16,9 @@ from .const import (
     CONF_HOST,
     CONF_PORT,
     CONF_UPDATE_INTERVAL,
+    CONF_VERIFY_CHECKSUM,
     DEFAULT_ADDRESS,
+    DEFAULT_VERIFY_CHECKSUM,
     DEVICE_TYPE_MAP,
     DOMAIN,
 )
@@ -34,6 +36,9 @@ class SolarmaxCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             host=entry.data[CONF_HOST],
             port=entry.data[CONF_PORT],
             address=entry.data.get(CONF_ADDRESS, DEFAULT_ADDRESS),
+            verify_checksum=entry.data.get(
+                CONF_VERIFY_CHECKSUM, DEFAULT_VERIFY_CHECKSUM
+            ),
         )
 
         update_interval = timedelta(seconds=entry.data.get(CONF_UPDATE_INTERVAL, 30))

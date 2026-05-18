@@ -181,13 +181,19 @@ class SolarmaxAPI:
     """API for communicating with Solarmax inverters."""
 
     def __init__(
-        self, host: str, port: int = 12345, address: int = 1, timeout: int = 10
+        self,
+        host: str,
+        port: int = 12345,
+        address: int = 1,
+        timeout: int = 10,
+        verify_checksum: bool = True,
     ):
         """Initialize the API."""
         self.host = host
         self.port = port
         self.address = address
         self.timeout = timeout
+        self.verify_checksum = verify_checksum
         self._last_successful_connection = None
 
     def _create_socket_connection(self, retries: int = 3) -> socket.socket:
@@ -575,13 +581,14 @@ class SolarmaxAPI:
             if not frames:
                 raise SolarmaxProtocolError("No valid MaxComm frames found in response")
 
-            # Verify checksum on each frame
-            for frame in frames:
-                if not self._verify_response_checksum(frame):
-                    raise SolarmaxProtocolError(
-                        "MaxComm response checksum verification failed: "
-                        "data may be corrupted"
-                    )
+            # Verify checksum on each frame (unless disabled)
+            if self.verify_checksum:
+                for frame in frames:
+                    if not self._verify_response_checksum(frame):
+                        raise SolarmaxProtocolError(
+                            "MaxComm response checksum verification failed: "
+                            "data may be corrupted"
+                        )
 
             # Check for interface error messages (port 0x3E8 = 1000)
             # Only need to check the first frame (error responses are single-frame)

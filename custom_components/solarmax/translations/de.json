@@ -9,7 +9,8 @@
           "port": "Port",
           "address": "Wechselrichter-Adresse (1-249)",
           "update_interval": "Aktualisierungsintervall (Sekunden)",
-          "device_name": "Gerätename"
+          "device_name": "Gerätename",
+          "verify_checksum": "Antwort-Prüfsumme verifizieren"
         }
       }
     },
@@ -33,7 +34,8 @@
           "port": "Port",
           "address": "Wechselrichter-Adresse (1-249)",
           "update_interval": "Aktualisierungsintervall (Sekunden)",
-          "device_name": "Gerätename"
+          "device_name": "Gerätename",
+          "verify_checksum": "Antwort-Prüfsumme verifizieren"
         }
       }
     },

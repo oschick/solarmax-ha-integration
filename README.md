@@ -129,6 +129,20 @@ The integration can be configured through the Home Assistant UI:
    - **Port**: Communication port (default: 12345)
    - **Update Interval**: How often to poll data (default: 30 seconds)
    - **Device Name**: Friendly name for your inverter
+   - **Verify response checksum**: Validate CRC on inverter responses (default: enabled)
+
+### Checksum Verification
+
+By default, the integration validates the CRC checksum on every response from the inverter to detect corrupted data. If you experience persistent "checksum verification failed" errors, your inverter may use a non-standard CRC implementation.
+
+To disable checksum verification:
+1. Go to **Settings** → **Devices & Services**
+2. Find your Solarmax Inverter integration
+3. Click **Configure**
+4. Uncheck **Verify response checksum**
+5. Click **Submit**
+
+> **Note:** Disabling checksum verification means corrupted responses will not be detected. Only disable this if you are experiencing checksum errors and have verified that the data values are otherwise correct.
 
 ### Reconfiguration
 

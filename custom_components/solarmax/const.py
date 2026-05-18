@@ -10,12 +10,14 @@ CONF_PORT = "port"
 CONF_ADDRESS = "address"
 CONF_UPDATE_INTERVAL = "update_interval"
 CONF_DEVICE_NAME = "device_name"
+CONF_VERIFY_CHECKSUM = "verify_checksum"
 
 # Default values
 DEFAULT_PORT = 12345
 DEFAULT_ADDRESS = 1
 DEFAULT_UPDATE_INTERVAL = 30
 DEFAULT_DEVICE_NAME = "Solarmax Inverter"
+DEFAULT_VERIFY_CHECKSUM = True
 
 # =============================================================================
 # Device Type Map (TYP key) - per MaxComm Protocol Section 2.3

@@ -9,7 +9,8 @@
           "port": "Port",
           "address": "Inverter address (1-249)",
           "update_interval": "Update interval (seconds)",
-          "device_name": "Device name"
+          "device_name": "Device name",
+          "verify_checksum": "Verify response checksum"
         }
       }
     },
@@ -33,7 +34,8 @@
           "port": "Port",
           "address": "Inverter address (1-249)",
           "update_interval": "Update interval (seconds)",
-          "device_name": "Device name"
+          "device_name": "Device name",
+          "verify_checksum": "Verify response checksum"
         }
       }
     },
