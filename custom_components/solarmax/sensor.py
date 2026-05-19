@@ -143,6 +143,10 @@ class SolarmaxSensor(CoordinatorEntity[SolarmaxCoordinator], SensorEntity):
             self._attr_state_class = sensor_config["state_class"]
         if "icon" in sensor_config:
             self._attr_icon = sensor_config["icon"]
+        if "suggested_display_precision" in sensor_config:
+            self._attr_suggested_display_precision = sensor_config[
+                "suggested_display_precision"
+            ]
 
         # Device info - model is already resolved since async_config_entry_first_refresh
         # runs before sensor platform setup

@@ -66,7 +66,7 @@ The integration provides multiple sensor entities organized by importance:
 - **Alarm Codes (SAL)** - Current alarm/error codes (bitmask)
 
 #### Production History (Disabled by Default)
-- **Energy Yesterday (KDL)** - Previous day's energy production in kWh
+- **Energy Yesterday (KLD)** - Previous day's energy production in kWh
 - **Energy Last Month (KLM)** - Previous month's energy production in kWh
 - **Energy Last Year (KLY)** - Previous year's energy production in kWh
 - **Relative Power (PRL)** - Current output as % of rated power

@@ -559,9 +559,9 @@ SENSOR_TYPES = {
         "entity_category": None,  # Main measurement
         "enabled_by_default": True,
     },
-    "KDL": {
+    "KLD": {
         "name": "Energy Yesterday",
-        "translation_key": "kdl",
+        "translation_key": "kld",
         "unit": "kWh",
         "device_class": "energy",
         "state_class": "measurement",
@@ -664,6 +664,7 @@ SENSOR_TYPES = {
         "icon": "mdi:sine-wave",
         "entity_category": EntityCategory.DIAGNOSTIC,
         "enabled_by_default": False,
+        "suggested_display_precision": 2,
     },
     "ULH": {
         "name": "Grid Voltage Upper Limit",
@@ -694,6 +695,7 @@ SENSOR_TYPES = {
         "icon": "mdi:sine-wave",
         "entity_category": EntityCategory.DIAGNOSTIC,
         "enabled_by_default": False,
+        "suggested_display_precision": 2,
     },
     "TNL": {
         "name": "Grid Frequency Lower Limit",
@@ -704,6 +706,7 @@ SENSOR_TYPES = {
         "icon": "mdi:sine-wave",
         "entity_category": EntityCategory.DIAGNOSTIC,
         "enabled_by_default": False,
+        "suggested_display_precision": 2,
     },
     "SAL": {
         "name": "Alarm Codes",
