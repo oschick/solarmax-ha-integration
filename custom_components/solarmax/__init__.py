@@ -35,13 +35,21 @@ def _async_migrate_unique_ids(hass: HomeAssistant, entry: ConfigEntry) -> None:
 
         entity_id = registry.async_get_entity_id(Platform.SENSOR, DOMAIN, old_unique_id)
         if entity_id is not None:
-            _LOGGER.info(
-                "Migrating entity %s unique_id: %s → %s",
-                entity_id,
-                old_unique_id,
-                new_unique_id,
-            )
-            registry.async_update_entity(entity_id, new_unique_id=new_unique_id)
+            # If the new unique_id already exists, just remove the old entity
+            if registry.async_get_entity_id(Platform.SENSOR, DOMAIN, new_unique_id):
+                _LOGGER.info(
+                    "Removing orphaned entity %s (new entity already exists)",
+                    entity_id,
+                )
+                registry.async_remove(entity_id)
+            else:
+                _LOGGER.info(
+                    "Migrating entity %s unique_id: %s → %s",
+                    entity_id,
+                    old_unique_id,
+                    new_unique_id,
+                )
+                registry.async_update_entity(entity_id, new_unique_id=new_unique_id)
 
 
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
