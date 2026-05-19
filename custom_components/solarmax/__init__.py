@@ -9,6 +9,7 @@ from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import Platform
 from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import ConfigEntryNotReady
+from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator
 
 from .const import CONF_HOST, CONF_PORT, DOMAIN
@@ -18,9 +19,36 @@ _LOGGER = logging.getLogger(__name__)
 
 PLATFORMS: list[Platform] = [Platform.SENSOR]
 
+# Mapping of old unique_id suffixes to new ones for entity migration
+_UNIQUE_ID_MIGRATIONS = {
+    "kdl": "kld",  # v1.2.1: Energy Yesterday key fix (KDL → KLD)
+}
+
+
+def _async_migrate_unique_ids(hass: HomeAssistant, entry: ConfigEntry) -> None:
+    """Migrate renamed sensor unique IDs to prevent orphaned entities."""
+    registry = er.async_get(hass)
+
+    for old_suffix, new_suffix in _UNIQUE_ID_MIGRATIONS.items():
+        old_unique_id = f"{entry.entry_id}-{old_suffix}"
+        new_unique_id = f"{entry.entry_id}-{new_suffix}"
+
+        entity_id = registry.async_get_entity_id(Platform.SENSOR, DOMAIN, old_unique_id)
+        if entity_id is not None:
+            _LOGGER.info(
+                "Migrating entity %s unique_id: %s → %s",
+                entity_id,
+                old_unique_id,
+                new_unique_id,
+            )
+            registry.async_update_entity(entity_id, new_unique_id=new_unique_id)
+
 
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Set up Solarmax Inverter from a config entry."""
+    # Migrate renamed entity unique IDs (v1.2.0 → v1.2.1: KDL → KLD)
+    _async_migrate_unique_ids(hass, entry)
+
     coordinator = SolarmaxCoordinator(hass, entry)
 
     # Test connection before proceeding with setup
