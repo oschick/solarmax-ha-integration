@@ -99,7 +99,7 @@ class InverterState:
     id03: int = 0  # DC Current String 3: 0A
 
     # Energy history
-    kdl: int = 72  # Energy Yesterday: 72/10 = 7.2 kWh
+    kld: int = 72  # Energy Yesterday: 72/10 = 7.2 kWh
     klm: int = 320  # Energy Last Month: 320 kWh
     kly: int = 3800  # Energy Last Year: 3800 kWh
 
@@ -151,7 +151,7 @@ def get_scenario_state(scenario: str) -> InverterState:
             kmt=350,
             kyr=4200,
             kt0=28500,
-            kdl=72,
+            kld=72,
             klm=320,
             kly=3800,
             tkk=18,
@@ -190,7 +190,7 @@ def get_scenario_state(scenario: str) -> InverterState:
             kmt=350,
             kyr=4200,
             kt0=28500,
-            kdl=72,
+            kld=72,
             klm=320,
             kly=3800,
             tkk=22,
@@ -229,7 +229,7 @@ def get_scenario_state(scenario: str) -> InverterState:
             kmt=350,
             kyr=4200,
             kt0=28500,
-            kdl=72,
+            kld=72,
             klm=320,
             kly=3800,
             tkk=38,
@@ -267,7 +267,7 @@ def get_scenario_state(scenario: str) -> InverterState:
             kmt=350,
             kyr=4200,
             kt0=28500,
-            kdl=72,
+            kld=72,
             klm=320,
             kly=3800,
             tkk=45,
@@ -305,7 +305,7 @@ def get_scenario_state(scenario: str) -> InverterState:
             kmt=1200,
             kyr=4800,
             kt0=29000,
-            kdl=240,
+            kld=240,
             klm=1100,
             kly=4500,
             tkk=58,
@@ -343,7 +343,7 @@ def get_scenario_state(scenario: str) -> InverterState:
             kmt=350,
             kyr=4200,
             kt0=28500,
-            kdl=72,
+            kld=72,
             klm=320,
             kly=3800,
             tkk=25,
@@ -624,7 +624,7 @@ def interactive_loop(emulator: SolarmaxEmulator):
             print(f"  PRL (rel power): {s.prl}%")
             print(f"  PIN (installed): {s.pin} raw -> {s.pin / 2}W")
             print(f"  KDY (day):       {s.kdy} raw -> {s.kdy / 10} kWh")
-            print(f"  KDL (yesterday): {s.kdl} raw -> {s.kdl / 10} kWh")
+            print(f"  kld (yesterday): {s.kld} raw -> {s.kld / 10} kWh")
             print(f"  KT0 (total):     {s.kt0} kWh")
             print(f"  Noise: {'on' if s.add_noise else 'off'}")
             print("")

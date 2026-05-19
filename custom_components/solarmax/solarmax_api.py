@@ -63,7 +63,7 @@ PROTO_ERROR_INVALID_PORT = "IPN"  # Invalid port number
 # Spannung_2:         0.1 V/digit    (UDC, UL1, UL2, UL3, UD01, UD02, UD03)
 # Strom_positiv_2:    0.01 A/digit   (IDC, ID01, ID02, ID03, IL1, IL2, IL3)
 # Leistung:           0.5 W/digit    (PAC, PDC, PD01, PD02, PD03, PIN)
-# Energie_1:          0.1 kWh/digit  (KDY, KDL)
+# Energie_1:          0.1 kWh/digit  (KDY, KLD)
 # Energie_2:          1 kWh/digit    (KMT, KYR, KT0, KLM, KLY)
 # Frequenz:           0.1 Hz/digit   (TNF)
 # Temperatur_positiv: 1 °C/digit     (TKK)
@@ -123,7 +123,7 @@ FIELD_MAP_INVERTER = {
     "ID01": "DC_Current_String_1",  # Strom_positiv_2 (0.01 A/digit)
     "ID02": "DC_Current_String_2",  # Strom_positiv_2 (0.01 A/digit)
     "ID03": "DC_Current_String_3",  # Strom_positiv_2 (0.01 A/digit)
-    "KDL": "Energy_Yesterday",  # Energie_1 (0.1 kWh/digit)
+    "KLD": "Energy_Yesterday",  # Energie_1 (0.1 kWh/digit)
     "KLM": "Energy_Last_Month",  # Energie_2 (1 kWh/digit)
     "KLY": "Energy_Last_Year",  # Energie_2 (1 kWh/digit)
     "TNF": "Grid_Frequency",  # Frequenz (0.1 Hz/digit)
@@ -433,7 +433,7 @@ class SolarmaxAPI:
         ):
             # Spannung_2: resolution 0.1 V/digit
             return value / 10.0
-        elif field in ("KDY", "KDL"):
+        elif field in ("KDY", "KLD"):
             # Energie_1: resolution 0.1 kWh/digit
             return value / 10.0
         elif field in ("IDC", "ID01", "ID02", "ID03", "IL1", "IL2", "IL3"):
