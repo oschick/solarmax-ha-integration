@@ -175,3 +175,9 @@ Thumbs.db
 # Custom
 secrets.yaml
 known_devices.yaml
+
+# Serena MCP project files
+.serena/
+
+# Local research notes
+sm3000s Research from olabaie.html
