@@ -327,7 +327,9 @@ SAL_OPTIONS: list[str] = list(SAL_ALARM_MAP.values()) + [
 ]
 
 # Sensor types and their properties
-# Info from MaxComm protocol spec, https://github.com/t-pa/solarmaxcom/blob/main/src/main/java/solarmaxcom/protocol/Keys.java & https://github.com/benchmarex/SOLARMAX_to_SQL/blob/master/main_solarmax_sql.py
+# Info from MaxComm protocol spec,
+# https://github.com/t-pa/solarmaxcom/blob/main/src/main/java/solarmaxcom/protocol/Keys.java
+# https://github.com/benchmarex/SOLARMAX_to_SQL/blob/master/main_solarmax_sql.py
 SENSOR_TYPES = {
     "PAC": {
         "name": "AC Power",
@@ -567,7 +569,9 @@ SENSOR_TYPES = {
         "state_class": "measurement",
         "icon": "mdi:solar-power",
         "entity_category": None,
-        "enabled_by_default": False,  # Disable by default - not provided by all inverters and less relevant for most users
+        # Disabled by default - not provided by all inverters and less
+        # relevant for most users
+        "enabled_by_default": False,
     },
     "KLM": {
         "name": "Energy Last Month",
@@ -577,7 +581,9 @@ SENSOR_TYPES = {
         "state_class": "measurement",
         "icon": "mdi:solar-power",
         "entity_category": None,
-        "enabled_by_default": False,  # Disable by default - not provided by all inverters and less relevant for most users
+        # Disabled by default - not provided by all inverters and less
+        # relevant for most users
+        "enabled_by_default": False,
     },
     "KLY": {
         "name": "Energy Last Year",
@@ -587,7 +593,9 @@ SENSOR_TYPES = {
         "state_class": "measurement",
         "icon": "mdi:solar-power",
         "entity_category": None,
-        "enabled_by_default": False,  # Disable by default - not provided by all inverters and less relevant for most users
+        # Disabled by default - not provided by all inverters and less
+        # relevant for most users
+        "enabled_by_default": False,
     },
     "TKK": {
         "name": "Inverter Temperature",

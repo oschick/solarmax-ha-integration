@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.3.0] - 2026-06-12
+
+### Added
+- **Full Testing** Added comprehensive testing pipeline for all integration components (config flow, coordinator, sensors), runs on every PR and commit
+- **Pre-commit Hooks**: Switched to ruff for code formatting, linting, pre-commit hooks, and CI checks for consistent code style and quality enforcement
+
+### Fixed
+- **Fix Existing Tests**: Fixed existing test suite
+- **Code Hygiene & Quality**: Addressed code quality issues identified by Claude
+
 ## [1.2.1] - 2026-05-19
 
 ### Fixed
@@ -71,13 +81,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Updated entity category import to use `EntityCategory` from `homeassistant.helpers.entity`
 - **Modernization**: Updated deprecated type hints (`Dict`, `Union` → `dict`, `|`)
 
-## [1.0.5] - 2025-09-10 
+## [1.0.5] - 2025-09-10
 
 ### Added - Gold Tier Compliance 🏆
 - **Gold**: Diagnostics platform with comprehensive device and connection information
 - **Gold**: Entity categories for proper sensor organization (diagnostic vs measurement)
 - **Gold**: Entity disabled by default for less critical sensors (voltages, currents, temperature)
-- **Gold**: Exception translations with translatable error messages 
+- **Gold**: Exception translations with translatable error messages
 - **Gold**: Repair issues and repair flows for connection problems
 - **Gold**: Enhanced documentation with use cases, automation examples, and troubleshooting
 - **Gold**: Comprehensive supported devices and known limitations documentation

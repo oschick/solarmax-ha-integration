@@ -1,29 +1,27 @@
 """Test the Solarmax integration initialization."""
 
-import pytest
-from unittest.mock import patch, AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 
-from homeassistant.config_entries import ConfigEntry
+import pytest
 from homeassistant.const import Platform
 from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import ConfigEntryNotReady
+from pytest_homeassistant_custom_component.common import MockConfigEntry
 
 from custom_components.solarmax import async_setup_entry, async_unload_entry
 from custom_components.solarmax.const import (
-    DOMAIN,
+    CONF_DEVICE_NAME,
     CONF_HOST,
     CONF_PORT,
-    CONF_DEVICE_NAME,
     CONF_UPDATE_INTERVAL,
+    DOMAIN,
 )
 
 
 @pytest.fixture
 def mock_config_entry():
     """Create a mock config entry."""
-    return ConfigEntry(
-        version=1,
-        minor_version=1,
+    return MockConfigEntry(
         domain=DOMAIN,
         title="Test Inverter",
         data={
@@ -32,7 +30,6 @@ def mock_config_entry():
             CONF_DEVICE_NAME: "Test Inverter",
             CONF_UPDATE_INTERVAL: 30,
         },
-        source="user",
         entry_id="test_entry",
         unique_id="192.168.1.100:12345",
     )

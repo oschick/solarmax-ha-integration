@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import logging
-from datetime import datetime
 from typing import Any
 
 from homeassistant.components.sensor import (
@@ -14,12 +13,9 @@ from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity import generate_entity_id
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
-from homeassistant.util import dt as dt_util
 
 from .const import (
     CONF_DEVICE_NAME,
-    CONF_HOST,
-    CONF_PORT,
     DOMAIN,
     SAL_ALARM_MAP,
     SAL_STATE_MULTIPLE,
@@ -82,15 +78,17 @@ class SolarmaxSensor(CoordinatorEntity[SolarmaxCoordinator], SensorEntity):
         self.sensor_config = sensor_config
 
         # Create unique ID following HA guidelines:
-        # Since we don't have access to physical device identifiers (serial number, MAC, etc.),
-        # we use the Config Entry ID as "last resort" per HA documentation
+        # Since we don't have access to physical device identifiers (serial
+        # number, MAC, etc.), we use the Config Entry ID as "last resort" per
+        # HA documentation
         config_entry_id = entry.entry_id
 
         # Use the passed device name for readability (normalized)
         # Don't override the device_name parameter that was passed to constructor
         device_name_normalized = device_name.lower().replace(" ", "_").replace("-", "_")
 
-        # Combine config entry ID with sensor type (following HA pattern: {device_id}-{sensor_type})
+        # Combine config entry ID with sensor type
+        # (following HA pattern: {device_id}-{sensor_type})
         sensor_type = sensor_key.lower()  # PAC -> pac, SYS -> sys, etc.
         self._attr_unique_id = f"{config_entry_id}-{sensor_type}"
 
@@ -105,7 +103,8 @@ class SolarmaxSensor(CoordinatorEntity[SolarmaxCoordinator], SensorEntity):
             "translation_key", self.sensor_key.lower()
         )
 
-        # Override the translation_key to enable HA's translation system for display names
+        # Override the translation_key to enable HA's translation system
+        # for display names
         self._attr_translation_key = self._translation_key
 
         # Enable HA's translation system for entity names
@@ -122,9 +121,6 @@ class SolarmaxSensor(CoordinatorEntity[SolarmaxCoordinator], SensorEntity):
         else:
             # Fallback to True if not specified
             self._attr_entity_registry_enabled_default = True
-
-        # Remove debug logging now that we've verified the logic works
-        # _LOGGER.warning(f"DEBUG Solarmax Sensor Init: sensor_key={sensor_key}, device_name='{device_name}', device_name_normalized='{device_name_normalized}', unique_id='{self._attr_unique_id}', suggested_object_id='{self._attr_suggested_object_id}')")
 
         # Force the exact entity ID we want using generate_entity_id
         desired_object_id = f"{device_name_normalized}_{sensor_type}"
@@ -158,27 +154,6 @@ class SolarmaxSensor(CoordinatorEntity[SolarmaxCoordinator], SensorEntity):
             "sw_version": coordinator.sw_version,
             "serial_number": coordinator.serial_number,
         }
-
-    def _is_night_time(self) -> bool:
-        """Check if it's currently night time (between sunset and sunrise)."""
-        try:
-            now = dt_util.now()
-
-            # Get sun component if available
-            sun_component = self.hass.states.get("sun.sun")
-            if sun_component:
-                # If we have the sun component, use its state
-                return sun_component.state == "below_horizon"
-
-            # Fallback: simple time-based check (between 20:00 and 06:00)
-            current_hour = now.hour
-            return current_hour >= 20 or current_hour < 6
-
-        except Exception as e:
-            _LOGGER.debug(f"Error checking night time: {e}")
-            # Fallback: simple time-based check
-            current_hour = dt_util.now().hour
-            return current_hour >= 20 or current_hour < 6
 
     @property
     def translation_key(self) -> str:
@@ -331,7 +306,7 @@ class SolarmaxSensor(CoordinatorEntity[SolarmaxCoordinator], SensorEntity):
             return False
 
         # Check if it's night time for backward compatibility
-        is_night = self._is_night_time()
+        is_night = self.coordinator.is_night_time
 
         # For SYS (status) sensor, always remain available to show offline status
         if self.sensor_key == "SYS":
@@ -344,8 +319,8 @@ class SolarmaxSensor(CoordinatorEntity[SolarmaxCoordinator], SensorEntity):
 
         # During day time, check consecutive failures
         if hasattr(self.coordinator, "consecutive_failures"):
-            # If we have many consecutive failures during day, sensors become unavailable
-            # This helps indicate there's a real problem vs temporary network hiccup
+            # Many consecutive failures during the day make sensors
+            # unavailable - a real problem vs a temporary network hiccup
             if self.coordinator.consecutive_failures > 5:
                 return False
 

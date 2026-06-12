@@ -1,16 +1,17 @@
 """Test the Solarmax API."""
 
-import pytest
-from unittest.mock import patch, MagicMock
 import socket
+from unittest.mock import MagicMock, patch
+
+import pytest
 
 from custom_components.solarmax.solarmax_api import (
+    FIELD_MAP_DEVICE_INFO,
+    FIELD_MAP_INVERTER,
     SolarmaxAPI,
     SolarmaxConnectionError,
     SolarmaxProtocolError,
     SolarmaxTimeoutError,
-    FIELD_MAP_INVERTER,
-    FIELD_MAP_DEVICE_INFO,
 )
 
 
@@ -48,7 +49,8 @@ def test_calculate_checksum(api):
 
     assert isinstance(checksum, str)
     assert len(checksum) == 4
-    assert checksum.isupper()
+    # Sum of ASCII values of the data, as 4-digit uppercase hex
+    assert checksum == format(sum(ord(c) for c in data), "04X")
 
 
 def test_map_data_value(api):
@@ -69,8 +71,8 @@ def test_map_data_value(api):
     assert api.map_data_value("SYS", 20019) == 20019
     assert api.map_data_value("SAL", 0) == 0
 
-    # Test other values (unchanged)
-    assert api.map_data_value("KDY", 1234) == 1234
+    # Test daily energy values (divided by 10, 0.1 kWh/digit)
+    assert api.map_data_value("KDY", 1234) == 123.4
 
 
 @patch("socket.socket")
@@ -92,7 +94,7 @@ def test_test_connection_failure(mock_socket, api):
     """Test failed connection test."""
     mock_sock = MagicMock()
     mock_socket.return_value = mock_sock
-    mock_sock.connect.side_effect = socket.error("Connection failed")
+    mock_sock.connect.side_effect = OSError("Connection failed")
 
     result = api.test_connection()
 
@@ -119,7 +121,7 @@ def test_get_data_success(mock_socket, api):
 @patch("socket.socket")
 def test_get_data_connection_error(mock_socket, api):
     """Test data retrieval with connection error."""
-    mock_socket.side_effect = socket.error("Connection failed")
+    mock_socket.side_effect = OSError("Connection failed")
 
     with pytest.raises(SolarmaxConnectionError):
         api.get_data()
@@ -155,7 +157,7 @@ def test_convert_to_json(api):
 
 
 def test_convert_to_json_invalid_response(api):
-    """Test response conversion with invalid/unframed data raises SolarmaxProtocolError."""
+    """Test conversion of invalid/unframed data raises SolarmaxProtocolError."""
     with pytest.raises(SolarmaxProtocolError):
         api.convert_to_json("invalid_response")
 
@@ -273,7 +275,7 @@ def test_convert_to_json_multi_frame(api):
     """Test parsing of multi-frame responses (continuation frames end with ')')."""
     # Build a realistic multi-frame response like a real inverter sends
     # Frame 1 ends with ')' (continuation), Frame 2 ends with '}' (final)
-    inner1 = "01;FB;FF|64:PAC=2FA;UDC=D23;IDC=89;UL1=91C;UL2=8F0;UL3=8FD;IL1=84;IL2=82;IL3=87;KDY=D;KMT=102;KYR=602;KT0=9225;KHR=7848;TKK=24;SYS=4E28,0;SAL=0;TYP=50AA;DIN=9973BB;BDN=391;PIN=41A0;PRL=4;ULH=A55;ULL=730;TNH=141E;TNL=128E;PDC=340;PD01=1BE;PD02=182;U|"
+    inner1 = "01;FB;FF|64:PAC=2FA;UDC=D23;IDC=89;UL1=91C;UL2=8F0;UL3=8FD;IL1=84;IL2=82;IL3=87;KDY=D;KMT=102;KYR=602;KT0=9225;KHR=7848;TKK=24;SYS=4E28,0;SAL=0;TYP=50AA;DIN=9973BB;BDN=391;PIN=41A0;PRL=4;ULH=A55;ULL=730;TNH=141E;TNL=128E;PDC=340;PD01=1BE;PD02=182;U|"  # noqa: E501
     crc1 = api.calculate_checksum(inner1)
     frame1 = "{" + inner1 + crc1 + ")"  # Continuation frame ends with ')'
 
@@ -298,7 +300,7 @@ def test_convert_to_json_multi_frame(api):
     assert "CAC" in result
     assert result["CAC"]["raw_value"] == 0x193D
     assert "TNF" in result
-    assert result["TNF"]["value"] == 0x138A / 10.0
+    assert result["TNF"]["value"] == 0x138A / 100.0
 
 
 def test_split_response_frames(api):
@@ -334,11 +336,13 @@ def test_get_data_multi_frame_recv(mock_socket, api):
     mock_sock = MagicMock()
     mock_socket.return_value = mock_sock
 
-    inner1 = "01;FB;15|64:PAC=BB8;SYS=4E33,0|"
+    # Field "UDC" is split across the frame boundary ("U" + "DC=BB8"),
+    # as a real inverter splits data mid-field
+    inner1 = "01;FB;16|64:PAC=BB8;SYS=4E33,0;U|"
     crc1 = api.calculate_checksum(inner1)
     frame1 = "{" + inner1 + crc1 + ")"
 
-    inner2 = "01;FB;0E|UDC=BB8|"
+    inner2 = "01;FB;0D|DC=BB8|"
     crc2 = api.calculate_checksum(inner2)
     frame2 = "{" + inner2 + crc2 + "}"
 
@@ -346,7 +350,7 @@ def test_get_data_multi_frame_recv(mock_socket, api):
     mock_sock.recv.side_effect = [
         frame1.encode(),
         frame2.encode(),
-        socket.timeout(),
+        TimeoutError(),
     ]
 
     result = api.get_data()
@@ -379,3 +383,28 @@ def test_build_request_device_info(api):
     assert "SWV" in request
     assert "DIN" in request
     assert "BDN" in request
+
+
+def test_receive_slow_first_frame(api):
+    """Test that a slow-to-arrive response is still received successfully."""
+    inner = "01;FB;14|64:PAC=BB8|"
+    frame = "{" + inner + api.calculate_checksum(inner) + "}"
+
+    sock = MagicMock()
+    # First two reads time out, then the full frame arrives
+    sock.recv.side_effect = [socket.timeout, socket.timeout, frame.encode()]
+
+    response = api._send_request_and_receive_response(sock, "request")
+
+    assert response == frame
+
+
+def test_receive_no_response_raises_timeout():
+    """Test that a never-responding inverter raises SolarmaxTimeoutError."""
+    api = SolarmaxAPI("192.168.1.100", 12345, timeout=1)
+
+    sock = MagicMock()
+    sock.recv.side_effect = socket.timeout
+
+    with pytest.raises(SolarmaxTimeoutError):
+        api._send_request_and_receive_response(sock, "request")
