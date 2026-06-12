@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.3.0] - 2026-06-12
+
+### Added
+- **Full Testing** Added comprehensive testing pipeline for all integration components (config flow, coordinator, sensors), runs on every PR and commit
+- **Pre-commit Hooks**: Switched to ruff for code formatting, linting, pre-commit hooks, and CI checks for consistent code style and quality enforcement
+
+### Fixed
+- **Fix Existing Tests**: Fixed existing test suite
+- **Code Hygiene & Quality**: Addressed code quality issues identified by Claude
+
 ## [1.2.1] - 2026-05-19
 
 ### Fixed
