@@ -7,6 +7,7 @@ from typing import Any
 from homeassistant.components.diagnostics import async_redact_data
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
+from homeassistant.loader import async_get_integration
 
 from .const import CONF_HOST, CONF_PORT
 from .coordinator import SolarmaxCoordinator
@@ -19,6 +20,8 @@ async def async_get_config_entry_diagnostics(
 ) -> dict[str, Any]:
     """Return diagnostics for a config entry."""
     coordinator: SolarmaxCoordinator = entry.runtime_data
+
+    integration = await async_get_integration(hass, entry.domain)
 
     # Collect all diagnostic data
     diagnostics_data = {
@@ -46,7 +49,7 @@ async def async_get_config_entry_diagnostics(
         "sensor_data": {},
         "system_info": {
             "ha_version": hass.config.as_dict().get("version"),
-            "integration_version": "1.0.6",
+            "integration_version": str(integration.version),
         },
     }
 

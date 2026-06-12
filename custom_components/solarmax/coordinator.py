@@ -76,10 +76,15 @@ class SolarmaxCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             return current_hour >= 20 or current_hour < 6
 
         except Exception as e:
-            _LOGGER.debug(f"Error checking night time: {e}")
+            _LOGGER.debug("Error checking night time: %s", e)
             # Fallback: simple time-based check
             current_hour = dt_util.now().hour
             return current_hour >= 20 or current_hour < 6
+
+    @property
+    def is_night_time(self) -> bool:
+        """Return True if it is currently night time."""
+        return self._is_night_time()
 
     async def _async_update_data(self) -> dict[str, Any]:
         """Fetch data from the inverter with intelligent error handling."""
@@ -114,18 +119,20 @@ class SolarmaxCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             if is_night:
                 # During night time, connection failures are expected
                 self._is_expected_offline = True
-                _LOGGER.debug(f"Inverter offline during night time (expected): {err}")
+                _LOGGER.debug("Inverter offline during night time (expected): %s", err)
                 raise UpdateFailed(f"Inverter offline (night time): {err}") from err
 
             elif self._consecutive_failures == 1:
                 # First failure during day - could be temporary, log as warning
-                _LOGGER.warning(f"First connection failure during day time: {err}")
+                _LOGGER.warning("First connection failure during day time: %s", err)
                 raise UpdateFailed(f"Connection failed (attempt 1): {err}") from err
 
             elif self._consecutive_failures <= 3:
                 # Multiple failures but not too many - could be inverter restart
                 _LOGGER.warning(
-                    f"Connection failure #{self._consecutive_failures} during day time: {err}"
+                    "Connection failure #%d during day time: %s",
+                    self._consecutive_failures,
+                    err,
                 )
                 raise UpdateFailed(
                     f"Connection failed (attempt {self._consecutive_failures}): {err}"
@@ -150,7 +157,7 @@ class SolarmaxCoordinator(DataUpdateCoordinator[dict[str, Any]]):
 
         except Exception as err:
             self._consecutive_failures += 1
-            _LOGGER.error(f"Unexpected error communicating with inverter: {err}")
+            _LOGGER.error("Unexpected error communicating with inverter: %s", err)
             raise UpdateFailed(f"Unexpected error: {err}") from err
 
     @property

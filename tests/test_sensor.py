@@ -1,16 +1,13 @@
 """Test the Solarmax sensor functionality."""
 
+from unittest.mock import Mock
+
 import pytest
-from unittest.mock import Mock, patch
-from datetime import datetime
-
-from homeassistant.core import HomeAssistant
 from homeassistant.config_entries import ConfigEntry
-from homeassistant.helpers.update_coordinator import UpdateFailed
 
-from custom_components.solarmax.sensor import SolarmaxSensor
-from custom_components.solarmax.coordinator import SolarmaxCoordinator
 from custom_components.solarmax.const import SENSOR_TYPES
+from custom_components.solarmax.coordinator import SolarmaxCoordinator
+from custom_components.solarmax.sensor import SolarmaxSensor
 
 
 @pytest.fixture
@@ -22,9 +19,18 @@ def mock_coordinator():
         "PAC": {"value": 1500.0, "raw_value": 3000},
     }
     coordinator.last_update_success = True
-    coordinator.hass = Mock(spec=HomeAssistant)
+    # Explicit values for the properties the sensor consults; a bare Mock
+    # attribute would be truthy and silently flip the logic under test
+    coordinator.is_expected_offline = False
+    coordinator.is_night_time = False
+    coordinator.consecutive_failures = 0
+    coordinator.last_successful_update = None
+    coordinator.api = Mock()
+    coordinator.api.last_successful_connection = None
+    # Plain Mock: hass.config/hass.states are instance attributes and thus
+    # not visible to a spec'd Mock
+    coordinator.hass = Mock()
     coordinator.hass.config.language = "en"
-    coordinator.hass.states.get.return_value = None  # No sun component
     return coordinator
 
 
@@ -41,15 +47,19 @@ def mock_config_entry():
     return entry
 
 
-def test_sensor_available_when_coordinator_success(mock_coordinator, mock_config_entry):
-    """Test sensor is available when coordinator update succeeds."""
-    sensor = SolarmaxSensor(
-        coordinator=mock_coordinator,
-        entry=mock_config_entry,
-        sensor_key="PAC",
-        sensor_config=SENSOR_TYPES["PAC"],
+def _make_sensor(coordinator, entry, sensor_key):
+    return SolarmaxSensor(
+        coordinator=coordinator,
+        entry=entry,
+        sensor_key=sensor_key,
+        sensor_config=SENSOR_TYPES[sensor_key],
         device_name="Test Inverter",
     )
+
+
+def test_sensor_available_when_coordinator_success(mock_coordinator, mock_config_entry):
+    """Test sensor is available when coordinator update succeeds."""
+    sensor = _make_sensor(mock_coordinator, mock_config_entry, "PAC")
 
     assert sensor.available is True
 
@@ -60,55 +70,56 @@ def test_sys_sensor_available_when_coordinator_fails(
     """Test SYS sensor remains available when coordinator update fails."""
     mock_coordinator.last_update_success = False
 
-    sensor = SolarmaxSensor(
-        coordinator=mock_coordinator,
-        entry=mock_config_entry,
-        sensor_key="SYS",
-        sensor_config=SENSOR_TYPES["SYS"],
-        device_name="Test Inverter",
-    )
+    sensor = _make_sensor(mock_coordinator, mock_config_entry, "SYS")
 
     assert sensor.available is True
 
 
-@patch("custom_components.solarmax.sensor.dt_util.now")
 def test_other_sensor_unavailable_during_night_when_coordinator_fails(
-    mock_now, mock_coordinator, mock_config_entry
+    mock_coordinator, mock_config_entry
 ):
     """Test other sensors become unavailable during night when coordinator fails."""
-    # Mock night time (22:00)
-    mock_now.return_value = datetime(2024, 1, 1, 22, 0, 0)
     mock_coordinator.last_update_success = False
+    mock_coordinator.is_night_time = True
 
-    sensor = SolarmaxSensor(
-        coordinator=mock_coordinator,
-        entry=mock_config_entry,
-        sensor_key="PAC",
-        sensor_config=SENSOR_TYPES["PAC"],
-        device_name="Test Inverter",
-    )
+    sensor = _make_sensor(mock_coordinator, mock_config_entry, "PAC")
 
     assert sensor.available is False
 
 
-@patch("custom_components.solarmax.sensor.dt_util.now")
 def test_other_sensor_available_during_day_when_coordinator_fails(
-    mock_now, mock_coordinator, mock_config_entry
+    mock_coordinator, mock_config_entry
 ):
     """Test other sensors remain available during day when coordinator fails."""
-    # Mock day time (12:00)
-    mock_now.return_value = datetime(2024, 1, 1, 12, 0, 0)
     mock_coordinator.last_update_success = False
 
-    sensor = SolarmaxSensor(
-        coordinator=mock_coordinator,
-        entry=mock_config_entry,
-        sensor_key="PAC",
-        sensor_config=SENSOR_TYPES["PAC"],
-        device_name="Test Inverter",
-    )
+    sensor = _make_sensor(mock_coordinator, mock_config_entry, "PAC")
 
     assert sensor.available is True
+
+
+def test_other_sensor_unavailable_when_expected_offline(
+    mock_coordinator, mock_config_entry
+):
+    """Test other sensors become unavailable when coordinator expects offline."""
+    mock_coordinator.last_update_success = False
+    mock_coordinator.is_expected_offline = True
+
+    sensor = _make_sensor(mock_coordinator, mock_config_entry, "PAC")
+
+    assert sensor.available is False
+
+
+def test_other_sensor_unavailable_after_many_failures(
+    mock_coordinator, mock_config_entry
+):
+    """Test other sensors become unavailable after many day-time failures."""
+    mock_coordinator.last_update_success = False
+    mock_coordinator.consecutive_failures = 6
+
+    sensor = _make_sensor(mock_coordinator, mock_config_entry, "PAC")
+
+    assert sensor.available is False
 
 
 def test_sys_sensor_shows_connection_failed_when_coordinator_fails(
@@ -117,28 +128,28 @@ def test_sys_sensor_shows_connection_failed_when_coordinator_fails(
     """Test SYS sensor shows connection_failed when coordinator update fails."""
     mock_coordinator.last_update_success = False
 
-    sensor = SolarmaxSensor(
-        coordinator=mock_coordinator,
-        entry=mock_config_entry,
-        sensor_key="SYS",
-        sensor_config=SENSOR_TYPES["SYS"],
-        device_name="Test Inverter",
-    )
+    sensor = _make_sensor(mock_coordinator, mock_config_entry, "SYS")
 
     assert sensor.native_value == "connection_failed"
+
+
+def test_sys_sensor_shows_offline_night_when_expected_offline(
+    mock_coordinator, mock_config_entry
+):
+    """Test SYS sensor shows offline_night when the inverter is expected offline."""
+    mock_coordinator.last_update_success = False
+    mock_coordinator.is_expected_offline = True
+
+    sensor = _make_sensor(mock_coordinator, mock_config_entry, "SYS")
+
+    assert sensor.native_value == "offline_night"
 
 
 def test_sys_sensor_offline_attributes(mock_coordinator, mock_config_entry):
     """Test SYS sensor shows offline attributes when coordinator update fails."""
     mock_coordinator.last_update_success = False
 
-    sensor = SolarmaxSensor(
-        coordinator=mock_coordinator,
-        entry=mock_config_entry,
-        sensor_key="SYS",
-        sensor_config=SENSOR_TYPES["SYS"],
-        device_name="Test Inverter",
-    )
+    sensor = _make_sensor(mock_coordinator, mock_config_entry, "SYS")
 
     attributes = sensor.extra_state_attributes
     assert attributes["raw_value"] == "offline"
@@ -147,13 +158,7 @@ def test_sys_sensor_offline_attributes(mock_coordinator, mock_config_entry):
 
 def test_normal_sensor_operation(mock_coordinator, mock_config_entry):
     """Test normal sensor operation when coordinator succeeds."""
-    sensor = SolarmaxSensor(
-        coordinator=mock_coordinator,
-        entry=mock_config_entry,
-        sensor_key="SYS",
-        sensor_config=SENSOR_TYPES["SYS"],
-        device_name="Test Inverter",
-    )
+    sensor = _make_sensor(mock_coordinator, mock_config_entry, "SYS")
 
     # Should show enum option key (HA handles translation)
     assert sensor.native_value == "mpp_operation"

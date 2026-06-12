@@ -8,11 +8,18 @@ from pytest_homeassistant_custom_component.common import MockConfigEntry
 from custom_components.solarmax.const import DOMAIN
 
 
+@pytest.fixture(autouse=True)
+def auto_enable_custom_integrations(enable_custom_integrations):
+    """Enable loading custom integrations in all tests."""
+    yield
+
+
 @pytest.fixture
 def mock_config_entry():
     """Return a mock config entry."""
     return MockConfigEntry(
         domain=DOMAIN,
+        title="Test Solarmax",
         data={
             "host": "192.168.1.100",
             "port": 12345,

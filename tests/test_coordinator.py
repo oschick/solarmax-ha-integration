@@ -1,32 +1,30 @@
 """Test the Solarmax coordinator."""
 
-import pytest
 from datetime import datetime, timedelta
-from unittest.mock import patch, AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 
-from homeassistant.config_entries import ConfigEntry
+import pytest
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.update_coordinator import UpdateFailed
+from pytest_homeassistant_custom_component.common import MockConfigEntry
 
+from custom_components.solarmax.const import (
+    CONF_HOST,
+    CONF_PORT,
+    CONF_UPDATE_INTERVAL,
+    DOMAIN,
+)
 from custom_components.solarmax.coordinator import SolarmaxCoordinator
 from custom_components.solarmax.solarmax_api import (
     SolarmaxConnectionError,
     SolarmaxTimeoutError,
-)
-from custom_components.solarmax.const import (
-    DOMAIN,
-    CONF_HOST,
-    CONF_PORT,
-    CONF_UPDATE_INTERVAL,
 )
 
 
 @pytest.fixture
 def mock_config_entry():
     """Create a mock config entry."""
-    return ConfigEntry(
-        version=1,
-        minor_version=1,
+    return MockConfigEntry(
         domain=DOMAIN,
         title="Test Inverter",
         data={
@@ -34,7 +32,6 @@ def mock_config_entry():
             CONF_PORT: 12345,
             CONF_UPDATE_INTERVAL: 30,
         },
-        source="user",
         entry_id="test_entry",
         unique_id="192.168.1.100:12345",
     )
@@ -110,26 +107,20 @@ async def test_coordinator_timeout_error(mock_api_class, coordinator):
             await coordinator._async_update_data()
 
 
-def test_is_night_time_with_sun_component(coordinator):
+async def test_is_night_time_with_sun_component(coordinator):
     """Test night time detection with sun component."""
-    # Mock sun component showing below horizon
-    mock_sun_state = MagicMock()
-    mock_sun_state.state = "below_horizon"
-    coordinator.hass.states.get.return_value = mock_sun_state
-
+    # Sun component showing below horizon
+    coordinator.hass.states.async_set("sun.sun", "below_horizon")
     assert coordinator._is_night_time() is True
 
-    # Mock sun component showing above horizon
-    mock_sun_state.state = "above_horizon"
+    # Sun component showing above horizon
+    coordinator.hass.states.async_set("sun.sun", "above_horizon")
     assert coordinator._is_night_time() is False
 
 
 def test_is_night_time_fallback(coordinator):
     """Test night time detection fallback logic."""
-    # Mock no sun component
-    coordinator.hass.states.get.return_value = None
-
-    # Mock time-based check
+    # No sun component state exists, so the time-based fallback is used
     with patch("custom_components.solarmax.coordinator.dt_util.now") as mock_now:
         # Test night time (22:00)
         mock_time = MagicMock()

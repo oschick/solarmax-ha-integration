@@ -46,7 +46,7 @@ STEP_USER_DATA_SCHEMA = vol.Schema(
             CONF_UPDATE_INTERVAL,
             default=DEFAULT_UPDATE_INTERVAL,
             description={"suggested_value": DEFAULT_UPDATE_INTERVAL},
-        ): vol.Coerce(int),
+        ): vol.All(vol.Coerce(int), vol.Range(min=5, max=3600)),
         vol.Optional(
             CONF_DEVICE_NAME,
             default=DEFAULT_DEVICE_NAME,
@@ -66,7 +66,10 @@ async def validate_input(hass: HomeAssistant, data: dict[str, Any]) -> dict[str,
     Data has the keys from STEP_USER_DATA_SCHEMA with values provided by the user.
     """
     api = SolarmaxAPI(
-        data[CONF_HOST], data[CONF_PORT], data.get(CONF_ADDRESS, DEFAULT_ADDRESS)
+        data[CONF_HOST],
+        data[CONF_PORT],
+        data.get(CONF_ADDRESS, DEFAULT_ADDRESS),
+        verify_checksum=data.get(CONF_VERIFY_CHECKSUM, DEFAULT_VERIFY_CHECKSUM),
     )
 
     # Test the connection
@@ -105,8 +108,6 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 info = await validate_input(self.hass, user_input)
             except CannotConnect:
                 errors["base"] = "cannot_connect"
-            except InvalidAuth:
-                errors["base"] = "invalid_auth"
             except Exception:  # pylint: disable=broad-except
                 _LOGGER.exception("Unexpected exception")
                 errors["base"] = "unknown"
@@ -141,8 +142,6 @@ class OptionsFlow(config_entries.OptionsFlow):
                 await validate_input(self.hass, user_input)
             except CannotConnect:
                 errors["base"] = "cannot_connect"
-            except InvalidAuth:
-                errors["base"] = "invalid_auth"
             except Exception:  # pylint: disable=broad-except
                 _LOGGER.exception("Unexpected exception during reconfiguration")
                 errors["base"] = "unknown"
@@ -176,7 +175,7 @@ class OptionsFlow(config_entries.OptionsFlow):
                     default=current_data.get(
                         CONF_UPDATE_INTERVAL, DEFAULT_UPDATE_INTERVAL
                     ),
-                ): vol.Coerce(int),
+                ): vol.All(vol.Coerce(int), vol.Range(min=5, max=3600)),
                 vol.Optional(
                     CONF_DEVICE_NAME,
                     default=current_data.get(CONF_DEVICE_NAME, DEFAULT_DEVICE_NAME),
@@ -203,7 +202,3 @@ class OptionsFlow(config_entries.OptionsFlow):
 
 class CannotConnect(HomeAssistantError):
     """Error to indicate we cannot connect."""
-
-
-class InvalidAuth(HomeAssistantError):
-    """Error to indicate there is invalid auth."""

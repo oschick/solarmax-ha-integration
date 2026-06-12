@@ -1,11 +1,22 @@
 """Test diagnostics functionality."""
 
+import json
+import pathlib
 from unittest.mock import AsyncMock, patch
 
 import pytest
+from homeassistant.core import HomeAssistant
 
 from custom_components.solarmax.diagnostics import async_get_config_entry_diagnostics
-from homeassistant.core import HomeAssistant
+
+MANIFEST = json.loads(
+    (
+        pathlib.Path(__file__).parent.parent
+        / "custom_components"
+        / "solarmax"
+        / "manifest.json"
+    ).read_text()
+)
 
 
 @pytest.mark.asyncio
@@ -50,7 +61,7 @@ async def test_config_entry_diagnostics(hass: HomeAssistant, mock_config_entry):
     config_data = diagnostics["config_entry"]
     assert config_data["domain"] == "solarmax"
     assert config_data["title"] == "Test Solarmax"
-    assert "host" not in config_data["data"]  # Should be redacted
+    assert config_data["data"]["host"] == "**REDACTED**"
     assert "port" in config_data["data"]
 
     # Verify coordinator data
@@ -70,7 +81,8 @@ async def test_config_entry_diagnostics(hass: HomeAssistant, mock_config_entry):
     # Verify system info
     system_info = diagnostics["system_info"]
     assert system_info["ha_version"] == "2024.1.0"
-    assert system_info["integration_version"] == "1.0.5"
+    # Compare against the manifest so this assertion never goes stale
+    assert system_info["integration_version"] == MANIFEST["version"]
 
 
 @pytest.mark.asyncio
@@ -120,13 +132,8 @@ async def test_diagnostics_redacts_sensitive_data(
     mock_coordinator.data = {}
     mock_coordinator.api = AsyncMock()
 
-    # Set up config entry with host data
+    # Set up config entry (fixture data already contains host/port/device_name)
     mock_config_entry.runtime_data = mock_coordinator
-    mock_config_entry.data = {
-        "host": "192.168.1.100",  # Should be redacted
-        "port": 12345,  # Should not be redacted
-        "device_name": "Test Inverter",
-    }
 
     # Mock hass version
     with patch.object(hass.config, "as_dict", return_value={"version": "2024.1.0"}):

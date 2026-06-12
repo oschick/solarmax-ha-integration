@@ -38,6 +38,12 @@ PROTO_FRS = "|"  # Frame Separator (ASCII 124)
 PROTO_US = ":"  # Union Separator (ASCII 58)
 PROTO_FS = ";"  # Field Separator (ASCII 59)
 
+# Retry/timeout tuning
+DATA_RETRIES = 3  # attempts per get_data() call
+CONNECT_RETRIES = 2  # connection attempts within each data attempt
+RECV_INITIAL_TIMEOUT = 1.0  # seconds to wait per recv for the first frame
+RECV_CONTINUATION_TIMEOUT = 0.5  # seconds to wait per recv for further frames
+
 # Protocol addressing
 PROTO_ADDR_HOST = 0xFB  # 251 - Host address (alternative network master)
 PROTO_ADDR_BROADCAST = 0x00  # Broadcast (point-to-point only)
@@ -201,7 +207,9 @@ class SolarmaxAPI:
         self.verify_checksum = verify_checksum
         self._last_successful_connection = None
 
-    def _create_socket_connection(self, retries: int = 3) -> socket.socket:
+    def _create_socket_connection(
+        self, retries: int = CONNECT_RETRIES
+    ) -> socket.socket:
         """Create a socket connection with retry logic."""
         last_exception = None
 
@@ -249,7 +257,7 @@ class SolarmaxAPI:
             if sock:
                 try:
                     sock.close()
-                except:
+                except OSError:
                     pass
 
             # Wait before retry (except on last attempt)
@@ -276,6 +284,11 @@ class SolarmaxAPI:
 
         The inverter may split large responses into multiple frames (each max
         255 bytes). We keep reading until no more data arrives.
+
+        Two-tier timeout: each recv waits at most RECV_INITIAL_TIMEOUT (or
+        RECV_CONTINUATION_TIMEOUT once data has arrived) so we notice quickly
+        when a multi-frame response is complete, while self.timeout bounds
+        the total wait for the whole response.
         """
         try:
             # Send request
@@ -285,10 +298,15 @@ class SolarmaxAPI:
             # Receive response — read all available data (may be multiple frames)
             response = ""
             start_time = time.time()
+            recv_timeout = RECV_INITIAL_TIMEOUT
 
-            while (time.time() - start_time) < self.timeout:
+            while True:
+                remaining = self.timeout - (time.time() - start_time)
+                if remaining <= 0:
+                    break
                 try:
-                    sock.settimeout(1.0)
+                    # Never wait beyond the overall timeout
+                    sock.settimeout(min(recv_timeout, remaining))
                     buf = sock.recv(4096)
                     if len(buf) > 0:
                         response += buf.decode("utf-8", errors="ignore")
@@ -298,7 +316,7 @@ class SolarmaxAPI:
                         if response.endswith(PROTO_ETX):
                             break
                         # Still waiting for more frames, use short timeout
-                        sock.settimeout(0.5)
+                        recv_timeout = RECV_CONTINUATION_TIMEOUT
                     else:
                         break
                 except socket.timeout:
@@ -401,7 +419,7 @@ class SolarmaxAPI:
             _LOGGER.debug(f"CRC verification failed: {e}")
             return False
 
-    def map_data_value(self, field: str, value: int) -> str | float | int:
+    def map_data_value(self, field: str, value: int) -> float | int:
         """Convert raw hex digit value to physical units using MaxComm network variables.
 
         Scaling factors per MaxComm protocol Section 2.2 (Netzwerkvariable):
@@ -464,7 +482,7 @@ class SolarmaxAPI:
 
     def get_data(self) -> dict[str, Any]:
         """Get data from the inverter with retry logic."""
-        retries = 3
+        retries = DATA_RETRIES
         last_exception = None
 
         for attempt in range(retries):
@@ -475,9 +493,7 @@ class SolarmaxAPI:
                 )
 
                 # Create connection with retry logic
-                sock = self._create_socket_connection(
-                    retries=2
-                )  # 2 retries per attempt
+                sock = self._create_socket_connection(retries=CONNECT_RETRIES)
 
                 # Build and send request, receive response
                 request = self.build_request(FIELD_MAP_INVERTER)
@@ -509,7 +525,7 @@ class SolarmaxAPI:
                 if sock:
                     try:
                         sock.close()
-                    except:
+                    except OSError:
                         pass
 
             # Wait before retry (except on last attempt)
@@ -533,7 +549,7 @@ class SolarmaxAPI:
         """
         sock = None
         try:
-            sock = self._create_socket_connection(retries=2)
+            sock = self._create_socket_connection(retries=CONNECT_RETRIES)
             request = self.build_request(FIELD_MAP_DEVICE_INFO)
             response = self._send_request_and_receive_response(sock, request)
 
@@ -546,7 +562,7 @@ class SolarmaxAPI:
             if sock:
                 try:
                     sock.close()
-                except:
+                except OSError:
                     pass
 
     def _split_response_frames(self, data: str) -> list[str]:

@@ -14,7 +14,6 @@ from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity import generate_entity_id
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
-from homeassistant.util import dt as dt_util
 
 from .const import (
     CONF_DEVICE_NAME,
@@ -123,9 +122,6 @@ class SolarmaxSensor(CoordinatorEntity[SolarmaxCoordinator], SensorEntity):
             # Fallback to True if not specified
             self._attr_entity_registry_enabled_default = True
 
-        # Remove debug logging now that we've verified the logic works
-        # _LOGGER.warning(f"DEBUG Solarmax Sensor Init: sensor_key={sensor_key}, device_name='{device_name}', device_name_normalized='{device_name_normalized}', unique_id='{self._attr_unique_id}', suggested_object_id='{self._attr_suggested_object_id}')")
-
         # Force the exact entity ID we want using generate_entity_id
         desired_object_id = f"{device_name_normalized}_{sensor_type}"
         self.entity_id = generate_entity_id(
@@ -158,27 +154,6 @@ class SolarmaxSensor(CoordinatorEntity[SolarmaxCoordinator], SensorEntity):
             "sw_version": coordinator.sw_version,
             "serial_number": coordinator.serial_number,
         }
-
-    def _is_night_time(self) -> bool:
-        """Check if it's currently night time (between sunset and sunrise)."""
-        try:
-            now = dt_util.now()
-
-            # Get sun component if available
-            sun_component = self.hass.states.get("sun.sun")
-            if sun_component:
-                # If we have the sun component, use its state
-                return sun_component.state == "below_horizon"
-
-            # Fallback: simple time-based check (between 20:00 and 06:00)
-            current_hour = now.hour
-            return current_hour >= 20 or current_hour < 6
-
-        except Exception as e:
-            _LOGGER.debug(f"Error checking night time: {e}")
-            # Fallback: simple time-based check
-            current_hour = dt_util.now().hour
-            return current_hour >= 20 or current_hour < 6
 
     @property
     def translation_key(self) -> str:
@@ -331,7 +306,7 @@ class SolarmaxSensor(CoordinatorEntity[SolarmaxCoordinator], SensorEntity):
             return False
 
         # Check if it's night time for backward compatibility
-        is_night = self._is_night_time()
+        is_night = self.coordinator.is_night_time
 
         # For SYS (status) sensor, always remain available to show offline status
         if self.sensor_key == "SYS":

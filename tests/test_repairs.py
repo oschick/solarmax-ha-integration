@@ -1,11 +1,12 @@
 """Test repairs for Solarmax integration."""
 
-import pytest
 from unittest.mock import Mock
 
+import pytest
+
 from custom_components.solarmax.repairs import (
-    SolarmaxConnectionRepairFlow,
     SolarmaxConfigurationRepairFlow,
+    SolarmaxConnectionRepairFlow,
     async_create_fix_flow,
 )
 
