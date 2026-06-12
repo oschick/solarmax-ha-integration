@@ -42,6 +42,10 @@ select = [
     "B",   # flake8-bugbear
 ]
 
+[tool.ruff.lint.per-file-ignores]
+# Dev/debug scripts: lazy logging and line length are not worth enforcing
+"tools/*" = ["G004", "E501", "E402"]
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 norecursedirs = [".git", "testing_config"]

@@ -424,7 +424,7 @@ If you encounter issues not covered here:
        custom_components.solarmax: debug
    ```
 
-2. **Collect Diagnostic Data**: 
+2. **Collect Diagnostic Data**:
    - Go to Settings → Devices & Services
    - Find Solarmax Inverter integration
    - Click device name → Download Diagnostics

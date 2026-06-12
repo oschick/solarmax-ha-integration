@@ -39,7 +39,7 @@ import socket
 import sys
 import threading
 import time
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 
 logging.basicConfig(
     level=logging.INFO,
@@ -516,7 +516,7 @@ class SolarmaxEmulator:
                     client_socket.send(response.encode("utf-8"))
                 else:
                     _LOGGER.warning(f"  Could not parse request: {data!r}")
-        except socket.timeout:
+        except TimeoutError:
             _LOGGER.debug(f"Client {client_addr} timed out")
         except Exception as e:
             _LOGGER.error(f"Error handling client {client_addr}: {e}")
@@ -558,7 +558,7 @@ class SolarmaxEmulator:
                     daemon=True,
                 )
                 thread.start()
-            except socket.timeout:
+            except TimeoutError:
                 continue
             except OSError:
                 break

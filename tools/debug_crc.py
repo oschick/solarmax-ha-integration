@@ -1,17 +1,22 @@
 #!/usr/bin/env python3
 """Debug script to test the fixed multi-frame handling against a real inverter."""
 
-import sys
 import os
+import sys
 
 # Add the project root to path so we can import the API
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import importlib.util
+
 spec = importlib.util.spec_from_file_location(
     "solarmax_api",
-    os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
-                 "custom_components", "solarmax", "solarmax_api.py")
+    os.path.join(
+        os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+        "custom_components",
+        "solarmax",
+        "solarmax_api.py",
+    ),
 )
 mod = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(mod)
@@ -23,7 +28,6 @@ print("Testing full get_data() against real inverter at 10.0.5.15...")
 
 # First, let's manually test the recv and frame splitting
 import socket
-import time
 
 sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
 sock.settimeout(5)
@@ -45,7 +49,7 @@ while True:
             sock.settimeout(0.5)
         else:
             break
-    except socket.timeout:
+    except TimeoutError:
         if response:
             break
 sock.close()
@@ -57,7 +61,9 @@ frames = api._split_response_frames(response)
 print(f"Frames found: {len(frames)}")
 for i, f in enumerate(frames):
     valid = api._verify_response_checksum(f)
-    print(f"  Frame {i+1}: {len(f)} bytes, CRC valid: {valid}, ends with: {repr(f[-1])}")
+    print(
+        f"  Frame {i + 1}: {len(f)} bytes, CRC valid: {valid}, ends with: {repr(f[-1])}"
+    )
 
 # Test full parsing
 try:
@@ -67,4 +73,3 @@ try:
         print(f"  {key:6s} = {val['value']} (raw: 0x{val['raw_value']:X})")
 except Exception as e:
     print(f"\nFailed: {type(e).__name__}: {e}")
-
