@@ -9,7 +9,7 @@ from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 from homeassistant.loader import async_get_integration
 
-from .const import CONF_HOST, CONF_PORT
+from .const import CONF_HOST
 from .coordinator import SolarmaxCoordinator
 
 REDACT_KEYS = {CONF_HOST}
@@ -55,41 +55,41 @@ async def async_get_config_entry_diagnostics(
 
     # Add coordinator-specific diagnostics
     if hasattr(coordinator, "consecutive_failures"):
-        diagnostics_data["coordinator"][
-            "consecutive_failures"
-        ] = coordinator.consecutive_failures
+        diagnostics_data["coordinator"]["consecutive_failures"] = (
+            coordinator.consecutive_failures
+        )
 
     if (
         hasattr(coordinator, "last_successful_update")
         and coordinator.last_successful_update
     ):
-        diagnostics_data["coordinator"][
-            "last_successful_update"
-        ] = coordinator.last_successful_update.isoformat()
+        diagnostics_data["coordinator"]["last_successful_update"] = (
+            coordinator.last_successful_update.isoformat()
+        )
 
     if hasattr(coordinator, "is_expected_offline"):
-        diagnostics_data["coordinator"][
-            "is_expected_offline"
-        ] = coordinator.is_expected_offline
+        diagnostics_data["coordinator"]["is_expected_offline"] = (
+            coordinator.is_expected_offline
+        )
 
     # Add API connection diagnostics
     if (
         hasattr(coordinator.api, "last_successful_connection")
         and coordinator.api.last_successful_connection
     ):
-        diagnostics_data["api_connection"][
-            "last_successful_connection"
-        ] = coordinator.api.last_successful_connection.isoformat()
+        diagnostics_data["api_connection"]["last_successful_connection"] = (
+            coordinator.api.last_successful_connection.isoformat()
+        )
 
     if hasattr(coordinator.api, "connection_attempts"):
-        diagnostics_data["api_connection"][
-            "connection_attempts"
-        ] = coordinator.api.connection_attempts
+        diagnostics_data["api_connection"]["connection_attempts"] = (
+            coordinator.api.connection_attempts
+        )
 
     if hasattr(coordinator.api, "timeout_errors"):
-        diagnostics_data["api_connection"][
-            "timeout_errors"
-        ] = coordinator.api.timeout_errors
+        diagnostics_data["api_connection"]["timeout_errors"] = (
+            coordinator.api.timeout_errors
+        )
 
     # Add current sensor data (with redacted sensitive info)
     if coordinator.data:

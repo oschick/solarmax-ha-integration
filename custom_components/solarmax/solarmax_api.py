@@ -217,7 +217,11 @@ class SolarmaxAPI:
             sock = None
             try:
                 _LOGGER.debug(
-                    f"Attempting connection to {self.host}:{self.port} (attempt {attempt + 1}/{retries})"
+                    "Attempting connection to %s:%s (attempt %d/%d)",
+                    self.host,
+                    self.port,
+                    attempt + 1,
+                    retries,
                 )
 
                 sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
@@ -229,28 +233,32 @@ class SolarmaxAPI:
                 # Connect with timeout
                 sock.connect((self.host, self.port))
 
-                _LOGGER.debug(f"Successfully connected to {self.host}:{self.port}")
+                _LOGGER.debug("Successfully connected to %s:%s", self.host, self.port)
                 return sock
 
-            except socket.timeout as e:
+            except TimeoutError as e:
                 last_exception = SolarmaxTimeoutError(
                     f"Connection timeout to {self.host}:{self.port}"
                 )
-                _LOGGER.debug(f"Connection attempt {attempt + 1} timed out: {e}")
+                _LOGGER.debug("Connection attempt %d timed out: %s", attempt + 1, e)
             except ConnectionRefusedError as e:
                 last_exception = SolarmaxConnectionError(
                     f"Connection refused by {self.host}:{self.port}"
                 )
-                _LOGGER.debug(f"Connection attempt {attempt + 1} refused: {e}")
-            except socket.error as e:
+                _LOGGER.debug("Connection attempt %d refused: %s", attempt + 1, e)
+            except OSError as e:
                 last_exception = SolarmaxConnectionError(f"Socket error: {e}")
                 _LOGGER.debug(
-                    f"Connection attempt {attempt + 1} failed with socket error: {e}"
+                    "Connection attempt %d failed with socket error: %s",
+                    attempt + 1,
+                    e,
                 )
             except Exception as e:
                 last_exception = SolarmaxConnectionError(f"Unexpected error: {e}")
                 _LOGGER.debug(
-                    f"Connection attempt {attempt + 1} failed with unexpected error: {e}"
+                    "Connection attempt %d failed with unexpected error: %s",
+                    attempt + 1,
+                    e,
                 )
 
             # Clean up failed socket
@@ -263,12 +271,15 @@ class SolarmaxAPI:
             # Wait before retry (except on last attempt)
             if attempt < retries - 1:
                 wait_time = 1 + attempt  # Exponential backoff: 1s, 2s, 3s
-                _LOGGER.debug(f"Waiting {wait_time}s before retry...")
+                _LOGGER.debug("Waiting %ds before retry...", wait_time)
                 time.sleep(wait_time)
 
         # All attempts failed
         _LOGGER.error(
-            f"Failed to connect to {self.host}:{self.port} after {retries} attempts"
+            "Failed to connect to %s:%s after %d attempts",
+            self.host,
+            self.port,
+            retries,
         )
         if last_exception:
             raise last_exception
@@ -292,7 +303,7 @@ class SolarmaxAPI:
         """
         try:
             # Send request
-            _LOGGER.debug(f"Sending request: {request}")
+            _LOGGER.debug("Sending request: %s", request)
             sock.send(bytes(request, "utf-8"))
 
             # Receive response — read all available data (may be multiple frames)
@@ -319,25 +330,27 @@ class SolarmaxAPI:
                         recv_timeout = RECV_CONTINUATION_TIMEOUT
                     else:
                         break
-                except socket.timeout:
+                except TimeoutError:
                     # If we already have data, the timeout means no more frames
                     if response:
                         break
                     # Otherwise keep waiting for the first response
                     continue
-                except socket.error as e:
-                    raise SolarmaxConnectionError(f"Error receiving data: {e}")
+                except OSError as e:
+                    raise SolarmaxConnectionError(f"Error receiving data: {e}") from e
 
             if not response:
                 raise SolarmaxTimeoutError("No response received within timeout period")
 
-            _LOGGER.debug(f"Received response: {response}")
+            _LOGGER.debug("Received response: %s", response)
             return response
 
-        except socket.timeout:
-            raise SolarmaxTimeoutError("Request/response timeout")
-        except socket.error as e:
-            raise SolarmaxConnectionError(f"Socket error during communication: {e}")
+        except TimeoutError as e:
+            raise SolarmaxTimeoutError("Request/response timeout") from e
+        except OSError as e:
+            raise SolarmaxConnectionError(
+                f"Socket error during communication: {e}"
+            ) from e
 
     @property
     def last_successful_connection(self) -> datetime | None:
@@ -410,17 +423,18 @@ class SolarmaxAPI:
             expected_crc = self._calculate_checksum(data_for_crc)
             if stated_crc != expected_crc:
                 _LOGGER.warning(
-                    f"MaxComm CRC mismatch: stated={stated_crc}, "
-                    f"calculated={expected_crc}"
+                    "MaxComm CRC mismatch: stated=%s, calculated=%s",
+                    stated_crc,
+                    expected_crc,
                 )
                 return False
             return True
         except (IndexError, ValueError) as e:
-            _LOGGER.debug(f"CRC verification failed: {e}")
+            _LOGGER.debug("CRC verification failed: %s", e)
             return False
 
     def map_data_value(self, field: str, value: int) -> float | int:
-        """Convert raw hex digit value to physical units using MaxComm network variables.
+        """Convert raw hex digit value to physical units per MaxComm network variables.
 
         Scaling factors per MaxComm protocol Section 2.2 (Netzwerkvariable):
         - Leistung (Power):         0.5 W/digit   → value / 2
@@ -477,7 +491,7 @@ class SolarmaxAPI:
                 sock.close()
 
         except Exception as e:
-            _LOGGER.debug(f"Connection test failed: {e}")
+            _LOGGER.debug("Connection test failed: %s", e)
             return False
 
     def get_data(self) -> dict[str, Any]:
@@ -489,7 +503,7 @@ class SolarmaxAPI:
             sock = None
             try:
                 _LOGGER.debug(
-                    f"Getting data from inverter (attempt {attempt + 1}/{retries})"
+                    "Getting data from inverter (attempt %d/%d)", attempt + 1, retries
                 )
 
                 # Create connection with retry logic
@@ -503,22 +517,24 @@ class SolarmaxAPI:
                     # Mark successful connection
                     self._last_successful_connection = datetime.now()
                     data = self.convert_to_json(response)
-                    _LOGGER.debug(f"Successfully retrieved data from inverter")
+                    _LOGGER.debug("Successfully retrieved data from inverter")
                     return data
                 else:
                     raise SolarmaxTimeoutError("Empty response received")
 
             except SolarmaxProtocolError as e:
                 # Protocol errors (IPR/IPN) are deterministic — don't retry
-                _LOGGER.error(f"Protocol error from inverter: {e}")
+                _LOGGER.error("Protocol error from inverter: %s", e)
                 raise
             except (SolarmaxConnectionError, SolarmaxTimeoutError) as e:
                 last_exception = e
-                _LOGGER.debug(f"Data retrieval attempt {attempt + 1} failed: {e}")
+                _LOGGER.debug("Data retrieval attempt %d failed: %s", attempt + 1, e)
             except Exception as e:
                 last_exception = SolarmaxConnectionError(f"Unexpected error: {e}")
                 _LOGGER.debug(
-                    f"Data retrieval attempt {attempt + 1} failed with unexpected error: {e}"
+                    "Data retrieval attempt %d failed with unexpected error: %s",
+                    attempt + 1,
+                    e,
                 )
             finally:
                 # Always clean up socket
@@ -531,11 +547,13 @@ class SolarmaxAPI:
             # Wait before retry (except on last attempt)
             if attempt < retries - 1:
                 wait_time = 2 + attempt  # 2s, 3s wait between attempts
-                _LOGGER.debug(f"Waiting {wait_time}s before retrying data retrieval...")
+                _LOGGER.debug(
+                    "Waiting %ds before retrying data retrieval...", wait_time
+                )
                 time.sleep(wait_time)
 
         # All attempts failed
-        _LOGGER.error(f"Failed to get data from inverter after {retries} attempts")
+        _LOGGER.error("Failed to get data from inverter after %d attempts", retries)
         if last_exception:
             raise last_exception
         else:
@@ -679,7 +697,7 @@ class SolarmaxAPI:
                     # (key is known but not available in current device state)
                     if item.strip():
                         _LOGGER.debug(
-                            f"MaxComm: key '{item}' returned as not applicable"
+                            "MaxComm: key '%s' returned as not applicable", item
                         )
                     continue
 
@@ -696,7 +714,7 @@ class SolarmaxAPI:
                     "raw_value": value,
                 }
 
-            _LOGGER.debug(f"Parsed {len(result_dict)} values from inverter response")
+            _LOGGER.debug("Parsed %d values from inverter response", len(result_dict))
             return result_dict
 
         except (SolarmaxProtocolError, SolarmaxConnectionError):

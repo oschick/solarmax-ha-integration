@@ -28,43 +28,19 @@ Homepage = "https://github.com/oschick/solarmax-ha-integration"
 "Bug Reports" = "https://github.com/oschick/solarmax-ha-integration/issues"
 "Source" = "https://github.com/oschick/solarmax-ha-integration"
 
-[tool.black]
+[tool.ruff]
 line-length = 88
-target-version = ['py311']
-include = '\.pyi?$'
-extend-exclude = '''
-/(
-  # directories
-  \.eggs
-  | \.git
-  | \.hg
-  | \.mypy_cache
-  | \.tox
-  | \.venv
-  | build
-  | dist
-)/
-'''
+target-version = "py311"
 
-[tool.isort]
-profile = "black"
-line_length = 88
-multi_line_output = 3
-include_trailing_comma = true
-force_grid_wrap = 0
-use_parentheses = true
-ensure_newline_before_comments = true
-
-[tool.pylint.messages_control]
-disable = [
-    "too-few-public-methods",
-    "too-many-instance-attributes",
-    "too-many-arguments",
-    "duplicate-code",
+[tool.ruff.lint]
+select = [
+    "E",   # pycodestyle errors
+    "F",   # pyflakes
+    "I",   # isort
+    "G",   # flake8-logging-format
+    "UP",  # pyupgrade
+    "B",   # flake8-bugbear
 ]
-
-[tool.pylint.format]
-max-line-length = 88
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import logging
-from datetime import datetime
 from typing import Any
 
 from homeassistant.components.sensor import (
@@ -17,8 +16,6 @@ from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
 from .const import (
     CONF_DEVICE_NAME,
-    CONF_HOST,
-    CONF_PORT,
     DOMAIN,
     SAL_ALARM_MAP,
     SAL_STATE_MULTIPLE,
@@ -81,15 +78,17 @@ class SolarmaxSensor(CoordinatorEntity[SolarmaxCoordinator], SensorEntity):
         self.sensor_config = sensor_config
 
         # Create unique ID following HA guidelines:
-        # Since we don't have access to physical device identifiers (serial number, MAC, etc.),
-        # we use the Config Entry ID as "last resort" per HA documentation
+        # Since we don't have access to physical device identifiers (serial
+        # number, MAC, etc.), we use the Config Entry ID as "last resort" per
+        # HA documentation
         config_entry_id = entry.entry_id
 
         # Use the passed device name for readability (normalized)
         # Don't override the device_name parameter that was passed to constructor
         device_name_normalized = device_name.lower().replace(" ", "_").replace("-", "_")
 
-        # Combine config entry ID with sensor type (following HA pattern: {device_id}-{sensor_type})
+        # Combine config entry ID with sensor type
+        # (following HA pattern: {device_id}-{sensor_type})
         sensor_type = sensor_key.lower()  # PAC -> pac, SYS -> sys, etc.
         self._attr_unique_id = f"{config_entry_id}-{sensor_type}"
 
@@ -104,7 +103,8 @@ class SolarmaxSensor(CoordinatorEntity[SolarmaxCoordinator], SensorEntity):
             "translation_key", self.sensor_key.lower()
         )
 
-        # Override the translation_key to enable HA's translation system for display names
+        # Override the translation_key to enable HA's translation system
+        # for display names
         self._attr_translation_key = self._translation_key
 
         # Enable HA's translation system for entity names
@@ -319,8 +319,8 @@ class SolarmaxSensor(CoordinatorEntity[SolarmaxCoordinator], SensorEntity):
 
         # During day time, check consecutive failures
         if hasattr(self.coordinator, "consecutive_failures"):
-            # If we have many consecutive failures during day, sensors become unavailable
-            # This helps indicate there's a real problem vs temporary network hiccup
+            # Many consecutive failures during the day make sensors
+            # unavailable - a real problem vs a temporary network hiccup
             if self.coordinator.consecutive_failures > 5:
                 return False
 

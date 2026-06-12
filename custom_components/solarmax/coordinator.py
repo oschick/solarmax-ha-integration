@@ -62,7 +62,7 @@ class SolarmaxCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         self._serial_number: str | None = None
 
     def _is_night_time(self) -> bool:
-        """Check if it's currently night time (when inverter is expected to be offline)."""
+        """Check if it's currently night (when the inverter is expected offline)."""
         try:
             now = dt_util.now()
 
@@ -144,7 +144,8 @@ class SolarmaxCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                     self._consecutive_failures == 4
                 ):  # Log once when becoming persistently unavailable
                     _LOGGER.error(
-                        "Inverter persistently unavailable after %d attempts during day time",
+                        "Inverter persistently unavailable after %d attempts"
+                        " during day time",
                         self._consecutive_failures,
                     )
                 else:

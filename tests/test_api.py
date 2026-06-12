@@ -94,7 +94,7 @@ def test_test_connection_failure(mock_socket, api):
     """Test failed connection test."""
     mock_sock = MagicMock()
     mock_socket.return_value = mock_sock
-    mock_sock.connect.side_effect = socket.error("Connection failed")
+    mock_sock.connect.side_effect = OSError("Connection failed")
 
     result = api.test_connection()
 
@@ -121,7 +121,7 @@ def test_get_data_success(mock_socket, api):
 @patch("socket.socket")
 def test_get_data_connection_error(mock_socket, api):
     """Test data retrieval with connection error."""
-    mock_socket.side_effect = socket.error("Connection failed")
+    mock_socket.side_effect = OSError("Connection failed")
 
     with pytest.raises(SolarmaxConnectionError):
         api.get_data()
@@ -157,7 +157,7 @@ def test_convert_to_json(api):
 
 
 def test_convert_to_json_invalid_response(api):
-    """Test response conversion with invalid/unframed data raises SolarmaxProtocolError."""
+    """Test conversion of invalid/unframed data raises SolarmaxProtocolError."""
     with pytest.raises(SolarmaxProtocolError):
         api.convert_to_json("invalid_response")
 
@@ -275,7 +275,7 @@ def test_convert_to_json_multi_frame(api):
     """Test parsing of multi-frame responses (continuation frames end with ')')."""
     # Build a realistic multi-frame response like a real inverter sends
     # Frame 1 ends with ')' (continuation), Frame 2 ends with '}' (final)
-    inner1 = "01;FB;FF|64:PAC=2FA;UDC=D23;IDC=89;UL1=91C;UL2=8F0;UL3=8FD;IL1=84;IL2=82;IL3=87;KDY=D;KMT=102;KYR=602;KT0=9225;KHR=7848;TKK=24;SYS=4E28,0;SAL=0;TYP=50AA;DIN=9973BB;BDN=391;PIN=41A0;PRL=4;ULH=A55;ULL=730;TNH=141E;TNL=128E;PDC=340;PD01=1BE;PD02=182;U|"
+    inner1 = "01;FB;FF|64:PAC=2FA;UDC=D23;IDC=89;UL1=91C;UL2=8F0;UL3=8FD;IL1=84;IL2=82;IL3=87;KDY=D;KMT=102;KYR=602;KT0=9225;KHR=7848;TKK=24;SYS=4E28,0;SAL=0;TYP=50AA;DIN=9973BB;BDN=391;PIN=41A0;PRL=4;ULH=A55;ULL=730;TNH=141E;TNL=128E;PDC=340;PD01=1BE;PD02=182;U|"  # noqa: E501
     crc1 = api.calculate_checksum(inner1)
     frame1 = "{" + inner1 + crc1 + ")"  # Continuation frame ends with ')'
 
@@ -350,7 +350,7 @@ def test_get_data_multi_frame_recv(mock_socket, api):
     mock_sock.recv.side_effect = [
         frame1.encode(),
         frame2.encode(),
-        socket.timeout(),
+        TimeoutError(),
     ]
 
     result = api.get_data()
