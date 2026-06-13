@@ -29,41 +29,44 @@ from .solarmax_api import SolarmaxAPI
 
 _LOGGER = logging.getLogger(__name__)
 
-STEP_USER_DATA_SCHEMA = vol.Schema(
-    {
-        vol.Required(CONF_HOST, description={"suggested_value": "192.168.1.100"}): str,
-        vol.Required(
-            CONF_PORT,
-            default=DEFAULT_PORT,
-            description={"suggested_value": DEFAULT_PORT},
-        ): vol.Coerce(int),
-        vol.Optional(
-            CONF_ADDRESS,
-            default=DEFAULT_ADDRESS,
-            description={"suggested_value": DEFAULT_ADDRESS},
-        ): vol.All(vol.Coerce(int), vol.Range(min=1, max=249)),
-        vol.Optional(
-            CONF_UPDATE_INTERVAL,
-            default=DEFAULT_UPDATE_INTERVAL,
-            description={"suggested_value": DEFAULT_UPDATE_INTERVAL},
-        ): vol.All(vol.Coerce(int), vol.Range(min=5, max=3600)),
-        vol.Optional(
-            CONF_DEVICE_NAME,
-            default=DEFAULT_DEVICE_NAME,
-            description={"suggested_value": DEFAULT_DEVICE_NAME},
-        ): str,
-        vol.Optional(
-            CONF_VERIFY_CHECKSUM,
-            default=DEFAULT_VERIFY_CHECKSUM,
-        ): bool,
-    }
-)
+# Default field values for a fresh config entry. The options flow overlays the
+# entry's current values on top of these before building its schema.
+_DEFAULT_VALUES: dict[str, Any] = {
+    CONF_HOST: "192.168.1.100",
+    CONF_PORT: DEFAULT_PORT,
+    CONF_ADDRESS: DEFAULT_ADDRESS,
+    CONF_UPDATE_INTERVAL: DEFAULT_UPDATE_INTERVAL,
+    CONF_DEVICE_NAME: DEFAULT_DEVICE_NAME,
+    CONF_VERIFY_CHECKSUM: DEFAULT_VERIFY_CHECKSUM,
+}
+
+
+def _build_schema(values: dict[str, Any]) -> vol.Schema:
+    """Build the shared config/options schema, pre-filled with the given values."""
+    return vol.Schema(
+        {
+            vol.Required(
+                CONF_HOST, description={"suggested_value": values[CONF_HOST]}
+            ): str,
+            vol.Required(CONF_PORT, default=values[CONF_PORT]): vol.Coerce(int),
+            vol.Optional(CONF_ADDRESS, default=values[CONF_ADDRESS]): vol.All(
+                vol.Coerce(int), vol.Range(min=1, max=249)
+            ),
+            vol.Optional(
+                CONF_UPDATE_INTERVAL, default=values[CONF_UPDATE_INTERVAL]
+            ): vol.All(vol.Coerce(int), vol.Range(min=5, max=3600)),
+            vol.Optional(CONF_DEVICE_NAME, default=values[CONF_DEVICE_NAME]): str,
+            vol.Optional(
+                CONF_VERIFY_CHECKSUM, default=values[CONF_VERIFY_CHECKSUM]
+            ): bool,
+        }
+    )
 
 
 async def validate_input(hass: HomeAssistant, data: dict[str, Any]) -> dict[str, Any]:
     """Validate the user input allows us to connect.
 
-    Data has the keys from STEP_USER_DATA_SCHEMA with values provided by the user.
+    Data has the keys from the config schema with values provided by the user.
     """
     api = SolarmaxAPI(
         data[CONF_HOST],
@@ -116,7 +119,7 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
 
         return self.async_show_form(
             step_id="user",
-            data_schema=STEP_USER_DATA_SCHEMA,
+            data_schema=_build_schema(_DEFAULT_VALUES),
             errors=errors,
             description_placeholders={
                 "host": "IP address of your Solarmax inverter",
@@ -158,40 +161,16 @@ class OptionsFlow(config_entries.OptionsFlow):
 
                 return self.async_create_entry(title="", data={})
 
-        # Pre-populate form with current values
+        # Pre-populate the shared schema with the entry's current values.
         current_data = self.config_entry.data
-        schema = vol.Schema(
-            {
-                vol.Required(CONF_HOST, default=current_data.get(CONF_HOST, "")): str,
-                vol.Required(
-                    CONF_PORT, default=current_data.get(CONF_PORT, DEFAULT_PORT)
-                ): vol.Coerce(int),
-                vol.Optional(
-                    CONF_ADDRESS,
-                    default=current_data.get(CONF_ADDRESS, DEFAULT_ADDRESS),
-                ): vol.All(vol.Coerce(int), vol.Range(min=1, max=249)),
-                vol.Optional(
-                    CONF_UPDATE_INTERVAL,
-                    default=current_data.get(
-                        CONF_UPDATE_INTERVAL, DEFAULT_UPDATE_INTERVAL
-                    ),
-                ): vol.All(vol.Coerce(int), vol.Range(min=5, max=3600)),
-                vol.Optional(
-                    CONF_DEVICE_NAME,
-                    default=current_data.get(CONF_DEVICE_NAME, DEFAULT_DEVICE_NAME),
-                ): str,
-                vol.Optional(
-                    CONF_VERIFY_CHECKSUM,
-                    default=current_data.get(
-                        CONF_VERIFY_CHECKSUM, DEFAULT_VERIFY_CHECKSUM
-                    ),
-                ): bool,
-            }
-        )
+        values = {
+            key: current_data.get(key, default)
+            for key, default in _DEFAULT_VALUES.items()
+        }
 
         return self.async_show_form(
             step_id="init",
-            data_schema=schema,
+            data_schema=_build_schema(values),
             errors=errors,
             description_placeholders={
                 "current_host": current_data.get(CONF_HOST, "Unknown"),
