@@ -3,11 +3,15 @@
 from unittest.mock import Mock
 
 import pytest
+from homeassistant.components.sensor import SensorDeviceClass, SensorStateClass
 from homeassistant.config_entries import ConfigEntry
+from homeassistant.helpers.entity import EntityCategory
 
 from custom_components.solarmax.const import SENSOR_TYPES
 from custom_components.solarmax.coordinator import SolarmaxCoordinator
 from custom_components.solarmax.sensor import SolarmaxSensor
+
+_SENSOR_BY_KEY = {description.key: description for description in SENSOR_TYPES}
 
 
 @pytest.fixture
@@ -49,11 +53,10 @@ def mock_config_entry():
 
 def _make_sensor(coordinator, entry, sensor_key):
     return SolarmaxSensor(
-        coordinator=coordinator,
-        entry=entry,
-        sensor_key=sensor_key,
-        sensor_config=SENSOR_TYPES[sensor_key],
-        device_name="Test Inverter",
+        coordinator,
+        entry,
+        _SENSOR_BY_KEY[sensor_key],
+        "Test Inverter",
     )
 
 
@@ -167,3 +170,40 @@ def test_normal_sensor_operation(mock_coordinator, mock_config_entry):
     attributes = sensor.extra_state_attributes
     assert attributes["raw_value"] == 20004
     assert attributes["code"] == 20004
+
+
+def test_description_metadata_flows_through(mock_coordinator, mock_config_entry):
+    """A main sensor exposes its description's unit/class/state metadata."""
+    sensor = _make_sensor(mock_coordinator, mock_config_entry, "PAC")
+
+    assert sensor.native_unit_of_measurement == "W"
+    assert sensor.device_class == SensorDeviceClass.POWER
+    assert sensor.state_class == SensorStateClass.MEASUREMENT
+    assert sensor.translation_key == "pac"
+    assert sensor.entity_registry_enabled_default is True
+    assert sensor.entity_category is None
+
+
+def test_diagnostic_sensor_disabled_by_default(mock_coordinator, mock_config_entry):
+    """A diagnostic sensor is opt-in and categorized as diagnostic."""
+    sensor = _make_sensor(mock_coordinator, mock_config_entry, "UL1")
+
+    assert sensor.entity_registry_enabled_default is False
+    assert sensor.entity_category == EntityCategory.DIAGNOSTIC
+
+
+def test_unique_id_and_entity_id_scheme(mock_coordinator, mock_config_entry):
+    """unique_id and forced entity_id keep the pre-migration scheme."""
+    sensor = _make_sensor(mock_coordinator, mock_config_entry, "PAC")
+
+    assert sensor.unique_id == "test_entry_id-pac"
+    assert sensor.entity_id == "sensor.test_inverter_pac"
+
+
+def test_enum_sensor_description(mock_coordinator, mock_config_entry):
+    """The status sensor is an enum with options sourced from the description."""
+    sensor = _make_sensor(mock_coordinator, mock_config_entry, "SYS")
+
+    assert sensor.device_class == SensorDeviceClass.ENUM
+    assert sensor.options
+    assert "mpp_operation" in sensor.options

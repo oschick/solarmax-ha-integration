@@ -5,9 +5,7 @@ from __future__ import annotations
 import logging
 from typing import Any
 
-from homeassistant.components.sensor import (
-    SensorEntity,
-)
+from homeassistant.components.sensor import SensorEntity, SensorEntityDescription
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity import generate_entity_id
@@ -20,6 +18,8 @@ from .const import (
     SAL_ALARM_MAP,
     SAL_STATE_MULTIPLE,
     SAL_STATE_UNKNOWN,
+    SENSOR_TYPE_ALARM,
+    SENSOR_TYPE_STATUS,
     SENSOR_TYPES,
     SYS_STATE_CONNECTION_FAILED,
     SYS_STATE_OFFLINE_NIGHT,
@@ -41,111 +41,46 @@ async def async_setup_entry(
 ) -> None:
     """Set up Solarmax sensor platform."""
     coordinator: SolarmaxCoordinator = entry.runtime_data
-
-    entities = []
     device_name = entry.data.get(CONF_DEVICE_NAME, "Solarmax Inverter")
 
-    # Create sensors for all available data types
-    for sensor_key, sensor_config in SENSOR_TYPES.items():
-        entities.append(
-            SolarmaxSensor(
-                coordinator=coordinator,
-                entry=entry,
-                sensor_key=sensor_key,
-                sensor_config=sensor_config,
-                device_name=device_name,
-            )
-        )
-
-    async_add_entities(entities)
+    async_add_entities(
+        SolarmaxSensor(coordinator, entry, description, device_name)
+        for description in SENSOR_TYPES
+    )
 
 
 class SolarmaxSensor(CoordinatorEntity[SolarmaxCoordinator], SensorEntity):
     """Representation of a Solarmax sensor."""
 
+    _attr_has_entity_name = True
+
     def __init__(
         self,
         coordinator: SolarmaxCoordinator,
         entry: ConfigEntry,
-        sensor_key: str,
-        sensor_config: dict[str, Any],
+        description: SensorEntityDescription,
         device_name: str,
     ) -> None:
         """Initialize the sensor."""
         super().__init__(coordinator)
+        self.entity_description = description
+        self.sensor_key = description.key
 
-        self.sensor_key = sensor_key
-        self.sensor_config = sensor_config
+        # No hardware identifier is available, so the unique_id falls back to the
+        # config entry id per HA guidance: {entry_id}-{key}.
+        sensor_type = description.key.lower()
+        self._attr_unique_id = f"{entry.entry_id}-{sensor_type}"
 
-        # Create unique ID following HA guidelines:
-        # Since we don't have access to physical device identifiers (serial
-        # number, MAC, etc.), we use the Config Entry ID as "last resort" per
-        # HA documentation
-        config_entry_id = entry.entry_id
-
-        # Use the passed device name for readability (normalized)
-        # Don't override the device_name parameter that was passed to constructor
+        # Force a stable, readable entity_id derived from the device name.
         device_name_normalized = device_name.lower().replace(" ", "_").replace("-", "_")
-
-        # Combine config entry ID with sensor type
-        # (following HA pattern: {device_id}-{sensor_type})
-        sensor_type = sensor_key.lower()  # PAC -> pac, SYS -> sys, etc.
-        self._attr_unique_id = f"{config_entry_id}-{sensor_type}"
-
-        # Suggest object ID using device name for better entity naming
-        suggested_entity_id = f"{device_name_normalized}_{sensor_type}"
-        self._attr_suggested_object_id = suggested_entity_id
-
-        # Use descriptive name from sensor config or a meaningful fallback
-        # We'll load the translated name in the name property to avoid blocking I/O here
-        self._base_name = self.sensor_config.get("name", self.sensor_key.upper())
-        self._translation_key = self.sensor_config.get(
-            "translation_key", self.sensor_key.lower()
-        )
-
-        # Override the translation_key to enable HA's translation system
-        # for display names
-        self._attr_translation_key = self._translation_key
-
-        # Enable HA's translation system for entity names
-        self._attr_has_entity_name = True
-
-        # Set entity category and enabled by default from sensor config
-        if "entity_category" in sensor_config:
-            self._attr_entity_category = sensor_config["entity_category"]
-
-        if "enabled_by_default" in sensor_config:
-            self._attr_entity_registry_enabled_default = sensor_config[
-                "enabled_by_default"
-            ]
-        else:
-            # Fallback to True if not specified
-            self._attr_entity_registry_enabled_default = True
-
-        # Force the exact entity ID we want using generate_entity_id
-        desired_object_id = f"{device_name_normalized}_{sensor_type}"
         self.entity_id = generate_entity_id(
-            "sensor.{}", desired_object_id, hass=coordinator.hass
+            "sensor.{}",
+            f"{device_name_normalized}_{sensor_type}",
+            hass=coordinator.hass,
         )
 
-        # Set sensor properties
-        if "unit" in sensor_config:
-            self._attr_native_unit_of_measurement = sensor_config["unit"]
-        if "device_class" in sensor_config:
-            self._attr_device_class = sensor_config["device_class"]
-        if "options" in sensor_config:
-            self._attr_options = sensor_config["options"]
-        if "state_class" in sensor_config:
-            self._attr_state_class = sensor_config["state_class"]
-        if "icon" in sensor_config:
-            self._attr_icon = sensor_config["icon"]
-        if "suggested_display_precision" in sensor_config:
-            self._attr_suggested_display_precision = sensor_config[
-                "suggested_display_precision"
-            ]
-
-        # Device info - model is already resolved since async_config_entry_first_refresh
-        # runs before sensor platform setup
+        # Model/firmware/serial are resolved by the coordinator's first refresh,
+        # which runs before the sensor platform is set up.
         self._attr_device_info = {
             "identifiers": {(DOMAIN, entry.entry_id)},
             "name": device_name,
@@ -155,24 +90,25 @@ class SolarmaxSensor(CoordinatorEntity[SolarmaxCoordinator], SensorEntity):
             "serial_number": coordinator.serial_number,
         }
 
-    @property
-    def translation_key(self) -> str:
-        """Return the translation key for this entity."""
-        return self._translation_key
+    @staticmethod
+    def _decode_sal_alarms(value: int) -> list[str]:
+        """Return the active alarm option keys encoded in a SAL bitmask."""
+        return [
+            SAL_ALARM_MAP[bit]
+            for bit in sorted(SAL_ALARM_MAP)
+            if bit > 0 and value & bit
+        ]
 
     @property
     def native_value(self) -> str | int | float | None:
         """Return the state of the sensor."""
-        # Special handling for SYS sensor when coordinator update fails
-        if not self.coordinator.last_update_success and self.sensor_key == "SYS":
-            # Check if this is expected offline vs unexpected failure
-            if (
-                hasattr(self.coordinator, "is_expected_offline")
-                and self.coordinator.is_expected_offline
-            ):
+        is_status = self.sensor_key == SENSOR_TYPE_STATUS
+
+        # Status sensor reports the offline reason when the coordinator fails.
+        if is_status and not self.coordinator.last_update_success:
+            if self.coordinator.is_expected_offline:
                 return SYS_STATE_OFFLINE_NIGHT
-            else:
-                return SYS_STATE_CONNECTION_FAILED
+            return SYS_STATE_CONNECTION_FAILED
 
         if not self.coordinator.data:
             return None
@@ -183,66 +119,45 @@ class SolarmaxSensor(CoordinatorEntity[SolarmaxCoordinator], SensorEntity):
 
         value = sensor_data.get("value")
 
-        # Map status and alarm codes to enum option keys (HA handles translation)
-        if self.sensor_key == "SYS" and isinstance(value, int):
+        # Map status/alarm registers to enum option keys (HA handles translation).
+        if is_status and isinstance(value, int):
             return SYS_STATUS_MAP.get(value, SYS_STATE_UNKNOWN)
 
-        elif self.sensor_key == "SAL" and isinstance(value, int):
-            if value == 0:
-                return SAL_ALARM_MAP[0]
-            # Direct match for single-bit alarm
+        if self.sensor_key == SENSOR_TYPE_ALARM and isinstance(value, int):
             if value in SAL_ALARM_MAP:
                 return SAL_ALARM_MAP[value]
-            # Bitmask: check if multiple alarm bits are set
-            active = [
-                SAL_ALARM_MAP[bit]
-                for bit in sorted(SAL_ALARM_MAP)
-                if bit > 0 and value & bit
-            ]
-            if active:
+            # Bitmask with multiple bits set (0 is already a direct match above).
+            if self._decode_sal_alarms(value):
                 return SAL_STATE_MULTIPLE
             return SAL_STATE_UNKNOWN
 
-        # For all other sensors, return raw value
         return value
+
+    def _offline_attributes(self) -> dict[str, Any]:
+        """Diagnostic attributes shown on the status sensor while offline."""
+        attributes: dict[str, Any] = {
+            "raw_value": "offline",
+            "code": "offline",
+            "consecutive_failures": self.coordinator.consecutive_failures,
+            "expected_offline": self.coordinator.is_expected_offline,
+        }
+        if self.coordinator.last_successful_update:
+            attributes["last_successful_update"] = (
+                self.coordinator.last_successful_update.isoformat()
+            )
+        if self.coordinator.api.last_successful_connection:
+            attributes["last_api_connection"] = (
+                self.coordinator.api.last_successful_connection.isoformat()
+            )
+        return attributes
 
     @property
     def extra_state_attributes(self) -> dict[str, Any] | None:
         """Return additional state attributes."""
-        # Special handling for SYS sensor when coordinator update fails
-        if not self.coordinator.last_update_success and self.sensor_key == "SYS":
-            attributes = {
-                "raw_value": "offline",
-                "code": "offline",
-            }
+        is_status = self.sensor_key == SENSOR_TYPE_STATUS
 
-            # Add diagnostic information
-            if hasattr(self.coordinator, "consecutive_failures"):
-                attributes["consecutive_failures"] = (
-                    self.coordinator.consecutive_failures
-                )
-
-            if hasattr(self.coordinator, "is_expected_offline"):
-                attributes["expected_offline"] = self.coordinator.is_expected_offline
-
-            if (
-                hasattr(self.coordinator, "last_successful_update")
-                and self.coordinator.last_successful_update
-            ):
-                attributes["last_successful_update"] = (
-                    self.coordinator.last_successful_update.isoformat()
-                )
-
-            # Add last API connection time if available
-            if (
-                hasattr(self.coordinator.api, "last_successful_connection")
-                and self.coordinator.api.last_successful_connection
-            ):
-                attributes["last_api_connection"] = (
-                    self.coordinator.api.last_successful_connection.isoformat()
-                )
-
-            return attributes
+        if is_status and not self.coordinator.last_update_success:
+            return self._offline_attributes()
 
         if not self.coordinator.data:
             return None
@@ -251,36 +166,25 @@ class SolarmaxSensor(CoordinatorEntity[SolarmaxCoordinator], SensorEntity):
         if sensor_data is None:
             return None
 
-        attributes = {}
+        attributes: dict[str, Any] = {}
         if "raw_value" in sensor_data:
             attributes["raw_value"] = sensor_data["raw_value"]
 
-        # For status and alarm sensors, add the raw numeric code as an attribute
         value = sensor_data.get("value")
-        if self.sensor_key in ["SYS", "SAL"] and isinstance(value, int):
+        is_register = self.sensor_key in (SENSOR_TYPE_STATUS, SENSOR_TYPE_ALARM)
+        # Expose the raw numeric code for the status/alarm registers.
+        if is_register and isinstance(value, int):
             attributes["code"] = value
 
-        # For SAL, decode bitmask and add active alarm list as attribute
-        if self.sensor_key == "SAL" and isinstance(value, int) and value > 0:
-            active_alarms = [
-                SAL_ALARM_MAP[bit]
-                for bit in sorted(SAL_ALARM_MAP)
-                if bit > 0 and value & bit
-            ]
-            if active_alarms:
+        # Decode the SAL bitmask into the list of active alarms.
+        if self.sensor_key == SENSOR_TYPE_ALARM and isinstance(value, int) and value:
+            if active_alarms := self._decode_sal_alarms(value):
                 attributes["active_alarms"] = active_alarms
 
-        # Add connection health information for diagnostic purposes
-        if self.sensor_key == "SYS":
-            if hasattr(self.coordinator, "consecutive_failures"):
-                attributes["consecutive_failures"] = (
-                    self.coordinator.consecutive_failures
-                )
-
-            if (
-                hasattr(self.coordinator, "last_successful_update")
-                and self.coordinator.last_successful_update
-            ):
+        # Surface connection health on the status sensor.
+        if is_status:
+            attributes["consecutive_failures"] = self.coordinator.consecutive_failures
+            if self.coordinator.last_successful_update:
                 attributes["last_successful_update"] = (
                     self.coordinator.last_successful_update.isoformat()
                 )
@@ -290,40 +194,16 @@ class SolarmaxSensor(CoordinatorEntity[SolarmaxCoordinator], SensorEntity):
     @property
     def available(self) -> bool:
         """Return if entity is available."""
-        # Always consider the coordinator's last update success first
         if self.coordinator.last_update_success:
             return True
 
-        # Check if the coordinator indicates this is an expected offline state
-        if (
-            hasattr(self.coordinator, "is_expected_offline")
-            and self.coordinator.is_expected_offline
-        ):
-            # For SYS (status) sensor, always remain available to show offline status
-            if self.sensor_key == "SYS":
-                return True
-            # For other sensors during expected offline periods, become unavailable
-            return False
-
-        # Check if it's night time for backward compatibility
-        is_night = self.coordinator.is_night_time
-
-        # For SYS (status) sensor, always remain available to show offline status
-        if self.sensor_key == "SYS":
+        # The status sensor stays available so it can report the offline state.
+        if self.sensor_key == SENSOR_TYPE_STATUS:
             return True
 
-        # For all other sensors during night time, become unavailable
-        # when inverter is not reachable (expected behavior)
-        if is_night:
+        # Other sensors go unavailable when the inverter is expectedly offline
+        # (night) or after a sustained run of day-time failures.
+        if self.coordinator.is_expected_offline or self.coordinator.is_night_time:
             return False
 
-        # During day time, check consecutive failures
-        if hasattr(self.coordinator, "consecutive_failures"):
-            # Many consecutive failures during the day make sensors
-            # unavailable - a real problem vs a temporary network hiccup
-            if self.coordinator.consecutive_failures > 5:
-                return False
-
-        # During day time, if coordinator update failed, still show as available
-        # but sensors will show their last known values or None
-        return True
+        return self.coordinator.consecutive_failures <= 5
