@@ -155,6 +155,54 @@ FIELD_MAP_DEVICE_INFO = {
 # - $$$$ = CRC placeholder (4 hex chars)
 REQUEST_TEMPLATE = "{FB;##;!!|64:&&|$$$$}"
 
+# Value scaling per MaxComm Section 2.2 (Netzwerkvariable): physical = raw / divisor.
+# Fields not listed are transmitted 1:1 (Energie_2, Temperatur, unitless values,
+# and the SYS/SAL registers, which are decoded at the sensor level).
+_SCALE_GROUPS: dict[int, tuple[str, ...]] = {
+    2: ("PAC", "PDC", "PD01", "PD02", "PD03", "PIN"),  # Leistung: 0.5 W/digit
+    10: (
+        "UL1",
+        "UL2",
+        "UL3",
+        "UDC",
+        "UD01",
+        "UD02",
+        "UD03",
+        "ULH",
+        "ULL",  # 0.1 V
+        "KDY",
+        "KLD",  # Energie_1: 0.1 kWh/digit
+    ),
+    100: (
+        "IDC",
+        "ID01",
+        "ID02",
+        "ID03",
+        "IL1",
+        "IL2",
+        "IL3",  # Strom: 0.01 A/digit
+        "TNH",
+        "TNL",
+        "TNF",  # Frequenz: 0.01 Hz/digit
+    ),
+}
+_FIELD_DIVISOR: dict[str, int] = {
+    field: divisor for divisor, fields in _SCALE_GROUPS.items() for field in fields
+}
+
+# Frame layout: {<payload>|<CRC>}  — CRC is 4 hex chars immediately before the ETX.
+_CRC_LEN = 4
+
+
+def _frame_payload(frame: str) -> str:
+    """Return the CRC-covered payload: everything between STX and the CRC+ETX."""
+    return frame[1 : -(_CRC_LEN + 1)]
+
+
+def _frame_crc(frame: str) -> str:
+    """Return the 4-char CRC stated at the end of a frame (just before the ETX)."""
+    return frame[-(_CRC_LEN + 1) : -1]
+
 
 class SolarmaxConnectionError(Exception):
     """Exception raised when connection to inverter fails."""
@@ -381,12 +429,12 @@ class SolarmaxAPI:
 
         # Length = total packet length (including STX/ETX, per protocol spec)
         req = req.replace("!!", format(len(req), "02X"))
-        # CRC covers: from Src-Adr to (and including) the FRS before CRC
-        # i.e., skip STX '{' at [0] and remove CRC placeholder + ETX '$$$$}'
-        req = req.replace("$$$$", self._calculate_checksum(req[1:-5]))
+        # CRC covers the payload: from Src-Adr to (and including) the FRS before
+        # the CRC placeholder, i.e. everything except STX and the "$$$$}" tail.
+        req = req.replace("$$$$", self.calculate_checksum(_frame_payload(req)))
         return req
 
-    def _calculate_checksum(self, data: str) -> str:
+    def calculate_checksum(self, data: str) -> str:
         """Calculate MaxComm CRC: sum of ASCII values, formatted as 4-char hex.
 
         Per protocol spec Section 1.1: "Summe der ASCII-Werte aller Zeichen
@@ -394,9 +442,6 @@ class SolarmaxAPI:
         """
         checksum_value = sum(ord(c) for c in data)
         return format(checksum_value, "04X")
-
-    # Public alias for backward compatibility (used by tests)
-    calculate_checksum = _calculate_checksum
 
     def _verify_response_checksum(self, response: str) -> bool:
         """Verify the CRC checksum of a MaxComm response frame.
@@ -413,14 +458,10 @@ class SolarmaxAPI:
             if response[-1] != PROTO_ETX and response[-1] != ")":
                 return False
 
-            # Extract the stated CRC (last 4 chars before ETX)
-            stated_crc = response[-5:-1]
-
-            # Calculate expected CRC over the same range as build_request:
-            # From Src-Adr (after STX) to and including the FRS before CRC
-            data_for_crc = response[1:-5]
-
-            expected_crc = self._calculate_checksum(data_for_crc)
+            # Extract the stated CRC and recompute it over the same payload
+            # range used by build_request().
+            stated_crc = _frame_crc(response)
+            expected_crc = self.calculate_checksum(_frame_payload(response))
             if stated_crc != expected_crc:
                 _LOGGER.warning(
                     "MaxComm CRC mismatch: stated=%s, calculated=%s",
@@ -446,37 +487,12 @@ class SolarmaxAPI:
         - ohne_Einheit (unitless):  1/digit       → no conversion
         - Register (SYS/SAL):       raw value     → decoded at sensor level
         """
-        if field in ("SYS", "SAL"):
-            # Register type: raw value, decoded at sensor level (enum/bitmask)
+        divisor = _FIELD_DIVISOR.get(field)
+        if divisor is None:
+            # Energie_2, Temperatur, unitless, and SYS/SAL registers: raw 1:1
+            # (SYS/SAL are decoded into enums/bitmasks at the sensor level).
             return value
-        elif field in ("PAC", "PDC", "PD01", "PD02", "PD03", "PIN"):
-            # Leistung: resolution 0.5 W/digit
-            return value / 2
-        elif field in (
-            "UL1",
-            "UL2",
-            "UL3",
-            "UDC",
-            "UD01",
-            "UD02",
-            "UD03",
-            "ULH",
-            "ULL",
-        ):
-            # Spannung_2: resolution 0.1 V/digit
-            return value / 10.0
-        elif field in ("KDY", "KLD"):
-            # Energie_1: resolution 0.1 kWh/digit
-            return value / 10.0
-        elif field in ("IDC", "ID01", "ID02", "ID03", "IL1", "IL2", "IL3"):
-            # Strom_positiv_2: resolution 0.01 A/digit
-            return value / 100.0
-        elif field in ("TNH", "TNL", "TNF"):
-            # Frequenz_2: resolution 0.01 Hz/digit (grid limit registers)
-            return value / 100.0
-        else:
-            # Energie_2, Temperatur_positiv, ohne_Einheit: resolution 1/digit
-            return value
+        return value / divisor
 
     def test_connection(self) -> bool:
         """Test if we can connect to the inverter."""
@@ -612,9 +628,9 @@ class SolarmaxAPI:
         """
         data_parts = []
         for i, frame in enumerate(frames):
-            # Strip STX and (CRC + ETX): frame[1:-5] gives "Header|Payload|"
-            # Then strip the trailing FRS (the '|' before CRC)
-            inner = frame[1:-5]
+            # Strip STX and (CRC + ETX), leaving "Header|Payload|", then strip
+            # the trailing FRS (the '|' before the CRC).
+            inner = _frame_payload(frame)
             if inner.endswith(PROTO_FRS):
                 inner = inner[:-1]
 
