@@ -574,13 +574,14 @@ SENSOR_TYPES: tuple[SensorEntityDescription, ...] = (
         state_class=SensorStateClass.TOTAL_INCREASING,
         icon="mdi:solar-power",
     ),
-    # Historical energy (opt-in; not provided by all inverters)
+    # Historical energy (opt-in; not provided by all inverters). These are
+    # point-in-time totals for a past period, not a running meter, so they have
+    # no state_class (state_class=measurement is invalid for energy in HA).
     SensorEntityDescription(
         key="KLD",
         translation_key="kld",
         native_unit_of_measurement="kWh",
         device_class=SensorDeviceClass.ENERGY,
-        state_class=SensorStateClass.MEASUREMENT,
         icon="mdi:solar-power",
         entity_registry_enabled_default=False,
     ),
@@ -589,7 +590,6 @@ SENSOR_TYPES: tuple[SensorEntityDescription, ...] = (
         translation_key="klm",
         native_unit_of_measurement="kWh",
         device_class=SensorDeviceClass.ENERGY,
-        state_class=SensorStateClass.MEASUREMENT,
         icon="mdi:solar-power",
         entity_registry_enabled_default=False,
     ),
@@ -598,7 +598,6 @@ SENSOR_TYPES: tuple[SensorEntityDescription, ...] = (
         translation_key="kly",
         native_unit_of_measurement="kWh",
         device_class=SensorDeviceClass.ENERGY,
-        state_class=SensorStateClass.MEASUREMENT,
         icon="mdi:solar-power",
         entity_registry_enabled_default=False,
     ),

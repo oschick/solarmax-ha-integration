@@ -9,6 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [1.3.1] - 2026-06-13
 
+### Fixed
+- **Energy Yesterday/Last Month/Last Year (KLD/KLM/KLY)**: removed the invalid `state_class: measurement` on these energy sensors, which Home Assistant rejects for the `energy` device class. They now report no state class (point-in-time historical totals, not running meters).
+
 ### Changed
 - **Internal refactor (no functional change)**: data-driven value scaling and named frame helpers in the protocol layer; migrated sensor definitions to Home Assistant's `SensorEntityDescription` pattern; simplified the coordinator's connection-failure handling and device-info parsing; deduplicated the config-flow and repair-flow code. Entity IDs, unique IDs, and names are unchanged.
 

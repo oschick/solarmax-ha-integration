@@ -207,3 +207,28 @@ def test_enum_sensor_description(mock_coordinator, mock_config_entry):
     assert sensor.device_class == SensorDeviceClass.ENUM
     assert sensor.options
     assert "mpp_operation" in sensor.options
+
+
+def test_no_invalid_device_state_class_combinations():
+    """Guard against device_class/state_class combos HA rejects.
+
+    Energy sensors must not use MEASUREMENT (only TOTAL/TOTAL_INCREASING or
+    None); enum sensors must have no state_class and no unit. This catches the
+    KLD/KLM/KLY regression where energy + measurement was invalid.
+    """
+    valid_energy_state_classes = {
+        None,
+        SensorStateClass.TOTAL,
+        SensorStateClass.TOTAL_INCREASING,
+    }
+    for description in SENSOR_TYPES:
+        if description.device_class == SensorDeviceClass.ENERGY:
+            assert description.state_class in valid_energy_state_classes, (
+                f"{description.key}: invalid energy state_class "
+                f"{description.state_class}"
+            )
+        if description.device_class == SensorDeviceClass.ENUM:
+            assert description.state_class is None, f"{description.key}: enum + state"
+            assert description.native_unit_of_measurement is None, (
+                f"{description.key}: enum sensors must not have a unit"
+            )
