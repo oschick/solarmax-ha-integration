@@ -19,6 +19,16 @@ DEFAULT_UPDATE_INTERVAL = 30
 DEFAULT_DEVICE_NAME = "Solarmax Inverter"
 DEFAULT_VERIFY_CHECKSUM = True
 
+# Static device-identification MaxComm keys (queried once for device info)
+DEVICE_KEY_TYPE = "TYP"  # device type / model identifier
+DEVICE_KEY_FIRMWARE = "SWV"  # firmware version number
+DEVICE_KEY_BUILD = "BDN"  # firmware build/release number
+DEVICE_KEY_SERIAL = "DIN"  # inverter serial number
+
+# Special sensor keys that need custom decoding (enum / bitmask)
+SENSOR_TYPE_STATUS = "SYS"  # operating-status register
+SENSOR_TYPE_ALARM = "SAL"  # alarm bitmask register
+
 # =============================================================================
 # Device Type Map (TYP key) - per MaxComm Protocol Section 2.3
 # Maps the TYP register value (decimal) to the device model name.
