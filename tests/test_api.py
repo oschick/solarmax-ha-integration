@@ -73,6 +73,15 @@ def test_map_data_value(api):
 
     # Test daily energy values (divided by 10, 0.1 kWh/digit)
     assert api.map_data_value("KDY", 1234) == 123.4
+    assert api.map_data_value("KLD", 85) == 8.5
+
+    # Test frequency values (divided by 100, 0.01 Hz/digit)
+    assert api.map_data_value("TNF", 5000) == 50.0
+
+    # Raw 1:1 fields stay int (no scaling): monthly energy, temperature, hours
+    assert api.map_data_value("KMT", 350) == 350
+    assert api.map_data_value("TKK", 42) == 42
+    assert isinstance(api.map_data_value("KMT", 350), int)
 
 
 @patch("socket.socket")

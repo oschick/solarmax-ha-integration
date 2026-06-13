@@ -12,67 +12,57 @@ from homeassistant.core import HomeAssistant
 _LOGGER = logging.getLogger(__name__)
 
 
-class SolarmaxConnectionRepairFlow(RepairsFlow):
+class _BaseSolarmaxRepairFlow(RepairsFlow):
+    """Shared confirm-style repair flow; subclasses supply the placeholders."""
+
+    def __init__(self, data: dict[str, Any]) -> None:
+        """Initialize the repair flow."""
+        super().__init__()
+        self.data = data
+
+    def _placeholders(self) -> dict[str, str]:
+        """Return the description placeholders for the confirm form."""
+        raise NotImplementedError
+
+    async def async_step_init(
+        self, user_input: dict[str, Any] | None = None
+    ) -> data_entry_flow.FlowResult:
+        """Handle the initial step."""
+        return await self.async_step_confirm()
+
+    async def async_step_confirm(
+        self, user_input: dict[str, Any] | None = None
+    ) -> data_entry_flow.FlowResult:
+        """Confirm the repair."""
+        if user_input is not None:
+            # The user confirmed the repair suggestion
+            return self.async_create_entry(data={})
+
+        return self.async_show_form(
+            step_id="confirm",
+            description_placeholders=self._placeholders(),
+        )
+
+
+class SolarmaxConnectionRepairFlow(_BaseSolarmaxRepairFlow):
     """Handler for Solarmax connection repair flow."""
 
-    def __init__(self, data: dict[str, Any]) -> None:
-        """Initialize the repair flow."""
-        super().__init__()
-        self.data = data
-
-    async def async_step_init(
-        self, user_input: dict[str, Any] | None = None
-    ) -> data_entry_flow.FlowResult:
-        """Handle the initial step."""
-        return await self.async_step_confirm()
-
-    async def async_step_confirm(
-        self, user_input: dict[str, Any] | None = None
-    ) -> data_entry_flow.FlowResult:
-        """Confirm the repair."""
-        if user_input is not None:
-            # The user confirmed the repair suggestion
-            return self.async_create_entry(data={})
-
-        return self.async_show_form(
-            step_id="confirm",
-            description_placeholders={
-                "host": self.data.get("host", "unknown"),
-                "port": str(self.data.get("port", "unknown")),
-                "failures": str(self.data.get("failures", 0)),
-            },
-        )
+    def _placeholders(self) -> dict[str, str]:
+        return {
+            "host": self.data.get("host", "unknown"),
+            "port": str(self.data.get("port", "unknown")),
+            "failures": str(self.data.get("failures", 0)),
+        }
 
 
-class SolarmaxConfigurationRepairFlow(RepairsFlow):
+class SolarmaxConfigurationRepairFlow(_BaseSolarmaxRepairFlow):
     """Handler for Solarmax configuration repair flow."""
 
-    def __init__(self, data: dict[str, Any]) -> None:
-        """Initialize the repair flow."""
-        super().__init__()
-        self.data = data
-
-    async def async_step_init(
-        self, user_input: dict[str, Any] | None = None
-    ) -> data_entry_flow.FlowResult:
-        """Handle the initial step."""
-        return await self.async_step_confirm()
-
-    async def async_step_confirm(
-        self, user_input: dict[str, Any] | None = None
-    ) -> data_entry_flow.FlowResult:
-        """Confirm the repair."""
-        if user_input is not None:
-            # The user confirmed the repair suggestion
-            return self.async_create_entry(data={})
-
-        return self.async_show_form(
-            step_id="confirm",
-            description_placeholders={
-                "host": self.data.get("host", "unknown"),
-                "issue": self.data.get("issue", "configuration issue"),
-            },
-        )
+    def _placeholders(self) -> dict[str, str]:
+        return {
+            "host": self.data.get("host", "unknown"),
+            "issue": self.data.get("issue", "configuration issue"),
+        }
 
 
 async def async_create_fix_flow(

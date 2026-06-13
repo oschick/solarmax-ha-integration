@@ -23,7 +23,7 @@ _UNIQUE_ID_MIGRATIONS = {
 }
 
 
-def _async_migrate_unique_ids(hass: HomeAssistant, entry: ConfigEntry) -> None:
+def _migrate_unique_ids(hass: HomeAssistant, entry: ConfigEntry) -> None:
     """Migrate renamed sensor unique IDs to prevent orphaned entities."""
     registry = er.async_get(hass)
 
@@ -53,7 +53,7 @@ def _async_migrate_unique_ids(hass: HomeAssistant, entry: ConfigEntry) -> None:
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Set up Solarmax Inverter from a config entry."""
     # Migrate renamed entity unique IDs (v1.2.0 → v1.2.1: KDL → KLD)
-    _async_migrate_unique_ids(hass, entry)
+    _migrate_unique_ids(hass, entry)
 
     coordinator = SolarmaxCoordinator(hass, entry)
 
@@ -87,12 +87,8 @@ async def async_update_listener(hass: HomeAssistant, entry: ConfigEntry) -> None
 
 
 async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
-    """Unload a config entry."""
-    if unload_ok := await hass.config_entries.async_unload_platforms(entry, PLATFORMS):
-        # Runtime data is automatically cleaned up
-        pass
-
-    return unload_ok
+    """Unload a config entry (runtime_data is cleaned up automatically)."""
+    return await hass.config_entries.async_unload_platforms(entry, PLATFORMS)
 
 
 async def async_reload_entry(hass: HomeAssistant, entry: ConfigEntry) -> None:

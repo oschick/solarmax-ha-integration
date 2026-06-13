@@ -19,6 +19,10 @@ from .const import (
     CONF_VERIFY_CHECKSUM,
     DEFAULT_ADDRESS,
     DEFAULT_VERIFY_CHECKSUM,
+    DEVICE_KEY_BUILD,
+    DEVICE_KEY_FIRMWARE,
+    DEVICE_KEY_SERIAL,
+    DEVICE_KEY_TYPE,
     DEVICE_TYPE_MAP,
     DOMAIN,
 )
@@ -101,7 +105,7 @@ class SolarmaxCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                     self._consecutive_failures,
                 )
             self._consecutive_failures = 0
-            self._last_successful_update = datetime.now()
+            self._last_successful_update = dt_util.now()
             self._is_expected_offline = False
 
             # Fetch device identification once (separate query for static keys)
@@ -113,48 +117,31 @@ class SolarmaxCoordinator(DataUpdateCoordinator[dict[str, Any]]):
 
         except (SolarmaxConnectionError, SolarmaxTimeoutError) as err:
             self._consecutive_failures += 1
-            is_night = self._is_night_time()
+            failures = self._consecutive_failures
 
-            # Enhanced error handling based on context
-            if is_night:
-                # During night time, connection failures are expected
+            if self._is_night_time():
+                # Overnight the inverter powers down, so failures are expected.
                 self._is_expected_offline = True
                 _LOGGER.debug("Inverter offline during night time (expected): %s", err)
                 raise UpdateFailed(f"Inverter offline (night time): {err}") from err
 
-            elif self._consecutive_failures == 1:
-                # First failure during day - could be temporary, log as warning
-                _LOGGER.warning("First connection failure during day time: %s", err)
-                raise UpdateFailed(f"Connection failed (attempt 1): {err}") from err
-
-            elif self._consecutive_failures <= 3:
-                # Multiple failures but not too many - could be inverter restart
-                _LOGGER.warning(
-                    "Connection failure #%d during day time: %s",
-                    self._consecutive_failures,
-                    err,
-                )
-                raise UpdateFailed(
-                    f"Connection failed (attempt {self._consecutive_failures}): {err}"
-                ) from err
-
+            # Day-time failures escalate: warn while it may be transient, raise to
+            # error once when it looks persistent, then drop to debug to avoid spam.
+            if failures <= 3:
+                level = logging.WARNING
+            elif failures == 4:
+                level = logging.ERROR
             else:
-                # Many consecutive failures during day - something is wrong
-                if (
-                    self._consecutive_failures == 4
-                ):  # Log once when becoming persistently unavailable
-                    _LOGGER.error(
-                        "Inverter persistently unavailable after %d attempts"
-                        " during day time",
-                        self._consecutive_failures,
-                    )
-                else:
-                    _LOGGER.debug(
-                        "Persistent connection failure (#%d) during day time: %s",
-                        self._consecutive_failures,
-                        err,
-                    )
-                raise UpdateFailed(f"Persistent connection failure: {err}") from err
+                level = logging.DEBUG
+            _LOGGER.log(
+                level,
+                "Inverter connection failure #%d during day time: %s",
+                failures,
+                err,
+            )
+            raise UpdateFailed(
+                f"Connection failed (attempt {failures}): {err}"
+            ) from err
 
         except Exception as err:
             self._consecutive_failures += 1
@@ -171,29 +158,31 @@ class SolarmaxCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         try:
             info = await self.hass.async_add_executor_job(self.api.get_device_info)
 
-            if "TYP" in info:
-                typ_value = info["TYP"].get("raw_value")
-                if typ_value is not None:
-                    self._device_model = DEVICE_TYPE_MAP.get(
-                        typ_value, f"Unknown ({typ_value})"
-                    )
-                    _LOGGER.info("Detected inverter type: %s", self._device_model)
+            def raw(key: str) -> Any:
+                """Return the raw_value for a device-info key, or None if absent."""
+                return info.get(key, {}).get("raw_value")
 
-            if "SWV" in info:
-                swv_value = info["SWV"].get("raw_value")
-                if swv_value is not None:
-                    bdn_value = info.get("BDN", {}).get("raw_value")
-                    if bdn_value is not None:
-                        self._sw_version = f"{swv_value} (build {bdn_value})"
-                    else:
-                        self._sw_version = str(swv_value)
-                    _LOGGER.debug("Detected firmware version: %s", self._sw_version)
+            typ_value = raw(DEVICE_KEY_TYPE)
+            if typ_value is not None:
+                self._device_model = DEVICE_TYPE_MAP.get(
+                    typ_value, f"Unknown ({typ_value})"
+                )
+                _LOGGER.info("Detected inverter type: %s", self._device_model)
 
-            if "DIN" in info:
-                din_value = info["DIN"].get("raw_value")
-                if din_value is not None:
-                    self._serial_number = str(din_value)
-                    _LOGGER.debug("Detected serial number: %s", self._serial_number)
+            swv_value = raw(DEVICE_KEY_FIRMWARE)
+            if swv_value is not None:
+                bdn_value = raw(DEVICE_KEY_BUILD)
+                self._sw_version = (
+                    f"{swv_value} (build {bdn_value})"
+                    if bdn_value is not None
+                    else str(swv_value)
+                )
+                _LOGGER.debug("Detected firmware version: %s", self._sw_version)
+
+            din_value = raw(DEVICE_KEY_SERIAL)
+            if din_value is not None:
+                self._serial_number = str(din_value)
+                _LOGGER.debug("Detected serial number: %s", self._serial_number)
 
         except Exception as err:
             _LOGGER.debug("Failed to fetch device info: %s", err)
