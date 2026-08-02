@@ -61,7 +61,8 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     try:
         await coordinator.async_config_entry_first_refresh()
     except Exception as err:
-        _LOGGER.error("Failed to connect to inverter during setup: %s", err)
+        level = logging.DEBUG if coordinator.is_night_time else logging.ERROR
+        _LOGGER.log(level, "Failed to connect to inverter during setup: %s", err)
         raise ConfigEntryNotReady(f"Failed to connect to inverter: {err}") from err
 
     # Use runtime_data instead of hass.data

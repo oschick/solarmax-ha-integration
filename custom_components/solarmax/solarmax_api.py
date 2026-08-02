@@ -323,7 +323,7 @@ class SolarmaxAPI:
                 time.sleep(wait_time)
 
         # All attempts failed
-        _LOGGER.error(
+        _LOGGER.debug(
             "Failed to connect to %s:%s after %d attempts",
             self.host,
             self.port,
@@ -569,7 +569,7 @@ class SolarmaxAPI:
                 time.sleep(wait_time)
 
         # All attempts failed
-        _LOGGER.error("Failed to get data from inverter after %d attempts", retries)
+        _LOGGER.debug("Failed to get data from inverter after %d attempts", retries)
         if last_exception:
             raise last_exception
         else:
