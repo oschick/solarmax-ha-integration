@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- **Day-time outages no longer stuck as "Offline (Night)"**: after a normal night, the expected-offline state is cleared on the first day-time failure. A genuine day-time outage now reports "Connection failed" and escalates in the logs (WARNING → ERROR → DEBUG) from scratch instead of being silently suppressed by the night-time failure counter.
+- **Log noise on expected night-time disconnects**: a failed setup at night and the "Failed to connect / Failed to get data" messages are now logged at debug level, so a normal night no longer fills the log with errors. Day-time failures still escalate normally.
+- **Empty inverter responses no longer logged as "Unexpected error"**: a valid frame with no parseable values is treated as a regular failed poll with the same night/day handling instead of hitting the generic error path at ERROR level on every poll.
+- **Protocol errors now escalate and quiet down**: persistent checksum mismatches or IPR/IPN rejections are logged like connection errors (WARNING → ERROR once → DEBUG) instead of "Unexpected error" at ERROR level on every poll.
+- **Transient protocol errors are retried**: corrupted or truncated responses (bad checksum, partial frames) are retried up to 3 times like connection errors instead of failing the poll immediately; only deterministic errors (IPR/IPN) skip the retry.
+- **Connection repair issue is now actually raised**: after 4 consecutive day-time connection failures, a "Inverter Connection Issues" repair issue is created in Home Assistant with a confirm-and-fix flow, and cleared automatically once the connection is restored or night-time offline mode begins. Previously the repair platform existed but nothing ever triggered it.
+- **Diagnostics identifiers fixed**: `device_info.identifiers` now uses the correct `(domain, entry_id)` tuple format and reports the detected inverter model (e.g. "SolarMax 7TP2") instead of a plain string and generic "Inverter".
+
+### Changed
+- **Inverter emulator**: grid frequency (TNF) is now encoded at 0.01 Hz/digit (raw 5000 → 50.0 Hz), matching the integration's scaling. The emulator previously transmitted 0.1 Hz/digit, so frequency parsed from emulator output read 10× too low.
+
 ## [1.3.1] - 2026-06-13
 
 ### Fixed
