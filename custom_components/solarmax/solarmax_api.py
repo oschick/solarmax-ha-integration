@@ -71,7 +71,7 @@ PROTO_ERROR_INVALID_PORT = "IPN"  # Invalid port number
 # Leistung:           0.5 W/digit    (PAC, PDC, PD01, PD02, PD03, PIN)
 # Energie_1:          0.1 kWh/digit  (KDY, KLD)
 # Energie_2:          1 kWh/digit    (KMT, KYR, KT0, KLM, KLY)
-# Frequenz:           0.1 Hz/digit   (TNF)
+# Frequenz:           0.01 Hz/digit  (TNF)
 # Temperatur_positiv: 1 °C/digit     (TKK)
 # ohne_Einheit_1:     1/digit 32-bit (KHR)
 # ohne_Einheit_2:     1/digit 16-bit (SWV, TYP, PRL)
@@ -132,7 +132,7 @@ FIELD_MAP_INVERTER = {
     "KLD": "Energy_Yesterday",  # Energie_1 (0.1 kWh/digit)
     "KLM": "Energy_Last_Month",  # Energie_2 (1 kWh/digit)
     "KLY": "Energy_Last_Year",  # Energie_2 (1 kWh/digit)
-    "TNF": "Grid_Frequency",  # Frequenz (0.1 Hz/digit)
+    "TNF": "Grid_Frequency",  # Frequenz (0.01 Hz/digit)
     "CAC": "Startups",  # ohne_Einheit_1
 }
 
@@ -234,6 +234,13 @@ class SolarmaxProtocolError(Exception):
         super().__init__(message)
         self.translation_key = translation_key
         self.translation_placeholders = kwargs
+
+
+class SolarmaxProtocolRetryableError(SolarmaxProtocolError):
+    """Exception for transient protocol failures (corrupted/truncated responses).
+
+    Unlike deterministic errors (IPR/IPN), these may succeed on retry.
+    """
 
 
 class SolarmaxAPI:
@@ -538,9 +545,18 @@ class SolarmaxAPI:
                 else:
                     raise SolarmaxTimeoutError("Empty response received")
 
+            except SolarmaxProtocolRetryableError as e:
+                # Corrupted/truncated responses may be transient line noise —
+                # retry before giving up.
+                last_exception = e
+                _LOGGER.debug(
+                    "Data retrieval attempt %d failed (transient protocol error): %s",
+                    attempt + 1,
+                    e,
+                )
             except SolarmaxProtocolError as e:
                 # Protocol errors (IPR/IPN) are deterministic — don't retry
-                _LOGGER.error("Protocol error from inverter: %s", e)
+                _LOGGER.debug("Protocol error from inverter: %s", e)
                 raise
             except (SolarmaxConnectionError, SolarmaxTimeoutError) as e:
                 last_exception = e
@@ -672,13 +688,17 @@ class SolarmaxAPI:
             # Split into individual frames
             frames = self._split_response_frames(data)
             if not frames:
-                raise SolarmaxProtocolError("No valid MaxComm frames found in response")
+                # Corrupted/truncated response — may succeed on retry
+                raise SolarmaxProtocolRetryableError(
+                    "No valid MaxComm frames found in response"
+                )
 
             # Verify checksum on each frame (unless disabled)
             if self.verify_checksum:
                 for frame in frames:
                     if not self._verify_response_checksum(frame):
-                        raise SolarmaxProtocolError(
+                        # Likely line noise — may succeed on retry
+                        raise SolarmaxProtocolRetryableError(
                             "MaxComm response checksum verification failed: "
                             "data may be corrupted"
                         )
@@ -736,6 +756,6 @@ class SolarmaxAPI:
         except (SolarmaxProtocolError, SolarmaxConnectionError):
             raise
         except Exception as e:
-            raise SolarmaxProtocolError(
+            raise SolarmaxProtocolRetryableError(
                 f"Unexpected error parsing MaxComm response: {e}"
             ) from e

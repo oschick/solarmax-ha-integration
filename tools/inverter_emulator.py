@@ -111,7 +111,7 @@ class InverterState:
     cac: int = 1847  # Startups
     prl: int = 45  # Relative Power: 45%
     pin: int = 14000  # Installed Power: 14000/2 = 7000W
-    tnf: int = 500  # Grid Frequency: 500/10 = 50.0 Hz
+    tnf: int = 5000  # Grid Frequency: 5000/100 = 50.0 Hz
 
     # Grid monitoring configuration (raw values)
     ulh: int = 2640  # Grid Voltage Upper Limit: 2640/10 = 264.0V
@@ -200,7 +200,7 @@ def get_scenario_state(scenario: str) -> InverterState:
             cac=1848,
             prl=0,
             pin=14000,
-            tnf=500,
+            tnf=5000,
             add_noise=False,
         )
     elif scenario == "alarm":
@@ -239,7 +239,7 @@ def get_scenario_state(scenario: str) -> InverterState:
             cac=1847,
             prl=7,
             pin=14000,
-            tnf=500,
+            tnf=5000,
         )
     elif scenario == "multi_alarm":
         return InverterState(
@@ -277,7 +277,7 @@ def get_scenario_state(scenario: str) -> InverterState:
             cac=1847,
             prl=3,
             pin=14000,
-            tnf=500,
+            tnf=5000,
         )
     elif scenario == "max_power":
         return InverterState(
@@ -315,7 +315,7 @@ def get_scenario_state(scenario: str) -> InverterState:
             cac=1847,
             prl=100,
             pin=10000,
-            tnf=500,
+            tnf=5000,
         )
     elif scenario == "low_irradiation":
         return InverterState(
@@ -353,7 +353,7 @@ def get_scenario_state(scenario: str) -> InverterState:
             cac=1847,
             prl=1,
             pin=14000,
-            tnf=500,
+            tnf=5000,
         )
     else:
         # Default: day / normal MPP operation
@@ -620,7 +620,7 @@ def interactive_loop(emulator: SolarmaxEmulator):
             print(f"  TKK (temp):      {s.tkk}°C")
             print(f"  TK2 (temp 2):    {s.tk2}°C")
             print(f"  TK3 (temp 3):    {s.tk3}°C")
-            print(f"  TNF (freq):      {s.tnf} raw -> {s.tnf / 10} Hz")
+            print(f"  TNF (freq):      {s.tnf} raw -> {s.tnf / 100} Hz")
             print(f"  PRL (rel power): {s.prl}%")
             print(f"  PIN (installed): {s.pin} raw -> {s.pin / 2}W")
             print(f"  KDY (day):       {s.kdy} raw -> {s.kdy / 10} kWh")

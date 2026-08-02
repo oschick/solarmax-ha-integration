@@ -90,10 +90,10 @@ async def async_get_config_entry_diagnostics(
 
     # Add device information
     diagnostics_data["device_info"] = {
-        "identifiers": f"{entry.domain}_{entry.entry_id}",
+        "identifiers": {(entry.domain, entry.entry_id)},
         "name": entry.data.get("device_name", "Solarmax Inverter"),
         "manufacturer": "Solarmax",
-        "model": "Inverter",
+        "model": coordinator.device_model or "Inverter",
     }
 
     return diagnostics_data

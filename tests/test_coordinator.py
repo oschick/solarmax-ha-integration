@@ -1,5 +1,6 @@
 """Test the Solarmax coordinator."""
 
+import logging
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -16,6 +17,7 @@ from custom_components.solarmax.const import (
 from custom_components.solarmax.coordinator import SolarmaxCoordinator
 from custom_components.solarmax.solarmax_api import (
     SolarmaxConnectionError,
+    SolarmaxProtocolError,
     SolarmaxTimeoutError,
 )
 
@@ -171,3 +173,157 @@ async def test_coordinator_recovery_after_failures(mock_api_class, coordinator):
     assert result is not None
     assert coordinator.consecutive_failures == 0
     assert coordinator.last_successful_update is not None
+
+
+async def test_daytime_failure_after_night_clears_stale_state(coordinator, caplog):
+    """A genuine day-time outage after a night must not stay 'offline_night'."""
+    mock_api = MagicMock()
+    mock_api.get_data.side_effect = SolarmaxConnectionError("Connection failed")
+    mock_api.host = "192.168.1.100"
+    mock_api.port = 12345
+    coordinator.api = mock_api
+
+    # A full night of expected-offline failures
+    with patch.object(coordinator, "_is_night_time", return_value=True):
+        for _ in range(10):
+            with pytest.raises(UpdateFailed):
+                await coordinator._async_update_data()
+
+    assert coordinator.is_expected_offline is True
+
+    # Morning: the inverter is still down — a real outage, not a night
+    with patch.object(coordinator, "_is_night_time", return_value=False):
+        with pytest.raises(UpdateFailed):
+            await coordinator._async_update_data()
+
+    assert coordinator.is_expected_offline is False
+    assert coordinator.consecutive_failures == 1
+
+    # The escalation starts over and reaches ERROR on the 4th day-time failure
+    for _ in range(3):
+        with pytest.raises(UpdateFailed):
+            await coordinator._async_update_data()
+
+    assert any(
+        "failure #4" in record.message and record.levelno == logging.ERROR
+        for record in caplog.records
+    )
+
+
+async def test_empty_data_not_logged_as_unexpected_error(coordinator, caplog):
+    """Empty inverter response must not hit the generic 'Unexpected error' path."""
+    mock_api = MagicMock()
+    mock_api.get_data.return_value = {}
+    coordinator.api = mock_api
+
+    with patch.object(coordinator, "_is_night_time", return_value=False):
+        with pytest.raises(UpdateFailed):
+            await coordinator._async_update_data()
+
+    assert coordinator.consecutive_failures == 1
+    assert not any("Unexpected error" in r.message for r in caplog.records)
+
+
+async def test_protocol_error_escalates_like_connection_error(coordinator, caplog):
+    """Protocol errors must go through the same WARNING/ERROR/DEBUG escalation."""
+    mock_api = MagicMock()
+    mock_api.get_data.side_effect = SolarmaxProtocolError("Checksum mismatch")
+    mock_api.host = "192.168.1.100"
+    mock_api.port = 12345
+    coordinator.api = mock_api
+
+    with patch.object(coordinator, "_is_night_time", return_value=False):
+        for _ in range(4):
+            with pytest.raises(UpdateFailed):
+                await coordinator._async_update_data()
+
+    assert coordinator.consecutive_failures == 4
+    assert any(
+        "failure #4" in record.message and record.levelno == logging.ERROR
+        for record in caplog.records
+    )
+    assert not any("Unexpected error" in r.message for r in caplog.records)
+
+
+async def test_repair_issue_created_after_sustained_daytime_failures(coordinator, hass):
+    """A repair issue is raised after 4 consecutive day-time failures."""
+    from homeassistant.helpers.issue_registry import async_get
+
+    mock_api = MagicMock()
+    mock_api.get_data.side_effect = SolarmaxConnectionError("Connection failed")
+    mock_api.host = "192.168.1.100"
+    mock_api.port = 12345
+    coordinator.api = mock_api
+
+    with patch.object(coordinator, "_is_night_time", return_value=False):
+        for _ in range(4):
+            with pytest.raises(UpdateFailed):
+                await coordinator._async_update_data()
+
+    issue = async_get(hass).async_get_issue(DOMAIN, "connection_issues_test_entry")
+    assert issue is not None
+    assert issue.translation_key == "connection_issues"
+    assert issue.translation_placeholders == {
+        "host": "192.168.1.100",
+        "port": "12345",
+        "failures": "4",
+    }
+
+
+async def test_repair_issue_deleted_after_recovery(coordinator, hass):
+    """A raised repair issue is cleared once the connection is restored."""
+    from homeassistant.helpers.issue_registry import async_get
+
+    mock_api = MagicMock()
+    mock_api.get_data.side_effect = SolarmaxConnectionError("Connection failed")
+    mock_api.host = "192.168.1.100"
+    mock_api.port = 12345
+    coordinator.api = mock_api
+
+    with patch.object(coordinator, "_is_night_time", return_value=False):
+        for _ in range(4):
+            with pytest.raises(UpdateFailed):
+                await coordinator._async_update_data()
+
+    assert (
+        async_get(hass).async_get_issue(DOMAIN, "connection_issues_test_entry")
+        is not None
+    )
+
+    mock_api.get_data.side_effect = None
+    mock_api.get_data.return_value = {"PAC": {"value": 1500.0, "raw_value": 3000}}
+    with patch.object(coordinator, "_is_night_time", return_value=False):
+        await coordinator._async_update_data()
+
+    assert (
+        async_get(hass).async_get_issue(DOMAIN, "connection_issues_test_entry") is None
+    )
+
+
+async def test_repair_issue_deleted_when_night_failures_start(coordinator, hass):
+    """A repair issue is cleared once the night-time offline period starts."""
+    from homeassistant.helpers.issue_registry import async_get
+
+    mock_api = MagicMock()
+    mock_api.get_data.side_effect = SolarmaxConnectionError("Connection failed")
+    mock_api.host = "192.168.1.100"
+    mock_api.port = 12345
+    coordinator.api = mock_api
+
+    with patch.object(coordinator, "_is_night_time", return_value=False):
+        for _ in range(4):
+            with pytest.raises(UpdateFailed):
+                await coordinator._async_update_data()
+
+    assert (
+        async_get(hass).async_get_issue(DOMAIN, "connection_issues_test_entry")
+        is not None
+    )
+
+    with patch.object(coordinator, "_is_night_time", return_value=True):
+        with pytest.raises(UpdateFailed):
+            await coordinator._async_update_data()
+
+    assert (
+        async_get(hass).async_get_issue(DOMAIN, "connection_issues_test_entry") is None
+    )
