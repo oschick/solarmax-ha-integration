@@ -61,6 +61,7 @@ async def test_setup_entry_connection_failed(
 ):
     """Test setup failure due to connection error."""
     mock_coordinator = MagicMock()
+    mock_coordinator.is_night_time = False
     mock_coordinator.async_config_entry_first_refresh = AsyncMock(
         side_effect=Exception("Connection failed")
     )
@@ -68,6 +69,56 @@ async def test_setup_entry_connection_failed(
 
     with pytest.raises(ConfigEntryNotReady):
         await async_setup_entry(hass, mock_config_entry)
+
+
+@patch("custom_components.solarmax.SolarmaxCoordinator")
+async def test_setup_entry_connection_failed_logs_error_by_day(
+    mock_coordinator_class, hass: HomeAssistant, mock_config_entry, caplog
+):
+    """Test setup failure during the day logs at ERROR level."""
+    mock_coordinator = MagicMock()
+    mock_coordinator.is_night_time = False
+    mock_coordinator.async_config_entry_first_refresh = AsyncMock(
+        side_effect=Exception("Connection failed")
+    )
+    mock_coordinator_class.return_value = mock_coordinator
+
+    with pytest.raises(ConfigEntryNotReady):
+        await async_setup_entry(hass, mock_config_entry)
+
+    assert any(
+        record.levelname == "ERROR"
+        and "Failed to connect to inverter during setup" in record.message
+        for record in caplog.records
+    )
+
+
+@patch("custom_components.solarmax.SolarmaxCoordinator")
+async def test_setup_entry_connection_failed_logs_debug_at_night(
+    mock_coordinator_class, hass: HomeAssistant, mock_config_entry, caplog
+):
+    """Test setup failure at night logs at DEBUG level, not ERROR."""
+    mock_coordinator = MagicMock()
+    mock_coordinator.is_night_time = True
+    mock_coordinator.async_config_entry_first_refresh = AsyncMock(
+        side_effect=Exception("Inverter offline (night time): Host is unreachable")
+    )
+    mock_coordinator_class.return_value = mock_coordinator
+
+    with caplog.at_level("DEBUG"):
+        with pytest.raises(ConfigEntryNotReady):
+            await async_setup_entry(hass, mock_config_entry)
+
+    assert not any(
+        record.levelname == "ERROR"
+        and "Failed to connect to inverter during setup" in record.message
+        for record in caplog.records
+    )
+    assert any(
+        record.levelname == "DEBUG"
+        and "Failed to connect to inverter during setup" in record.message
+        for record in caplog.records
+    )
 
 
 async def test_unload_entry_success(hass: HomeAssistant, mock_config_entry):
