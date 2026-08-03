@@ -8,6 +8,11 @@ from typing import Any
 
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
+from homeassistant.helpers.issue_registry import (
+    IssueSeverity,
+    async_create_issue,
+    async_delete_issue,
+)
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
 from homeassistant.util import dt as dt_util
 
@@ -26,7 +31,12 @@ from .const import (
     DEVICE_TYPE_MAP,
     DOMAIN,
 )
-from .solarmax_api import SolarmaxAPI, SolarmaxConnectionError, SolarmaxTimeoutError
+from .solarmax_api import (
+    SolarmaxAPI,
+    SolarmaxConnectionError,
+    SolarmaxProtocolError,
+    SolarmaxTimeoutError,
+)
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -59,6 +69,10 @@ class SolarmaxCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         self._consecutive_failures = 0
         self._last_successful_update = None
         self._is_expected_offline = False
+
+        # Repair issue tracking (one issue per config entry)
+        self._repair_issue_id = f"connection_issues_{entry.entry_id}"
+        self._repair_issue_raised = False
 
         # Device identification (populated on first successful data fetch)
         self._device_model: str | None = None
@@ -94,36 +108,62 @@ class SolarmaxCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         """Fetch data from the inverter with intelligent error handling."""
         try:
             data = await self.hass.async_add_executor_job(self.api.get_data)
+        except (
+            SolarmaxConnectionError,
+            SolarmaxTimeoutError,
+            SolarmaxProtocolError,
+        ) as err:
+            raise self._handle_poll_failure(err) from err
 
-            if not data:
-                raise UpdateFailed("No data received from inverter")
+        if not data:
+            # Valid response without parseable values (e.g. all keys returned
+            # as "not applicable"). Nothing to report — treat like a failed
+            # poll, not an unexpected error.
+            raise self._handle_poll_failure(
+                SolarmaxTimeoutError("No data received from inverter")
+            )
 
-            # Reset failure tracking on successful update
-            if self._consecutive_failures > 0:
+        # Reset failure tracking on successful update
+        if self._consecutive_failures > 0:
+            _LOGGER.info(
+                "Connection restored after %d failed attempts",
+                self._consecutive_failures,
+            )
+        self._consecutive_failures = 0
+        self._last_successful_update = dt_util.now()
+        self._is_expected_offline = False
+
+        # Delete unconditionally (no-op if absent): a stale issue may exist
+        # even when the in-memory flag is False (e.g. after a restart).
+        async_delete_issue(self.hass, DOMAIN, self._repair_issue_id)
+        self._repair_issue_raised = False
+
+        # Fetch device identification once (separate query for static keys)
+        if self._device_model is None:
+            await self._async_fetch_device_info()
+
+        _LOGGER.debug("Successfully updated data from inverter")
+        return data
+
+    def _handle_poll_failure(self, err: Exception) -> UpdateFailed:
+        """Count a failed poll and return the UpdateFailed to raise.
+
+        Night-time failures are expected (the inverter powers down) and stay
+        quiet. The first day-time failure after a night clears the stale
+        night state so a genuine day-time outage escalates (WARNING → ERROR →
+        DEBUG) from scratch.
+        """
+        if not self._is_night_time():
+            if self._is_expected_offline:
                 _LOGGER.info(
-                    "Connection restored after %d failed attempts",
-                    self._consecutive_failures,
+                    "Inverter offline during day time after expected night-time "
+                    "offline — resetting failure tracking"
                 )
-            self._consecutive_failures = 0
-            self._last_successful_update = dt_util.now()
-            self._is_expected_offline = False
+                self._is_expected_offline = False
+                self._consecutive_failures = 0
 
-            # Fetch device identification once (separate query for static keys)
-            if self._device_model is None:
-                await self._async_fetch_device_info()
-
-            _LOGGER.debug("Successfully updated data from inverter")
-            return data
-
-        except (SolarmaxConnectionError, SolarmaxTimeoutError) as err:
             self._consecutive_failures += 1
             failures = self._consecutive_failures
-
-            if self._is_night_time():
-                # Overnight the inverter powers down, so failures are expected.
-                self._is_expected_offline = True
-                _LOGGER.debug("Inverter offline during night time (expected): %s", err)
-                raise UpdateFailed(f"Inverter offline (night time): {err}") from err
 
             # Day-time failures escalate: warn while it may be transient, raise to
             # error once when it looks persistent, then drop to debug to avoid spam.
@@ -139,14 +179,39 @@ class SolarmaxCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 failures,
                 err,
             )
-            raise UpdateFailed(
-                f"Connection failed (attempt {failures}): {err}"
-            ) from err
 
-        except Exception as err:
-            self._consecutive_failures += 1
-            _LOGGER.error("Unexpected error communicating with inverter: %s", err)
-            raise UpdateFailed(f"Unexpected error: {err}") from err
+            if failures == 4 and not self._repair_issue_raised:
+                async_create_issue(
+                    self.hass,
+                    DOMAIN,
+                    self._repair_issue_id,
+                    is_fixable=True,
+                    is_persistent=False,
+                    severity=IssueSeverity.ERROR,
+                    translation_key="connection_issues",
+                    translation_placeholders={
+                        "host": self.api.host,
+                        "port": str(self.api.port),
+                        "failures": str(failures),
+                    },
+                )
+                self._repair_issue_raised = True
+
+            if isinstance(err, SolarmaxProtocolError):
+                failure_type = "Protocol error"
+            elif isinstance(err, SolarmaxTimeoutError):
+                failure_type = "Timeout"
+            else:
+                failure_type = "Connection failed"
+            return UpdateFailed(f"{failure_type} (attempt {failures}): {err}")
+
+        # Night time: the inverter powers down, so failures are expected.
+        # Delete unconditionally (no-op if absent), like in the success path.
+        async_delete_issue(self.hass, DOMAIN, self._repair_issue_id)
+        self._repair_issue_raised = False
+        self._is_expected_offline = True
+        _LOGGER.debug("Inverter offline during night time (expected): %s", err)
+        return UpdateFailed(f"Inverter offline (night time): {err}")
 
     @property
     def is_expected_offline(self) -> bool:

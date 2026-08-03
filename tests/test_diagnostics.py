@@ -34,6 +34,7 @@ async def test_config_entry_diagnostics(hass: HomeAssistant, mock_config_entry):
     mock_coordinator.consecutive_failures = 0
     mock_coordinator.last_successful_update = None
     mock_coordinator.is_expected_offline = False
+    mock_coordinator.device_model = "SolarMax 7TP2"
 
     # Mock API
     mock_api = AsyncMock()
@@ -84,6 +85,12 @@ async def test_config_entry_diagnostics(hass: HomeAssistant, mock_config_entry):
     # Compare against the manifest so this assertion never goes stale
     assert system_info["integration_version"] == MANIFEST["version"]
 
+    # Verify device info uses JSON-serializable identifier tuples and the
+    # detected model
+    device_info = diagnostics["device_info"]
+    assert device_info["identifiers"] == [("solarmax", mock_config_entry.entry_id)]
+    assert device_info["model"] == "SolarMax 7TP2"
+
 
 @pytest.mark.asyncio
 async def test_diagnostics_with_no_data(hass: HomeAssistant, mock_config_entry):
@@ -94,6 +101,7 @@ async def test_diagnostics_with_no_data(hass: HomeAssistant, mock_config_entry):
     mock_coordinator.last_exception = Exception("Connection failed")
     mock_coordinator.update_interval.total_seconds.return_value = 30
     mock_coordinator.data = None
+    mock_coordinator.device_model = None
 
     # Mock API
     mock_api = AsyncMock()

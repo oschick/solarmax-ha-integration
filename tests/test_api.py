@@ -1,5 +1,7 @@
 """Test the Solarmax API."""
 
+import importlib.util
+import pathlib
 import socket
 from unittest.mock import MagicMock, patch
 
@@ -278,6 +280,47 @@ def test_get_data_protocol_error_no_retry(api):
 
         # Should only have connected once (no retries for protocol errors)
         assert mock_sock.connect.call_count == 1
+
+
+@patch("custom_components.solarmax.solarmax_api.time.sleep")
+@patch("socket.socket")
+def test_get_data_retries_transient_protocol_error(mock_socket, mock_sleep, api):
+    """Test that transient protocol errors (corrupted response) are retried."""
+    inner = "01;FB;1A|64:PAC=1F4;UDC=BB8|"
+    corrupted = "{" + inner + "0000}"  # Wrong CRC — transient line noise
+
+    mock_sock = MagicMock()
+    mock_socket.return_value = mock_sock
+    mock_sock.recv.return_value = corrupted.encode()
+
+    with pytest.raises(SolarmaxProtocolError):
+        api.get_data()
+
+    # Retried on all DATA_RETRIES attempts before giving up
+    assert mock_sock.connect.call_count == 3
+
+
+def test_emulator_and_api_agree_on_tnf_scaling(api):
+    """The emulator's TNF response must decode to 50.0 Hz via the API."""
+    import sys
+
+    emulator_path = (
+        pathlib.Path(__file__).parent.parent / "tools" / "inverter_emulator.py"
+    )
+    spec = importlib.util.spec_from_file_location("inverter_emulator", emulator_path)
+    assert spec.loader is not None
+    emulator_mod = importlib.util.module_from_spec(spec)
+    # dataclass processing resolves field types through sys.modules
+    sys.modules[spec.name] = emulator_mod
+    try:
+        spec.loader.exec_module(emulator_mod)
+    finally:
+        sys.modules.pop(spec.name, None)
+
+    response = emulator_mod.SolarmaxEmulator(address=1).build_response(["TNF"])
+    result = api.convert_to_json(response)
+
+    assert result["TNF"]["value"] == 50.0
 
 
 def test_convert_to_json_multi_frame(api):
