@@ -76,6 +76,7 @@ async def test_setup_entry_connection_failed_logs_error_by_day(
     mock_coordinator_class, hass: HomeAssistant, mock_config_entry, caplog
 ):
     """Test setup failure during the day logs at ERROR level."""
+    caplog.set_level("DEBUG", logger="custom_components.solarmax")
     mock_coordinator = MagicMock()
     mock_coordinator.is_night_time = False
     mock_coordinator.async_config_entry_first_refresh = AsyncMock(

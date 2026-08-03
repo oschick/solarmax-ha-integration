@@ -177,6 +177,7 @@ async def test_coordinator_recovery_after_failures(mock_api_class, coordinator):
 
 async def test_daytime_failure_after_night_clears_stale_state(coordinator, caplog):
     """A genuine day-time outage after a night must not stay 'offline_night'."""
+    caplog.set_level(logging.DEBUG, logger="custom_components.solarmax.coordinator")
     mock_api = MagicMock()
     mock_api.get_data.side_effect = SolarmaxConnectionError("Connection failed")
     mock_api.host = "192.168.1.100"
@@ -199,10 +200,13 @@ async def test_daytime_failure_after_night_clears_stale_state(coordinator, caplo
     assert coordinator.is_expected_offline is False
     assert coordinator.consecutive_failures == 1
 
-    # The escalation starts over and reaches ERROR on the 4th day-time failure
-    for _ in range(3):
-        with pytest.raises(UpdateFailed):
-            await coordinator._async_update_data()
+    # The escalation starts over and reaches ERROR on the 4th day-time failure.
+    # Keep the whole loop inside the day patch: the real _is_night_time() uses
+    # the wall clock, so this test must not depend on the time of day it runs.
+    with patch.object(coordinator, "_is_night_time", return_value=False):
+        for _ in range(3):
+            with pytest.raises(UpdateFailed):
+                await coordinator._async_update_data()
 
     assert any(
         "failure #4" in record.message and record.levelno == logging.ERROR
@@ -212,6 +216,7 @@ async def test_daytime_failure_after_night_clears_stale_state(coordinator, caplo
 
 async def test_empty_data_not_logged_as_unexpected_error(coordinator, caplog):
     """Empty inverter response must not hit the generic 'Unexpected error' path."""
+    caplog.set_level(logging.DEBUG, logger="custom_components.solarmax.coordinator")
     mock_api = MagicMock()
     mock_api.get_data.return_value = {}
     coordinator.api = mock_api
@@ -226,6 +231,7 @@ async def test_empty_data_not_logged_as_unexpected_error(coordinator, caplog):
 
 async def test_protocol_error_escalates_like_connection_error(coordinator, caplog):
     """Protocol errors must go through the same WARNING/ERROR/DEBUG escalation."""
+    caplog.set_level(logging.DEBUG, logger="custom_components.solarmax.coordinator")
     mock_api = MagicMock()
     mock_api.get_data.side_effect = SolarmaxProtocolError("Checksum mismatch")
     mock_api.host = "192.168.1.100"
