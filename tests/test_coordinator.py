@@ -104,7 +104,7 @@ async def test_coordinator_timeout_error(mock_api_class, coordinator):
     coordinator.api = mock_api
 
     with patch.object(coordinator, "_is_night_time", return_value=False):
-        with pytest.raises(UpdateFailed):
+        with pytest.raises(UpdateFailed, match=r"Timeout \(attempt 1\)"):
             await coordinator._async_update_data()
 
 
@@ -217,7 +217,7 @@ async def test_empty_data_not_logged_as_unexpected_error(coordinator, caplog):
     coordinator.api = mock_api
 
     with patch.object(coordinator, "_is_night_time", return_value=False):
-        with pytest.raises(UpdateFailed):
+        with pytest.raises(UpdateFailed, match=r"Timeout \(attempt 1\)"):
             await coordinator._async_update_data()
 
     assert coordinator.consecutive_failures == 1
@@ -233,9 +233,11 @@ async def test_protocol_error_escalates_like_connection_error(coordinator, caplo
     coordinator.api = mock_api
 
     with patch.object(coordinator, "_is_night_time", return_value=False):
-        for _ in range(4):
+        for _ in range(3):
             with pytest.raises(UpdateFailed):
                 await coordinator._async_update_data()
+        with pytest.raises(UpdateFailed, match=r"Protocol error \(attempt 4\)"):
+            await coordinator._async_update_data()
 
     assert coordinator.consecutive_failures == 4
     assert any(
@@ -292,6 +294,49 @@ async def test_repair_issue_deleted_after_recovery(coordinator, hass):
 
     mock_api.get_data.side_effect = None
     mock_api.get_data.return_value = {"PAC": {"value": 1500.0, "raw_value": 3000}}
+    with patch.object(coordinator, "_is_night_time", return_value=False):
+        await coordinator._async_update_data()
+
+    assert (
+        async_get(hass).async_get_issue(DOMAIN, "connection_issues_test_entry") is None
+    )
+
+
+async def test_repair_issue_cleared_even_if_flag_reset_by_restart(coordinator, hass):
+    """Recovery clears a stale repair issue even if it predates this session.
+
+    The coordinator's in-memory flag resets on restart, so deletion must not
+    depend on it — the issue registry itself decides whether to delete.
+    """
+    from homeassistant.helpers.issue_registry import (
+        IssueSeverity,
+        async_create_issue,
+        async_get,
+    )
+
+    # Simulate an issue that was raised before a restart (flag is now False)
+    async_create_issue(
+        hass,
+        DOMAIN,
+        "connection_issues_test_entry",
+        is_fixable=True,
+        severity=IssueSeverity.ERROR,
+        translation_key="connection_issues",
+        translation_placeholders={
+            "host": "192.168.1.100",
+            "port": "12345",
+            "failures": "4",
+        },
+    )
+    assert (
+        async_get(hass).async_get_issue(DOMAIN, "connection_issues_test_entry")
+        is not None
+    )
+
+    mock_api = MagicMock()
+    mock_api.get_data.return_value = {"PAC": {"value": 1500.0, "raw_value": 3000}}
+    coordinator.api = mock_api
+
     with patch.object(coordinator, "_is_night_time", return_value=False):
         await coordinator._async_update_data()
 

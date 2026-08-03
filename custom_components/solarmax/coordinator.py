@@ -133,9 +133,10 @@ class SolarmaxCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         self._last_successful_update = dt_util.now()
         self._is_expected_offline = False
 
-        if self._repair_issue_raised:
-            async_delete_issue(self.hass, DOMAIN, self._repair_issue_id)
-            self._repair_issue_raised = False
+        # Delete unconditionally (no-op if absent): a stale issue may exist
+        # even when the in-memory flag is False (e.g. after a restart).
+        async_delete_issue(self.hass, DOMAIN, self._repair_issue_id)
+        self._repair_issue_raised = False
 
         # Fetch device identification once (separate query for static keys)
         if self._device_model is None:
@@ -196,12 +197,18 @@ class SolarmaxCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 )
                 self._repair_issue_raised = True
 
-            return UpdateFailed(f"Connection failed (attempt {failures}): {err}")
+            if isinstance(err, SolarmaxProtocolError):
+                failure_type = "Protocol error"
+            elif isinstance(err, SolarmaxTimeoutError):
+                failure_type = "Timeout"
+            else:
+                failure_type = "Connection failed"
+            return UpdateFailed(f"{failure_type} (attempt {failures}): {err}")
 
         # Night time: the inverter powers down, so failures are expected.
-        if self._repair_issue_raised:
-            async_delete_issue(self.hass, DOMAIN, self._repair_issue_id)
-            self._repair_issue_raised = False
+        # Delete unconditionally (no-op if absent), like in the success path.
+        async_delete_issue(self.hass, DOMAIN, self._repair_issue_id)
+        self._repair_issue_raised = False
         self._is_expected_offline = True
         _LOGGER.debug("Inverter offline during night time (expected): %s", err)
         return UpdateFailed(f"Inverter offline (night time): {err}")

@@ -88,9 +88,10 @@ async def async_get_config_entry_diagnostics(
             for sensor_key, sensor_data in coordinator.data.items()
         }
 
-    # Add device information
+    # Add device information (identifiers as a list: diagnostics payloads are
+    # JSON-serialized, and a set would not survive json.dumps)
     diagnostics_data["device_info"] = {
-        "identifiers": {(entry.domain, entry.entry_id)},
+        "identifiers": [(entry.domain, entry.entry_id)],
         "name": entry.data.get("device_name", "Solarmax Inverter"),
         "manufacturer": "Solarmax",
         "model": coordinator.device_model or "Inverter",

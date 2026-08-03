@@ -85,9 +85,10 @@ async def test_config_entry_diagnostics(hass: HomeAssistant, mock_config_entry):
     # Compare against the manifest so this assertion never goes stale
     assert system_info["integration_version"] == MANIFEST["version"]
 
-    # Verify device info uses identifier tuples and the detected model
+    # Verify device info uses JSON-serializable identifier tuples and the
+    # detected model
     device_info = diagnostics["device_info"]
-    assert device_info["identifiers"] == {("solarmax", mock_config_entry.entry_id)}
+    assert device_info["identifiers"] == [("solarmax", mock_config_entry.entry_id)]
     assert device_info["model"] == "SolarMax 7TP2"
 
 

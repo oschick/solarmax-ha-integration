@@ -312,7 +312,10 @@ def test_emulator_and_api_agree_on_tnf_scaling(api):
     emulator_mod = importlib.util.module_from_spec(spec)
     # dataclass processing resolves field types through sys.modules
     sys.modules[spec.name] = emulator_mod
-    spec.loader.exec_module(emulator_mod)
+    try:
+        spec.loader.exec_module(emulator_mod)
+    finally:
+        sys.modules.pop(spec.name, None)
 
     response = emulator_mod.SolarmaxEmulator(address=1).build_response(["TNF"])
     result = api.convert_to_json(response)
