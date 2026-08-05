@@ -40,6 +40,12 @@ from .solarmax_api import (
 
 _LOGGER = logging.getLogger(__name__)
 
+# Sun elevation (in degrees) below which the inverter is considered to be in
+# the dusk/dawn twilight window and expected to be offline due to
+# insufficient irradiance, even though the sun is technically above the
+# horizon.
+TWILIGHT_ELEVATION_THRESHOLD = 5
+
 
 class SolarmaxCoordinator(DataUpdateCoordinator[dict[str, Any]]):
     """Class to manage fetching Solarmax data."""
@@ -87,7 +93,12 @@ class SolarmaxCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             # Get sun component if available
             sun_component = self.hass.states.get("sun.sun")
             if sun_component:
-                return sun_component.state == "below_horizon"
+                if sun_component.state == "below_horizon":
+                    return True
+                elevation = sun_component.attributes.get("elevation")
+                if elevation is not None and elevation < TWILIGHT_ELEVATION_THRESHOLD:
+                    return True
+                return False
 
             # Fallback: simple time-based check (between 20:00 and 06:00)
             current_hour = now.hour

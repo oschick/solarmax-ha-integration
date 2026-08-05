@@ -119,6 +119,25 @@ async def test_is_night_time_with_sun_component(coordinator):
     assert coordinator._is_night_time() is False
 
 
+async def test_is_night_time_dusk_twilight(coordinator):
+    """Test that low sun elevation above the horizon is treated as night."""
+    # Sun above horizon but at low elevation (dusk twilight window)
+    coordinator.hass.states.async_set(
+        "sun.sun", "above_horizon", {"elevation": 2.0}
+    )
+    assert coordinator._is_night_time() is True
+
+    # Sun above horizon with high elevation (broad daylight)
+    coordinator.hass.states.async_set(
+        "sun.sun", "above_horizon", {"elevation": 30.0}
+    )
+    assert coordinator._is_night_time() is False
+
+    # Sun above horizon with no elevation attribute available
+    coordinator.hass.states.async_set("sun.sun", "above_horizon", {})
+    assert coordinator._is_night_time() is False
+
+
 def test_is_night_time_fallback(coordinator):
     """Test night time detection fallback logic."""
     # No sun component state exists, so the time-based fallback is used
