@@ -13,8 +13,10 @@ from custom_components.solarmax.const import (
     CONF_DEVICE_NAME,
     CONF_HOST,
     CONF_PORT,
+    CONF_TWILIGHT_ELEVATION_THRESHOLD,
     CONF_UPDATE_INTERVAL,
     CONF_VERIFY_CHECKSUM,
+    DEFAULT_TWILIGHT_ELEVATION_THRESHOLD,
     DOMAIN,
 )
 
@@ -57,6 +59,7 @@ async def test_form_successful_connection(mock_api, hass: HomeAssistant) -> None
         CONF_DEVICE_NAME: "Test Inverter",
         CONF_UPDATE_INTERVAL: 30,
         CONF_VERIFY_CHECKSUM: True,
+        CONF_TWILIGHT_ELEVATION_THRESHOLD: DEFAULT_TWILIGHT_ELEVATION_THRESHOLD,
     }
 
 

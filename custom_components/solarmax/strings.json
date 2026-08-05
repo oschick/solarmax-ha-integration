@@ -10,7 +10,8 @@
           "address": "Inverter address (1-249)",
           "update_interval": "Update interval (seconds)",
           "device_name": "Device name",
-          "verify_checksum": "Verify response checksum"
+          "verify_checksum": "Verify response checksum",
+          "twilight_elevation_threshold": "Twilight elevation threshold (degrees)"
         }
       }
     },
@@ -35,7 +36,8 @@
           "address": "Inverter address (1-249)",
           "update_interval": "Update interval (seconds)",
           "device_name": "Device name",
-          "verify_checksum": "Verify response checksum"
+          "verify_checksum": "Verify response checksum",
+          "twilight_elevation_threshold": "Twilight elevation threshold (degrees)"
         }
       }
     },

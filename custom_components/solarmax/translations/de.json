@@ -10,7 +10,8 @@
           "address": "Wechselrichter-Adresse (1-249)",
           "update_interval": "Aktualisierungsintervall (Sekunden)",
           "device_name": "Gerätename",
-          "verify_checksum": "Antwort-Prüfsumme verifizieren"
+          "verify_checksum": "Antwort-Prüfsumme verifizieren",
+          "twilight_elevation_threshold": "Dämmerungs-Höhenwinkelschwelle (Grad)"
         }
       }
     },
@@ -35,7 +36,8 @@
           "address": "Wechselrichter-Adresse (1-249)",
           "update_interval": "Aktualisierungsintervall (Sekunden)",
           "device_name": "Gerätename",
-          "verify_checksum": "Antwort-Prüfsumme verifizieren"
+          "verify_checksum": "Antwort-Prüfsumme verifizieren",
+          "twilight_elevation_threshold": "Dämmerungs-Höhenwinkelschwelle (Grad)"
         }
       }
     },

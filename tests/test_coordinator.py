@@ -11,6 +11,7 @@ from pytest_homeassistant_custom_component.common import MockConfigEntry
 from custom_components.solarmax.const import (
     CONF_HOST,
     CONF_PORT,
+    CONF_TWILIGHT_ELEVATION_THRESHOLD,
     CONF_UPDATE_INTERVAL,
     DOMAIN,
 )
@@ -136,6 +137,35 @@ async def test_is_night_time_dusk_twilight(coordinator):
     # Sun above horizon with no elevation attribute available
     coordinator.hass.states.async_set("sun.sun", "above_horizon", {})
     assert coordinator._is_night_time() is False
+
+
+async def test_is_night_time_configurable_twilight_threshold(
+    hass: HomeAssistant,
+):
+    """Test that the twilight elevation threshold is configurable."""
+    entry = MockConfigEntry(
+        domain=DOMAIN,
+        title="Test Inverter",
+        data={
+            CONF_HOST: "192.168.1.100",
+            CONF_PORT: 12345,
+            CONF_UPDATE_INTERVAL: 30,
+            CONF_TWILIGHT_ELEVATION_THRESHOLD: 10,
+        },
+        entry_id="test_entry_custom_threshold",
+        unique_id="192.168.1.100:12345:custom",
+    )
+    custom_coordinator = SolarmaxCoordinator(hass, entry)
+
+    # Elevation of 7 degrees is below the custom 10-degree threshold, so it
+    # should be treated as night even though it's above the default 5-degree
+    # threshold used elsewhere.
+    hass.states.async_set("sun.sun", "above_horizon", {"elevation": 7.0})
+    assert custom_coordinator._is_night_time() is True
+
+    # Elevation above the custom threshold is still daytime.
+    hass.states.async_set("sun.sun", "above_horizon", {"elevation": 15.0})
+    assert custom_coordinator._is_night_time() is False
 
 
 def test_is_night_time_fallback(coordinator):

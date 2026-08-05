@@ -20,9 +20,11 @@ from .const import (
     CONF_ADDRESS,
     CONF_HOST,
     CONF_PORT,
+    CONF_TWILIGHT_ELEVATION_THRESHOLD,
     CONF_UPDATE_INTERVAL,
     CONF_VERIFY_CHECKSUM,
     DEFAULT_ADDRESS,
+    DEFAULT_TWILIGHT_ELEVATION_THRESHOLD,
     DEFAULT_VERIFY_CHECKSUM,
     DEVICE_KEY_BUILD,
     DEVICE_KEY_FIRMWARE,
@@ -39,12 +41,6 @@ from .solarmax_api import (
 )
 
 _LOGGER = logging.getLogger(__name__)
-
-# Sun elevation (in degrees) below which the inverter is considered to be in
-# the dusk/dawn twilight window and expected to be offline due to
-# insufficient irradiance, even though the sun is technically above the
-# horizon.
-TWILIGHT_ELEVATION_THRESHOLD = 5
 
 
 class SolarmaxCoordinator(DataUpdateCoordinator[dict[str, Any]]):
@@ -71,6 +67,8 @@ class SolarmaxCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             always_update=False,  # Only update when data changes
         )
 
+        self._entry = entry
+
         # Track connection state for better error handling
         self._consecutive_failures = 0
         self._last_successful_update = None
@@ -85,6 +83,13 @@ class SolarmaxCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         self._sw_version: str | None = None
         self._serial_number: str | None = None
 
+    @property
+    def _twilight_elevation_threshold(self) -> float:
+        """Return the configured twilight elevation threshold (degrees)."""
+        return self._entry.data.get(
+            CONF_TWILIGHT_ELEVATION_THRESHOLD, DEFAULT_TWILIGHT_ELEVATION_THRESHOLD
+        )
+
     def _is_night_time(self) -> bool:
         """Check if it's currently night (when the inverter is expected offline)."""
         try:
@@ -96,7 +101,10 @@ class SolarmaxCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 if sun_component.state == "below_horizon":
                     return True
                 elevation = sun_component.attributes.get("elevation")
-                if elevation is not None and elevation < TWILIGHT_ELEVATION_THRESHOLD:
+                if (
+                    elevation is not None
+                    and elevation < self._twilight_elevation_threshold
+                ):
                     return True
                 return False
 

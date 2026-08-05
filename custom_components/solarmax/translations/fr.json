@@ -9,7 +9,8 @@
           "port": "Port",
           "address": "Adresse de l'onduleur (1-249)",
           "update_interval": "Intervalle de mise à jour (secondes)",
-          "device_name": "Nom de l'appareil"
+          "device_name": "Nom de l'appareil",
+          "twilight_elevation_threshold": "Seuil d'élévation crépusculaire (degrés)"
         }
       }
     },
@@ -33,7 +34,8 @@
           "port": "Port",
           "address": "Adresse de l'onduleur (1-249)",
           "update_interval": "Intervalle de mise à jour (secondes)",
-          "device_name": "Nom de l'appareil"
+          "device_name": "Nom de l'appareil",
+          "twilight_elevation_threshold": "Seuil d'élévation crépusculaire (degrés)"
         }
       }
     },

@@ -16,6 +16,7 @@ CONF_ADDRESS = "address"
 CONF_UPDATE_INTERVAL = "update_interval"
 CONF_DEVICE_NAME = "device_name"
 CONF_VERIFY_CHECKSUM = "verify_checksum"
+CONF_TWILIGHT_ELEVATION_THRESHOLD = "twilight_elevation_threshold"
 
 # Default values
 DEFAULT_PORT = 12345
@@ -23,6 +24,11 @@ DEFAULT_ADDRESS = 1
 DEFAULT_UPDATE_INTERVAL = 30
 DEFAULT_DEVICE_NAME = "Solarmax Inverter"
 DEFAULT_VERIFY_CHECKSUM = True
+# Sun elevation (in degrees) below which the inverter is considered to be in
+# the dusk/dawn twilight window and expected to be offline due to
+# insufficient irradiance, even though the sun is technically above the
+# horizon.
+DEFAULT_TWILIGHT_ELEVATION_THRESHOLD = 5
 
 # Static device-identification MaxComm keys (queried once for device info)
 DEVICE_KEY_TYPE = "TYP"  # device type / model identifier
