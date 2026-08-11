@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.3.3] - 2026-08-11
+
+### Added
+- **Configurable twilight elevation threshold**: the sun elevation (in degrees) below which the inverter is expected to be offline during dusk/dawn can now be adjusted via the integration's config/options flow instead of being hardcoded, with matching documentation in the README, Fixes #20.
+
 ## [1.3.2] - 2026-08-03
 
 ### Fixed

@@ -20,9 +20,11 @@ from .const import (
     CONF_ADDRESS,
     CONF_HOST,
     CONF_PORT,
+    CONF_TWILIGHT_ELEVATION_THRESHOLD,
     CONF_UPDATE_INTERVAL,
     CONF_VERIFY_CHECKSUM,
     DEFAULT_ADDRESS,
+    DEFAULT_TWILIGHT_ELEVATION_THRESHOLD,
     DEFAULT_VERIFY_CHECKSUM,
     DEVICE_KEY_BUILD,
     DEVICE_KEY_FIRMWARE,
@@ -65,6 +67,8 @@ class SolarmaxCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             always_update=False,  # Only update when data changes
         )
 
+        self._entry = entry
+
         # Track connection state for better error handling
         self._consecutive_failures = 0
         self._last_successful_update = None
@@ -79,6 +83,13 @@ class SolarmaxCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         self._sw_version: str | None = None
         self._serial_number: str | None = None
 
+    @property
+    def _twilight_elevation_threshold(self) -> float:
+        """Return the configured twilight elevation threshold (degrees)."""
+        return self._entry.data.get(
+            CONF_TWILIGHT_ELEVATION_THRESHOLD, DEFAULT_TWILIGHT_ELEVATION_THRESHOLD
+        )
+
     def _is_night_time(self) -> bool:
         """Check if it's currently night (when the inverter is expected offline)."""
         try:
@@ -87,7 +98,15 @@ class SolarmaxCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             # Get sun component if available
             sun_component = self.hass.states.get("sun.sun")
             if sun_component:
-                return sun_component.state == "below_horizon"
+                if sun_component.state == "below_horizon":
+                    return True
+                elevation = sun_component.attributes.get("elevation")
+                if (
+                    elevation is not None
+                    and elevation < self._twilight_elevation_threshold
+                ):
+                    return True
+                return False
 
             # Fallback: simple time-based check (between 20:00 and 06:00)
             current_hour = now.hour

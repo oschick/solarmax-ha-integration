@@ -130,6 +130,13 @@ The integration can be configured through the Home Assistant UI:
    - **Update Interval**: How often to poll data (default: 30 seconds)
    - **Device Name**: Friendly name for your inverter
    - **Verify response checksum**: Validate CRC on inverter responses (default: enabled)
+   - **Twilight elevation threshold**: Sun elevation (degrees) below which the inverter is expected to be offline (default: 5)
+
+### Twilight Elevation Threshold
+
+During dusk and dawn, the sun may technically be above the horizon while irradiance is still too low for the inverter to operate. The integration treats the inverter as expected to be offline while the sun's elevation is below this configurable threshold, avoiding false "unavailable" warnings during these twilight periods.
+
+If your inverter starts up later or shuts down earlier relative to sunrise/sunset than expected, adjust this value (0-90 degrees) via **Configure** on the integration.
 
 ### Checksum Verification
 

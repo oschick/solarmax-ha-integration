@@ -16,11 +16,13 @@ from .const import (
     CONF_DEVICE_NAME,
     CONF_HOST,
     CONF_PORT,
+    CONF_TWILIGHT_ELEVATION_THRESHOLD,
     CONF_UPDATE_INTERVAL,
     CONF_VERIFY_CHECKSUM,
     DEFAULT_ADDRESS,
     DEFAULT_DEVICE_NAME,
     DEFAULT_PORT,
+    DEFAULT_TWILIGHT_ELEVATION_THRESHOLD,
     DEFAULT_UPDATE_INTERVAL,
     DEFAULT_VERIFY_CHECKSUM,
     DOMAIN,
@@ -38,6 +40,7 @@ _DEFAULT_VALUES: dict[str, Any] = {
     CONF_UPDATE_INTERVAL: DEFAULT_UPDATE_INTERVAL,
     CONF_DEVICE_NAME: DEFAULT_DEVICE_NAME,
     CONF_VERIFY_CHECKSUM: DEFAULT_VERIFY_CHECKSUM,
+    CONF_TWILIGHT_ELEVATION_THRESHOLD: DEFAULT_TWILIGHT_ELEVATION_THRESHOLD,
 }
 
 
@@ -59,6 +62,10 @@ def _build_schema(values: dict[str, Any]) -> vol.Schema:
             vol.Optional(
                 CONF_VERIFY_CHECKSUM, default=values[CONF_VERIFY_CHECKSUM]
             ): bool,
+            vol.Optional(
+                CONF_TWILIGHT_ELEVATION_THRESHOLD,
+                default=values[CONF_TWILIGHT_ELEVATION_THRESHOLD],
+            ): vol.All(vol.Coerce(float), vol.Range(min=0, max=90)),
         }
     )
 
@@ -126,6 +133,10 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 "port": "Communication port (usually 12345)",
                 "update_interval": "How often to poll for data (seconds)",
                 "device_name": "Friendly name for this inverter",
+                "twilight_elevation_threshold": (
+                    "Sun elevation (degrees) below which the inverter is "
+                    "expected to be offline"
+                ),
             },
         )
 
