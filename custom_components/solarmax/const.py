@@ -1,5 +1,7 @@
 """Constants for the Solarmax Inverter integration."""
 
+from enum import StrEnum
+
 from homeassistant.components.sensor import (
     SensorDeviceClass,
     SensorEntityDescription,
@@ -17,6 +19,7 @@ CONF_UPDATE_INTERVAL = "update_interval"
 CONF_DEVICE_NAME = "device_name"
 CONF_VERIFY_CHECKSUM = "verify_checksum"
 CONF_TWILIGHT_ELEVATION_THRESHOLD = "twilight_elevation_threshold"
+CONF_NIGHT_KEEP_VALUES = "night_keep_values"
 
 # Default values
 DEFAULT_PORT = 12345
@@ -29,6 +32,7 @@ DEFAULT_VERIFY_CHECKSUM = True
 # insufficient irradiance, even though the sun is technically above the
 # horizon.
 DEFAULT_TWILIGHT_ELEVATION_THRESHOLD = 5
+DEFAULT_NIGHT_KEEP_VALUES = False
 
 # Static device-identification MaxComm keys (queried once for device info)
 DEVICE_KEY_TYPE = "TYP"  # device type / model identifier
@@ -746,3 +750,40 @@ SENSOR_TYPES: tuple[SensorEntityDescription, ...] = (
         entity_category=EntityCategory.DIAGNOSTIC,
     ),
 )
+
+
+class NightPolicy(StrEnum):
+    """What a sensor reports while the inverter is offline overnight.
+
+    Only consulted when the user enables CONF_NIGHT_KEEP_VALUES; the default
+    is UNAVAILABLE, which reproduces the integration's original behaviour.
+    """
+
+    UNAVAILABLE = "unavailable"
+    ZERO = "zero"
+    HOLD = "hold"
+    HOLD_UNTIL_MIDNIGHT = "hold_until_midnight"
+
+
+# Hand-assigned per key: device_class cannot derive this. UDC/UD01-03 are DC
+# string voltages and really are ~0 V in darkness, while UL1-3 are AC grid
+# voltages that stay near 230 V — same device_class, opposite correct answers.
+# Keys absent from this table default to UNAVAILABLE.
+NIGHT_POLICY: dict[str, NightPolicy] = {
+    # No production at night: power, current, and DC-side voltage are truly 0.
+    **dict.fromkeys(("PAC", "PDC", "PD01", "PD02", "PD03", "PRL"), NightPolicy.ZERO),
+    **dict.fromkeys(
+        ("IDC", "ID01", "ID02", "ID03", "IL1", "IL2", "IL3"), NightPolicy.ZERO
+    ),
+    **dict.fromkeys(("UDC", "UD01", "UD02", "UD03"), NightPolicy.ZERO),
+    # Cumulative counters must never regress; zeroing one reads as a meter
+    # reset to HA's statistics engine.
+    **dict.fromkeys(("KMT", "KYR", "KT0", "KHR", "CAC"), NightPolicy.HOLD),
+    # Historical totals and static configuration reads never change at night.
+    **dict.fromkeys(("KLD", "KLM", "KLY"), NightPolicy.HOLD),
+    **dict.fromkeys(("PIN", "ULH", "ULL", "TNH", "TNL"), NightPolicy.HOLD),
+    # An alarm that was live at dusk stays visible through the night.
+    "SAL": NightPolicy.HOLD,
+    # The inverter resets its daily counter at midnight, so we do too.
+    "KDY": NightPolicy.HOLD_UNTIL_MIDNIGHT,
+}
