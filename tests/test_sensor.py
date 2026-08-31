@@ -232,3 +232,97 @@ def test_no_invalid_device_state_class_combinations():
             assert description.native_unit_of_measurement is None, (
                 f"{description.key}: enum sensors must not have a unit"
             )
+
+
+@pytest.fixture
+def night_entry(mock_config_entry):
+    """A config entry with the night-keep-values option enabled."""
+    mock_config_entry.data = {**mock_config_entry.data, "night_keep_values": True}
+    return mock_config_entry
+
+
+def _set_night(coordinator):
+    coordinator.last_update_success = False
+    coordinator.is_night_time = True
+    coordinator.is_expected_offline = True
+
+
+def test_zero_policy_sensor_reads_zero_at_night(mock_coordinator, night_entry):
+    """PAC is available and reads 0 at night when the option is on."""
+    _set_night(mock_coordinator)
+
+    sensor = _make_sensor(mock_coordinator, night_entry, "PAC")
+
+    assert sensor.available is True
+    assert sensor.native_value == 0
+
+
+def test_zero_policy_sensor_reads_zero_without_prior_data(
+    mock_coordinator, night_entry
+):
+    """A zero needs no history — it is true whether or not we ever polled."""
+    mock_coordinator.data = {}
+    _set_night(mock_coordinator)
+
+    sensor = _make_sensor(mock_coordinator, night_entry, "PAC")
+
+    assert sensor.available is True
+    assert sensor.native_value == 0
+
+
+def test_hold_policy_sensor_keeps_last_value_at_night(mock_coordinator, night_entry):
+    """KT0 holds the last successful reading rather than going unavailable."""
+    mock_coordinator.data["KT0"] = {"value": 12345, "raw_value": 12345}
+    _set_night(mock_coordinator)
+
+    sensor = _make_sensor(mock_coordinator, night_entry, "KT0")
+
+    assert sensor.available is True
+    assert sensor.native_value == 12345
+
+
+def test_hold_policy_sensor_unavailable_with_nothing_to_hold(
+    mock_coordinator, night_entry
+):
+    """An available sensor reporting `unknown` is worse than an absent one.
+
+    Happens for real when the inverter model does not support the key, so its
+    value never appears in coordinator.data.
+    """
+    _set_night(mock_coordinator)
+
+    sensor = _make_sensor(mock_coordinator, night_entry, "KLM")
+
+    assert sensor.available is False
+
+
+def test_unavailable_policy_sensor_still_unavailable_at_night(
+    mock_coordinator, night_entry
+):
+    """AC grid voltage has no honest night value, so it stays unavailable."""
+    _set_night(mock_coordinator)
+
+    sensor = _make_sensor(mock_coordinator, night_entry, "UL1")
+
+    assert sensor.available is False
+
+
+def test_night_policy_ignored_during_daytime_outage(mock_coordinator, night_entry):
+    """A daytime failure is a real fault and must not be smoothed over."""
+    mock_coordinator.last_update_success = False
+    mock_coordinator.is_night_time = False
+    mock_coordinator.is_expected_offline = False
+    mock_coordinator.consecutive_failures = 9
+
+    sensor = _make_sensor(mock_coordinator, night_entry, "PAC")
+
+    assert sensor.available is False
+
+
+def test_night_policy_ignored_when_option_disabled(mock_coordinator, mock_config_entry):
+    """Default-off installs keep the original behaviour exactly."""
+    _set_night(mock_coordinator)
+
+    sensor = _make_sensor(mock_coordinator, mock_config_entry, "PAC")
+
+    assert sensor.available is False
