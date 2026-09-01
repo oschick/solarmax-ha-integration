@@ -131,6 +131,22 @@ class SolarmaxCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         consecutively failing, so nothing re-reads native_value between dusk
         and dawn. Energy Day depends on noticing midnight, so we push one
         update ourselves.
+
+        That also makes this the *only* state write between dusk and dawn,
+        which is what keeps the night policy safe. In the dawn gap — after
+        the sun clears the twilight threshold but before the inverter
+        answers a poll — _handle_poll_failure clears _is_expected_offline,
+        so the night policy disengages and native_value falls through to
+        the stale value still sitting in coordinator.data. If state were
+        written in that window, a HOLD_UNTIL_MIDNIGHT sensor like KDY would
+        jump from the midnight 0 back up to yesterday's total, and HA reads
+        that rise on a TOTAL_INCREASING sensor as real growth — injecting a
+        phantom day's energy into the Energy dashboard every morning. It
+        cannot happen today only because nothing else writes state there.
+        Any future change that adds a second state-write path in that
+        window — a forced homeassistant.update_entity call, an
+        always_update/availability-polling change, or RestoreSensor work —
+        reopens this hole and needs the same care.
         """
         self.async_update_listeners()
 

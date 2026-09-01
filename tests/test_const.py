@@ -16,8 +16,14 @@ def test_night_policy_keys_all_exist_as_sensors():
     assert set(NIGHT_POLICY) <= set(_SENSOR_BY_KEY)
 
 
-def test_night_policy_never_zeroes_a_cumulative_counter():
-    """Zeroing a TOTAL_INCREASING sensor reads as a meter reset to HA."""
+def test_zero_policy_never_holds_a_cumulative_counter():
+    """Zeroing a TOTAL_INCREASING sensor reads as a meter reset to HA.
+
+    This only covers the ZERO group. KDY is TOTAL_INCREASING and is zeroed
+    too, via HOLD_UNTIL_MIDNIGHT — but that midnight zero mirrors the
+    inverter's own daily counter reset, so HA reading it as a meter reset
+    is correct, not an exception to the rule checked here.
+    """
     for key, policy in NIGHT_POLICY.items():
         if policy is not NightPolicy.ZERO:
             continue

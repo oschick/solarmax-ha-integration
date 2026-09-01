@@ -4,6 +4,7 @@ from datetime import timedelta
 from unittest.mock import Mock
 
 import pytest
+from freezegun import freeze_time
 from homeassistant.components.sensor import SensorDeviceClass, SensorStateClass
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.helpers.entity import EntityCategory
@@ -343,14 +344,15 @@ def test_night_policy_ignored_when_option_disabled(mock_coordinator, mock_config
 
 def test_kdy_holds_before_midnight(mock_coordinator, night_entry):
     """Same local day as the last poll: the day's total still stands."""
-    mock_coordinator.data["KDY"] = {"value": 24.5, "raw_value": 245}
-    mock_coordinator.last_successful_update = dt_util.now()
-    _set_night(mock_coordinator)
+    with freeze_time("2026-01-01 12:00:00"):
+        mock_coordinator.data["KDY"] = {"value": 24.5, "raw_value": 245}
+        mock_coordinator.last_successful_update = dt_util.now()
+        _set_night(mock_coordinator)
 
-    sensor = _make_sensor(mock_coordinator, night_entry, "KDY")
+        sensor = _make_sensor(mock_coordinator, night_entry, "KDY")
 
-    assert sensor.available is True
-    assert sensor.native_value == 24.5
+        assert sensor.available is True
+        assert sensor.native_value == 24.5
 
 
 def test_kdy_reads_zero_after_midnight(mock_coordinator, night_entry):

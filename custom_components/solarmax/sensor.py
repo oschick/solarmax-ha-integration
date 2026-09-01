@@ -73,7 +73,7 @@ class SolarmaxSensor(CoordinatorEntity[SolarmaxCoordinator], SensorEntity):
 
         # Snapshot the option: an options-flow change reloads the entry, so a
         # value read at construction time can never go stale.
-        self._night_keep_values = entry.data.get(
+        self._night_keep_values: bool = entry.data.get(
             CONF_NIGHT_KEEP_VALUES, DEFAULT_NIGHT_KEEP_VALUES
         )
 
