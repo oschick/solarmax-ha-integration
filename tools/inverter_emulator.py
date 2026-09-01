@@ -54,7 +54,7 @@ class InverterState:
     """Holds the current emulated inverter state."""
 
     # Status (SYS) - raw integer code
-    sys: int = 20004  # MPP operation
+    sys: int = 20008  # Netzbetrieb (grid operation) — matches live 7TP2 capture
 
     # Alarm (SAL) - bitmask
     sal: int = 0  # No error
@@ -372,6 +372,16 @@ class SolarmaxEmulator:
         self.running = False
         self._server_socket: socket.socket | None = None
         self._lock = threading.Lock()
+        # Behaviour measured on a live 7TP2 (2026-09-01 probe):
+        self.bound_port: int | None = None  # set after bind (supports port=0)
+        self.idle_timeout: float = 100.0  # peer-closes idle conns ~90-120s
+        self.dark = False  # powered off: swallow everything, answer nothing
+        self._active_client = False  # the real device serves ONE TCP client
+        self._inject: str | None = None  # one-shot failure injection
+        self._pre_dusk: InverterState | None = None
+        self._client_socket: socket.socket | None = None
+        self._client_thread: threading.Thread | None = None
+        self._timer_thread: threading.Thread | None = None
 
     def calculate_checksum(self, data: str) -> str:
         """Calculate the Solarmax protocol checksum."""
@@ -416,6 +426,20 @@ class SolarmaxEmulator:
             return format(raw, "X")
 
     def build_response(self, requested_fields: list[str]) -> str:
+        response = self._build_response_clean(requested_fields)
+        failure, self._inject = self._inject, None
+        if failure == "corrupt_crc":
+            return response[:-5] + "0000}"
+        if failure == "truncate":
+            return response[: max(4, len(response) // 2)]
+        if failure == "empty_data":
+            head, _, _ = response.partition(":")
+            payload = head[1:] + ":"
+            crc = self.calculate_checksum(payload + "|")
+            return "{" + payload + "|" + crc + "}"
+        return response
+
+    def _build_response_clean(self, requested_fields: list[str]) -> str:
         """Build a response message for the requested fields.
 
         Mimics real inverter behavior: if the response exceeds 255 bytes,
@@ -500,28 +524,31 @@ class SolarmaxEmulator:
         """Handle a single client connection."""
         _LOGGER.info(f"Client connected: {client_addr[0]}:{client_addr[1]}")
         try:
-            client_socket.settimeout(10.0)
-            data = client_socket.recv(1024).decode("utf-8", errors="ignore")
-
-            if data:
-                _LOGGER.debug(f"Received: {data}")
+            # Persistent connection, like the real device: serve requests until
+            # the client closes, the idle window elapses (clean FIN), or dark.
+            while self.running:
+                client_socket.settimeout(self.idle_timeout)
+                try:
+                    data = client_socket.recv(1024).decode("utf-8", errors="ignore")
+                except TimeoutError:
+                    _LOGGER.debug(f"Idle window elapsed for {client_addr} -> FIN")
+                    break
+                if not data:
+                    break  # client closed
+                if self.dark:
+                    continue  # powered off: swallow silently, never answer
                 fields = self.parse_request(data)
-
                 if fields:
                     response = self.build_response(fields)
-                    _LOGGER.info(
-                        f"  Request:  {len(fields)} fields: {', '.join(fields)}"
-                    )
                     _LOGGER.debug(f"  Response: {response}")
                     client_socket.send(response.encode("utf-8"))
                 else:
                     _LOGGER.warning(f"  Could not parse request: {data!r}")
-        except TimeoutError:
-            _LOGGER.debug(f"Client {client_addr} timed out")
         except Exception as e:
-            _LOGGER.error(f"Error handling client {client_addr}: {e}")
+            _LOGGER.debug(f"Client {client_addr} ended: {e}")
         finally:
             client_socket.close()
+            self._active_client = False
 
     def start(self):
         """Start the emulator server."""
@@ -536,6 +563,7 @@ class SolarmaxEmulator:
             sys.exit(1)
 
         self._server_socket.listen(5)
+        self.bound_port = self._server_socket.getsockname()[1]
         self.running = True
 
         _LOGGER.info("=" * 60)
@@ -551,23 +579,88 @@ class SolarmaxEmulator:
 
         while self.running:
             try:
+                # Single-client gate: while a client is being served (or the
+                # device is dark), do not accept — queued connections complete
+                # their handshake in the kernel backlog but are never answered,
+                # reproducing the silent-hang lockout measured on the device.
+                if self._active_client or self.dark:
+                    time.sleep(0.05)
+                    continue
                 client_socket, client_addr = self._server_socket.accept()
+                self._active_client = True
+                self._client_socket = client_socket
                 thread = threading.Thread(
                     target=self.handle_client,
                     args=(client_socket, client_addr),
                     daemon=True,
                 )
+                self._client_thread = thread
                 thread.start()
             except TimeoutError:
                 continue
             except OSError:
                 break
 
+    def begin_dusk(self, announce_seconds: float) -> None:
+        """Scripted dusk: announce SYS 20002 with zero power, then go dark.
+
+        Mirrors the live capture: 20008 -> 20002 (PAC=0, PDC=0) for the
+        announcement window (30s-2min naturally), then the device vanishes
+        (every request times out; the drop signature is TIMEOUT, not FIN).
+        """
+        import copy
+
+        with self._lock:
+            self._pre_dusk = copy.copy(self.state)
+            self.state.sys = 20002
+            self.state.pac = 0
+            # The real device still reports a 1-2W residual on PDC while
+            # shutting down (user observation) — never emulate a clean zero.
+            self.state.pdc = 3
+            self.state.pd01 = 0
+            self.state.pd02 = 0
+
+        def _go_dark() -> None:
+            time.sleep(announce_seconds)
+            self.dark = True
+            _LOGGER.info("Emulator: dark (powered off)")
+
+        self._timer_thread = threading.Thread(target=_go_dark, daemon=True)
+        self._timer_thread.start()
+
+    def wake(self) -> None:
+        """Dawn: restore the pre-dusk state and answer again."""
+        with self._lock:
+            if self._pre_dusk is not None:
+                self.state = self._pre_dusk
+                self._pre_dusk = None
+        self.dark = False
+
+    def inject(self, failure: str) -> None:
+        """Poison exactly the next response: corrupt_crc | truncate | empty_data."""
+        if failure not in ("corrupt_crc", "truncate", "empty_data"):
+            raise ValueError(f"unknown failure: {failure}")
+        self._inject = failure
+
     def stop(self):
-        """Stop the emulator server."""
+        """Stop the emulator and join every thread it started.
+
+        Closing the sockets first makes any thread blocked in accept()/recv()
+        raise immediately — a client handler can otherwise sit in recv() for
+        the full idle window, which leaks the thread into the next test.
+        """
         self.running = False
-        if self._server_socket:
-            self._server_socket.close()
+        for sock_attr in ("_client_socket", "_server_socket"):
+            sock = getattr(self, sock_attr, None)
+            if sock is not None:
+                try:
+                    sock.close()
+                except OSError:
+                    pass
+        for thread_attr in ("_client_thread", "_timer_thread"):
+            thread = getattr(self, thread_attr, None)
+            if thread is not None and thread.is_alive():
+                thread.join(timeout=5)
         _LOGGER.info("Emulator stopped.")
 
     def update_state(self, **kwargs):
