@@ -12,6 +12,7 @@ from custom_components.solarmax import async_setup_entry, async_unload_entry
 from custom_components.solarmax.const import (
     CONF_DEVICE_NAME,
     CONF_HOST,
+    CONF_NIGHT_KEEP_VALUES,
     CONF_PORT,
     CONF_UPDATE_INTERVAL,
     DOMAIN,
@@ -120,6 +121,56 @@ async def test_setup_entry_connection_failed_logs_debug_at_night(
         and "Failed to connect to inverter during setup" in record.message
         for record in caplog.records
     )
+
+
+@patch("custom_components.solarmax.async_track_time_change")
+@patch("custom_components.solarmax.SolarmaxCoordinator")
+async def test_setup_entry_registers_midnight_listener_when_night_keep_values_enabled(
+    mock_coordinator_class, mock_track_time_change, hass: HomeAssistant
+):
+    """night_keep_values=True must register the local-midnight callback."""
+    entry = MockConfigEntry(
+        domain=DOMAIN,
+        title="Test Inverter",
+        data={
+            CONF_HOST: "192.168.1.100",
+            CONF_PORT: 12345,
+            CONF_DEVICE_NAME: "Test Inverter",
+            CONF_UPDATE_INTERVAL: 30,
+            CONF_NIGHT_KEEP_VALUES: True,
+        },
+        entry_id="test_entry_night_keep_values",
+        unique_id="192.168.1.100:12345:night",
+    )
+    mock_coordinator = MagicMock()
+    mock_coordinator.async_config_entry_first_refresh = AsyncMock()
+    mock_coordinator_class.return_value = mock_coordinator
+
+    with patch.object(hass.config_entries, "async_forward_entry_setups"):
+        await async_setup_entry(hass, entry)
+
+    mock_track_time_change.assert_called_once_with(
+        hass, mock_coordinator.async_handle_midnight, hour=0, minute=0, second=0
+    )
+
+
+@patch("custom_components.solarmax.async_track_time_change")
+@patch("custom_components.solarmax.SolarmaxCoordinator")
+async def test_setup_entry_skips_midnight_listener_by_default(
+    mock_coordinator_class,
+    mock_track_time_change,
+    hass: HomeAssistant,
+    mock_config_entry,
+):
+    """night_keep_values absent (default False) must not register the callback."""
+    mock_coordinator = MagicMock()
+    mock_coordinator.async_config_entry_first_refresh = AsyncMock()
+    mock_coordinator_class.return_value = mock_coordinator
+
+    with patch.object(hass.config_entries, "async_forward_entry_setups"):
+        await async_setup_entry(hass, mock_config_entry)
+
+    mock_track_time_change.assert_not_called()
 
 
 async def test_unload_entry_success(hass: HomeAssistant, mock_config_entry):
