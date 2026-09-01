@@ -10,7 +10,7 @@ from homeassistant.config_entries import ConfigEntry
 from homeassistant.helpers.entity import EntityCategory
 from homeassistant.util import dt as dt_util
 
-from custom_components.solarmax.const import SENSOR_TYPES
+from custom_components.solarmax.const import DAYTIME_FAILURE_GRACE, SENSOR_TYPES
 from custom_components.solarmax.coordinator import SolarmaxCoordinator
 from custom_components.solarmax.sensor import SolarmaxSensor
 
@@ -121,11 +121,23 @@ def test_other_sensor_unavailable_after_many_failures(
 ):
     """Test other sensors become unavailable after many day-time failures."""
     mock_coordinator.last_update_success = False
-    mock_coordinator.consecutive_failures = 6
+    mock_coordinator.consecutive_failures = DAYTIME_FAILURE_GRACE + 1
 
     sensor = _make_sensor(mock_coordinator, mock_config_entry, "PAC")
 
     assert sensor.available is False
+
+
+def test_other_sensor_available_within_failure_grace(
+    mock_coordinator, mock_config_entry
+):
+    """Inside the grace window the last reading still stands, to ride out blips."""
+    mock_coordinator.last_update_success = False
+    mock_coordinator.consecutive_failures = DAYTIME_FAILURE_GRACE
+
+    sensor = _make_sensor(mock_coordinator, mock_config_entry, "PAC")
+
+    assert sensor.available is True
 
 
 def test_sys_sensor_shows_connection_failed_when_coordinator_fails(

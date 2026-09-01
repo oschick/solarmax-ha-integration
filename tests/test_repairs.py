@@ -76,3 +76,32 @@ async def test_async_create_fix_flow():
     # Test unknown issue (fallback)
     flow = await async_create_fix_flow(hass, "unknown_issue", {})
     assert flow is not None  # Should return ConfirmRepairFlow
+
+
+@pytest.mark.asyncio
+async def test_connection_repair_flow_survives_null_data():
+    """HA overwrites flow.data from issue.data after construction.
+
+    homeassistant/components/repairs/issue_handler.py assigns `flow.data =
+    issue.data` after async_create_fix_flow returns, so the `data or {}` guard
+    there does not protect us — a None reaches _placeholders() and used to
+    raise AttributeError, surfacing as a 500 when the user opened the repair.
+    """
+    flow = SolarmaxConnectionRepairFlow({})
+    flow.data = None
+
+    placeholders = flow._placeholders()
+
+    assert placeholders["host"] == "unknown"
+    assert placeholders["port"] == "unknown"
+
+
+@pytest.mark.asyncio
+async def test_configuration_repair_flow_survives_null_data():
+    """Same null-data path for the configuration repair flow."""
+    flow = SolarmaxConfigurationRepairFlow({})
+    flow.data = None
+
+    placeholders = flow._placeholders()
+
+    assert placeholders["host"] == "unknown"

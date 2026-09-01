@@ -10,6 +10,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 - **Configurable night-time sensor behavior**: an opt-in `Keep sensor values overnight` option keeps sensors meaningful while the inverter sleeps — production readings report 0, cumulative counters and static config reads hold their last value, and AC grid voltage/frequency and temperatures still go unavailable because they have no honest night-time value. Synthesised values are flagged with a `night_value_source` attribute. Disabled by default, so existing installs are unchanged.
 
+### Fixed
+- **Repair dialog no longer returns a 500.** The connection repair issue was created without a `data` payload, and Home Assistant assigns `flow.data` from it after the flow is constructed — so opening the repair raised `AttributeError: 'NoneType' object has no attribute 'get'`. The issue now carries its context, and the flow tolerates a null payload.
+
+### Changed
+- **Sensors go unavailable faster during a day-time outage.** The grace window dropped from 5 consecutive failures to 2, so a dead inverter surfaces in about a minute instead of four or five. A single poll already makes several connection attempts with back-off, so the wide outer window was redundant.
+
 ### Changed
 - **Minimum Home Assistant version is now 2024.8.0.** The manifest previously declared 2023.1.0, but the integration has required `ConfigEntry.runtime_data` (Home Assistant 2024.6) for some time and would not have started on the version it claimed to support.
 

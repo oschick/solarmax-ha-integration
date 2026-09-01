@@ -227,6 +227,11 @@ class SolarmaxCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             )
 
             if failures == 4 and not self._repair_issue_raised:
+                issue_context = {
+                    "host": self.api.host,
+                    "port": str(self.api.port),
+                    "failures": str(failures),
+                }
                 async_create_issue(
                     self.hass,
                     DOMAIN,
@@ -235,11 +240,11 @@ class SolarmaxCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                     is_persistent=False,
                     severity=IssueSeverity.ERROR,
                     translation_key="connection_issues",
-                    translation_placeholders={
-                        "host": self.api.host,
-                        "port": str(self.api.port),
-                        "failures": str(failures),
-                    },
+                    translation_placeholders=issue_context,
+                    # Home Assistant assigns flow.data from issue.data after
+                    # async_create_fix_flow returns; without this the repair
+                    # dialog receives None and 500s when the user opens it.
+                    data=issue_context,
                 )
                 self._repair_issue_raised = True
 

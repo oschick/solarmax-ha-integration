@@ -48,10 +48,11 @@ class SolarmaxConnectionRepairFlow(_BaseSolarmaxRepairFlow):
     """Handler for Solarmax connection repair flow."""
 
     def _placeholders(self) -> dict[str, str]:
+        data = self.data or {}
         return {
-            "host": self.data.get("host", "unknown"),
-            "port": str(self.data.get("port", "unknown")),
-            "failures": str(self.data.get("failures", 0)),
+            "host": data.get("host", "unknown"),
+            "port": str(data.get("port", "unknown")),
+            "failures": str(data.get("failures", 0)),
         }
 
 
@@ -59,9 +60,10 @@ class SolarmaxConfigurationRepairFlow(_BaseSolarmaxRepairFlow):
     """Handler for Solarmax configuration repair flow."""
 
     def _placeholders(self) -> dict[str, str]:
+        data = self.data or {}
         return {
-            "host": self.data.get("host", "unknown"),
-            "issue": self.data.get("issue", "configuration issue"),
+            "host": data.get("host", "unknown"),
+            "issue": data.get("issue", "configuration issue"),
         }
 
 

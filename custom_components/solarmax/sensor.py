@@ -15,6 +15,7 @@ from homeassistant.util import dt as dt_util
 from .const import (
     CONF_DEVICE_NAME,
     CONF_NIGHT_KEEP_VALUES,
+    DAYTIME_FAILURE_GRACE,
     DEFAULT_NIGHT_KEEP_VALUES,
     DOMAIN,
     NIGHT_POLICY,
@@ -294,4 +295,4 @@ class SolarmaxSensor(CoordinatorEntity[SolarmaxCoordinator], SensorEntity):
         if self.coordinator.is_expected_offline or self.coordinator.is_night_time:
             return False
 
-        return self.coordinator.consecutive_failures <= 5
+        return self.coordinator.consecutive_failures <= DAYTIME_FAILURE_GRACE

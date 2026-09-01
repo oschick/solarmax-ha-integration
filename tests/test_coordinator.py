@@ -322,6 +322,13 @@ async def test_repair_issue_created_after_sustained_daytime_failures(coordinator
         "port": "12345",
         "failures": "4",
     }
+    # HA assigns flow.data from issue.data; leaving it None crashes the repair
+    # dialog with a 500 when the user opens it.
+    assert issue.data == {
+        "host": "192.168.1.100",
+        "port": "12345",
+        "failures": "4",
+    }
 
 
 async def test_repair_issue_deleted_after_recovery(coordinator, hass):

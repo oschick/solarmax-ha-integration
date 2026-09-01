@@ -32,6 +32,12 @@ DEFAULT_VERIFY_CHECKSUM = True
 # insufficient irradiance, even though the sun is technically above the
 # horizon.
 DEFAULT_TWILIGHT_ELEVATION_THRESHOLD = 5
+
+# Consecutive day-time poll failures tolerated before sensors go unavailable.
+# One coordinator poll already makes DATA_RETRIES connection attempts with
+# back-off, so a single failure is not a blip — the outer window only needs to
+# be wide enough to survive one bad round, not five.
+DAYTIME_FAILURE_GRACE = 2
 DEFAULT_NIGHT_KEEP_VALUES = False
 
 # Static device-identification MaxComm keys (queried once for device info)
