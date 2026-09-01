@@ -84,7 +84,6 @@ class SolarmaxCoordinator(DataUpdateCoordinator[EngineSnapshot]):
         )
 
         self._repair_issue_id = f"connection_issues_{entry.entry_id}"
-        self._repair_issue_raised = False
 
     @property
     def engine(self) -> ConnectionEngine:
@@ -210,38 +209,56 @@ class SolarmaxCoordinator(DataUpdateCoordinator[EngineSnapshot]):
         return self._configured_interval
 
     async def _async_handle_snapshot(self, snapshot: EngineSnapshot) -> None:
-        """Create or clear the connection repair issue for sustained faults."""
+        """Log state transitions and create/clear the connection repair issue.
+
+        `self.data` is still the *previous* snapshot here — the base class
+        only assigns `self.data = await self._async_update_data()` after
+        this whole method has returned — so comparing against it gives the
+        actual state transition, not a comparison against itself.
+        """
+        previous_state = self.data.state if self.data else None
+        if snapshot.state is not previous_state:
+            if snapshot.state is EngineState.OFFLINE_FAULT:
+                _LOGGER.warning("Inverter unreachable during daytime (fault)")
+            else:
+                _LOGGER.info(
+                    "Connection state %s -> %s", previous_state, snapshot.state
+                )
+
         if snapshot.state is EngineState.OFFLINE_FAULT and snapshot.fault_since:
             fault_seconds = (dt_util.utcnow() - snapshot.fault_since).total_seconds()
             if fault_seconds >= FAULT_REPAIR_SECONDS:
-                if not self._repair_issue_raised:
-                    issue_context: dict[str, str] = {
-                        "host": self._entry.data[CONF_HOST],
-                        "port": str(self._entry.data[CONF_PORT]),
-                        "minutes": str(int(fault_seconds // 60)),
-                    }
-                    async_create_issue(
-                        self.hass,
-                        DOMAIN,
-                        self._repair_issue_id,
-                        is_fixable=True,
-                        is_persistent=False,
-                        severity=IssueSeverity.ERROR,
-                        translation_key="connection_issues",
-                        translation_placeholders=issue_context,
-                        # async_create_issue's `data` param is typed broader
-                        # (dict[str, str | int | float | None]) than
-                        # translation_placeholders' dict[str, str]; mypy
-                        # treats dict as invariant, so a plain dict[str, str]
-                        # isn't accepted for `data` without this cast even
-                        # though every value here is already a str.
-                        data=cast("dict[str, str | int | float | None]", issue_context),
-                    )
-                    self._repair_issue_raised = True
+                # No "already raised" guard: `minutes` must keep refreshing
+                # for the life of the fault. async_create_issue no-ops (no
+                # new update event) when the replacement issue is identical
+                # to the one already registered, so recomputing every poll
+                # is cheap and only actually updates the dialog when the
+                # minute count ticks over.
+                issue_context: dict[str, str] = {
+                    "host": self._entry.data[CONF_HOST],
+                    "port": str(self._entry.data[CONF_PORT]),
+                    "minutes": str(int(fault_seconds // 60)),
+                }
+                async_create_issue(
+                    self.hass,
+                    DOMAIN,
+                    self._repair_issue_id,
+                    is_fixable=True,
+                    is_persistent=False,
+                    severity=IssueSeverity.ERROR,
+                    translation_key="connection_issues",
+                    translation_placeholders=issue_context,
+                    # async_create_issue's `data` param is typed broader
+                    # (dict[str, str | int | float | None]) than
+                    # translation_placeholders' dict[str, str]; mypy
+                    # treats dict as invariant, so a plain dict[str, str]
+                    # isn't accepted for `data` without this cast even
+                    # though every value here is already a str.
+                    data=cast("dict[str, str | int | float | None]", issue_context),
+                )
                 return
 
         async_delete_issue(self.hass, DOMAIN, self._repair_issue_id)
-        self._repair_issue_raised = False
 
     def _static_raw(self, key: str) -> Any:
         """Return the raw_value for a static device-info key, or None."""

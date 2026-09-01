@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 from datetime import datetime, timedelta
 from unittest.mock import MagicMock, patch
 
@@ -176,6 +177,64 @@ async def test_repair_issue_payload_has_host_port_minutes(coordinator, hass):
     assert set(issue.data) == {"host", "port", "minutes"}
     assert issue.translation_placeholders == issue.data
     assert issue.data["port"] == "12345"
+    assert issue.data["minutes"] == "6"  # (300 + 60) // 60
+
+
+async def test_repair_minutes_refreshes_across_polls(coordinator, hass):
+    """`minutes` must keep refreshing for the life of the fault, not freeze
+    at whatever value was computed when the issue was first raised — a
+    2-hour outage should not still show the created-at value."""
+    fault_since = dt_util.utcnow() - timedelta(seconds=310)
+    await coordinator._async_handle_snapshot(
+        _snap(EngineState.OFFLINE_FAULT, fault_since=fault_since)
+    )
+    issue = ir.async_get(hass).async_get_issue(DOMAIN, coordinator._repair_issue_id)
+    assert issue is not None
+    assert issue.data["minutes"] == "5"  # 310 // 60
+
+    # Same fault, further aged: the coordinator must recompute, not reuse
+    # the value captured on the first call.
+    fault_since = dt_util.utcnow() - timedelta(seconds=7300)
+    await coordinator._async_handle_snapshot(
+        _snap(EngineState.OFFLINE_FAULT, fault_since=fault_since)
+    )
+    issue = ir.async_get(hass).async_get_issue(DOMAIN, coordinator._repair_issue_id)
+    assert issue is not None
+    assert issue.data["minutes"] == "121"  # 7300 // 60
+
+
+# --- state-transition logging: the replacement for the old ERROR spew -----
+
+
+async def test_state_transition_logging(coordinator, caplog):
+    """Entering FAULT logs exactly one WARNING; any other transition logs
+    INFO; a repeated same-state snapshot logs nothing. This is now the only
+    trail of connection state changes, since _async_handle_snapshot never
+    raises."""
+    logger_name = "custom_components.solarmax.coordinator"
+    caplog.set_level(logging.INFO, logger=logger_name)
+
+    def records() -> list[logging.LogRecord]:
+        return [r for r in caplog.records if r.name == logger_name]
+
+    # No previous data (fresh coordinator) -> OFFLINE_FAULT: one WARNING.
+    assert coordinator.data is None
+    await coordinator._async_handle_snapshot(_snap(EngineState.OFFLINE_FAULT))
+    assert len(records()) == 1
+    assert records()[0].levelname == "WARNING"
+    coordinator.data = _snap(EngineState.OFFLINE_FAULT)
+    caplog.clear()
+
+    # OFFLINE_FAULT -> OFFLINE_EXPECTED: one INFO.
+    await coordinator._async_handle_snapshot(_snap(EngineState.OFFLINE_EXPECTED))
+    assert len(records()) == 1
+    assert records()[0].levelname == "INFO"
+    coordinator.data = _snap(EngineState.OFFLINE_EXPECTED)
+    caplog.clear()
+
+    # OFFLINE_EXPECTED -> OFFLINE_EXPECTED (no change): nothing logged.
+    await coordinator._async_handle_snapshot(_snap(EngineState.OFFLINE_EXPECTED))
+    assert records() == []
 
 
 # --- last_successful_update: local-time semantics (KDY midnight reset) -----
@@ -332,7 +391,7 @@ async def test_device_info_props_from_snapshot_values(coordinator):
             "DIN": {"value": 123456, "raw_value": 123456},
         },
     )
-    assert coordinator.device_model is not None
+    assert coordinator.device_model == "SolarMax 7TP2"
     assert coordinator.sw_version == "314 (build 5)"
     assert coordinator.serial_number == "123456"
 
