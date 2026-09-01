@@ -12,7 +12,10 @@
           "device_name": "Device name",
           "verify_checksum": "Verify response checksum",
           "night_keep_values": "Keep sensor values overnight",
-          "twilight_elevation_threshold": "Sun elevation below which an unannounced disconnect counts as expected (also starts fast dawn polling)"
+          "twilight_elevation_threshold": "Twilight elevation threshold (degrees)"
+        },
+        "data_description": {
+          "twilight_elevation_threshold": "Sun elevation below which an unannounced disconnect counts as expected (also starts fast dawn polling)."
         }
       }
     },
@@ -39,7 +42,10 @@
           "device_name": "Device name",
           "verify_checksum": "Verify response checksum",
           "night_keep_values": "Keep sensor values overnight",
-          "twilight_elevation_threshold": "Sun elevation below which an unannounced disconnect counts as expected (also starts fast dawn polling)"
+          "twilight_elevation_threshold": "Twilight elevation threshold (degrees)"
+        },
+        "data_description": {
+          "twilight_elevation_threshold": "Sun elevation below which an unannounced disconnect counts as expected (also starts fast dawn polling)."
         }
       }
     },

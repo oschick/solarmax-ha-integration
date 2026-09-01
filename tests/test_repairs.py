@@ -196,3 +196,31 @@ def test_sys_state_keys_match_sys_options():
         content = _load_translation(path)
         sys_state_keys = set(content["entity"]["sensor"]["sys"]["state"])
         assert sys_state_keys == set(SYS_OPTIONS), path.name
+
+
+def test_translation_files_share_data_description_keys():
+    """Every translation file's `data_description` blocks (config.step.user
+    and options.step.init) must declare the same fields as each other, and
+    only fields that also exist in `data` -- HA renders `data_description`
+    text next to the matching `data` field, so a stray or missing key
+    silently does nothing rather than erroring."""
+    loaded = {path.name: _load_translation(path) for path in _TRANSLATION_PATHS}
+
+    for step_path in (("config", "step", "user"), ("options", "step", "init")):
+        reference_description_keys = None
+        for name, content in loaded.items():
+            step = content
+            for part in step_path:
+                step = step[part]
+            data_keys = set(step["data"])
+            description_keys = set(step.get("data_description", {}))
+
+            assert description_keys, (
+                f"{name}: {'.'.join(step_path)} has no data_description"
+            )
+            assert description_keys <= data_keys, name
+
+            if reference_description_keys is None:
+                reference_description_keys = description_keys
+            else:
+                assert description_keys == reference_description_keys, name

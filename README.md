@@ -190,7 +190,7 @@ The integration uses **local polling** via the **MaxComm protocol** to retrieve 
 - **Protocol**: MaxComm (proprietary SolarMax TCP protocol, documented August 2022)
 - **Update Method**: One persistent TCP connection (default port 12345), reused across polls rather than reconnecting every cycle
 - **Update Frequency**: Configurable during the day (default: 30 seconds); adaptive while offline — see [Connection States & Offline Detection](#connection-states--offline-detection)
-- **Retry Logic**: One retry per poll, only for a corrupted/truncated response (line noise); a timeout or a closed connection is never retried within the same poll
+- **Retry Logic**: One retry per poll for a corrupted/truncated response (line noise); a peer-closed connection is transparently reconnected and the request resent once; a timeout is never retried
 - **Checksum Verification**: Validates response CRC to detect corrupt data
 
 ### Connection States & Offline Detection
@@ -245,7 +245,7 @@ Request/response format:
 The integration queries all supported data keys in a single request. Keys not recognized by the inverter are simply omitted from the response (graceful degradation).
 
 ### Update Process
-1. On the first poll (or the first poll after re-arming at dusk/dawn), the integration opens its one TCP connection and requests the static/device keys once; every poll after that reuses the same connection
+1. On the first poll (or the first poll after re-arming at dusk/dawn), the integration opens its one TCP connection and requests the static/device keys once; every poll after that reuses the same connection, transparently reconnecting and resending once if the inverter has closed it (e.g. after the ~100s idle FIN)
 2. Builds a MaxComm protocol request with the monitored data keys and sends it
 3. Receives and validates the response (CRC checksum verification), retrying once if the frame is corrupted or truncated
 4. Parses hex-encoded values and applies network variable scaling

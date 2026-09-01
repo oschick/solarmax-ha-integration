@@ -12,7 +12,10 @@
           "device_name": "Gerätename",
           "verify_checksum": "Antwort-Prüfsumme verifizieren",
           "night_keep_values": "Sensorwerte über Nacht beibehalten",
-          "twilight_elevation_threshold": "Sonnenhöhenwinkel, unterhalb dessen eine unangekündigte Verbindungstrennung als erwartet gilt (startet außerdem die schnellere Abfrage in der Dämmerung)"
+          "twilight_elevation_threshold": "Dämmerungs-Höhenwinkelschwelle (Grad)"
+        },
+        "data_description": {
+          "twilight_elevation_threshold": "Sonnenhöhenwinkel, unterhalb dessen eine unangekündigte Verbindungstrennung als erwartet gilt (startet außerdem die schnellere Abfrage in der Dämmerung)."
         }
       }
     },
@@ -39,7 +42,10 @@
           "device_name": "Gerätename",
           "verify_checksum": "Antwort-Prüfsumme verifizieren",
           "night_keep_values": "Sensorwerte über Nacht beibehalten",
-          "twilight_elevation_threshold": "Sonnenhöhenwinkel, unterhalb dessen eine unangekündigte Verbindungstrennung als erwartet gilt (startet außerdem die schnellere Abfrage in der Dämmerung)"
+          "twilight_elevation_threshold": "Dämmerungs-Höhenwinkelschwelle (Grad)"
+        },
+        "data_description": {
+          "twilight_elevation_threshold": "Sonnenhöhenwinkel, unterhalb dessen eine unangekündigte Verbindungstrennung als erwartet gilt (startet außerdem die schnellere Abfrage in der Dämmerung)."
         }
       }
     },

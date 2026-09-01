@@ -12,7 +12,10 @@
           "device_name": "Nom de l'appareil",
           "verify_checksum": "Vérifier le checksum de la réponse",
           "night_keep_values": "Conserver les valeurs des capteurs la nuit",
-          "twilight_elevation_threshold": "Élévation du soleil en dessous de laquelle une déconnexion non annoncée est considérée comme attendue (déclenche également l'interrogation rapide à l'aube)"
+          "twilight_elevation_threshold": "Seuil d'élévation crépusculaire (degrés)"
+        },
+        "data_description": {
+          "twilight_elevation_threshold": "Élévation du soleil en dessous de laquelle une déconnexion non annoncée est considérée comme attendue (déclenche également l'interrogation rapide à l'aube)."
         }
       }
     },
@@ -37,9 +40,12 @@
           "address": "Adresse de l'onduleur (1-249)",
           "update_interval": "Intervalle de mise à jour (secondes)",
           "device_name": "Nom de l'appareil",
-          "twilight_elevation_threshold": "Élévation du soleil en dessous de laquelle une déconnexion non annoncée est considérée comme attendue (déclenche également l'interrogation rapide à l'aube)",
+          "twilight_elevation_threshold": "Seuil d'élévation crépusculaire (degrés)",
           "verify_checksum": "Vérifier la somme de contrôle de la réponse",
           "night_keep_values": "Conserver les valeurs des capteurs la nuit"
+        },
+        "data_description": {
+          "twilight_elevation_threshold": "Élévation du soleil en dessous de laquelle une déconnexion non annoncée est considérée comme attendue (déclenche également l'interrogation rapide à l'aube)."
         }
       }
     },
