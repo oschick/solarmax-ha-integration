@@ -151,7 +151,7 @@ def test_rapid_polls(host: str, port: int, address: int, count: int = 10) -> dic
     errors: list[str] = []
     try:
         sock = connect(host, port)
-        for i in range(count):
+        for _i in range(count):
             _, rt = poll_on(sock, address, POLL_FIELDS)
             times.append(rt)
         sock.close()

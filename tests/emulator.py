@@ -86,7 +86,7 @@ class EmulatorHandle:
     def idle_timeout(self, value: float) -> None:
         self._emulator.idle_timeout = value
 
-    def begin_dusk(self, announce_seconds: float) -> None:
+    def begin_dusk(self, announce_seconds: float | None) -> None:
         self._emulator.begin_dusk(announce_seconds)
 
     def wake(self) -> None:
@@ -94,3 +94,19 @@ class EmulatorHandle:
 
     def inject(self, failure: str) -> None:
         self._emulator.inject(failure)
+
+    def respond_only(self, fields: list[str] | None) -> None:
+        """Answer only these fields (simulates a partial/dying frame); None restores."""
+        self._emulator._respond_only = fields
+
+    @property
+    def dark(self) -> bool:
+        return self._emulator.dark
+
+    @dark.setter
+    def dark(self, value: bool) -> None:
+        self._emulator.dark = value
+
+    def set_noise(self, enabled: bool) -> None:
+        """Toggle the emulator's +-2% jitter (on by default)."""
+        self._emulator.state.add_noise = enabled

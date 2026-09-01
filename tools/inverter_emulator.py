@@ -378,10 +378,12 @@ class SolarmaxEmulator:
         self.dark = False  # powered off: swallow everything, answer nothing
         self._active_client = False  # the real device serves ONE TCP client
         self._inject: str | None = None  # one-shot failure injection
+        self._respond_only: list[str] | None = None  # answer only these fields
         self._pre_dusk: InverterState | None = None
         self._client_socket: socket.socket | None = None
         self._client_thread: threading.Thread | None = None
         self._timer_thread: threading.Thread | None = None
+        self._stop_event = threading.Event()  # interrupts a pending dark timer
 
     def calculate_checksum(self, data: str) -> str:
         """Calculate the Solarmax protocol checksum."""
@@ -426,12 +428,18 @@ class SolarmaxEmulator:
             return format(raw, "X")
 
     def build_response(self, requested_fields: list[str]) -> str:
+        if self._respond_only is not None:
+            requested_fields = [f for f in requested_fields if f in self._respond_only]
         response = self._build_response_clean(requested_fields)
         failure, self._inject = self._inject, None
         if failure == "corrupt_crc":
             return response[:-5] + "0000}"
         if failure == "truncate":
-            return response[: max(4, len(response) // 2)]
+            # Cut off mid-frame but still terminate the read: an unclosed
+            # buffer would just hang the client until it times out (no
+            # data reaches the parser at all) rather than exercising the
+            # checksum-mismatch retry path this simulates.
+            return response[: max(4, len(response) // 2)] + "}"
         if failure == "empty_data":
             head, _, _ = response.partition(":")
             payload = head[1:] + ":"
@@ -601,12 +609,16 @@ class SolarmaxEmulator:
             except OSError:
                 break
 
-    def begin_dusk(self, announce_seconds: float) -> None:
+    def begin_dusk(self, announce_seconds: float | None) -> None:
         """Scripted dusk: announce SYS 20002 with zero power, then go dark.
 
         Mirrors the live capture: 20008 -> 20002 (PAC=0, PDC=0) for the
         announcement window (30s-2min naturally), then the device vanishes
         (every request times out; the drop signature is TIMEOUT, not FIN).
+
+        `announce_seconds=None` means announce-only: set the SYS/PDC state
+        and start no dark timer at all (no live `time.sleep` thread left
+        running for a test that never calls `wake()`).
         """
         import copy
 
@@ -620,8 +632,14 @@ class SolarmaxEmulator:
             self.state.pd01 = 0
             self.state.pd02 = 0
 
+        if announce_seconds is None:
+            return
+
         def _go_dark() -> None:
-            time.sleep(announce_seconds)
+            # Interruptible: stop() sets _stop_event so this wakes
+            # immediately instead of joining a thread mid-sleep.
+            if self._stop_event.wait(announce_seconds):
+                return
             self.dark = True
             _LOGGER.info("Emulator: dark (powered off)")
 
@@ -650,6 +668,7 @@ class SolarmaxEmulator:
         the full idle window, which leaks the thread into the next test.
         """
         self.running = False
+        self._stop_event.set()
         for sock_attr in ("_client_socket", "_server_socket"):
             sock = getattr(self, sock_attr, None)
             if sock is not None:

@@ -17,9 +17,21 @@ from __future__ import annotations
 
 import asyncio
 import socket
-from dataclasses import dataclass, field
+import time
+from collections.abc import Callable
+from dataclasses import asdict, dataclass, field
 from datetime import UTC, datetime
 from enum import StrEnum
+
+from .protocol import (
+    DEVICE_FIELDS,
+    HOT_FIELDS,
+    STATIC_FIELDS,
+    ProtocolError,
+    RetryableProtocolError,
+    build_request,
+    parse_response,
+)
 
 LOW_PDC_WATTS = 25
 SHUTDOWN_ANNOUNCE_SYS = 20002
@@ -256,3 +268,174 @@ class SolarmaxLink:
             await writer.wait_closed()
         except OSError:
             pass
+
+
+class ConnectionEngine:
+    """Composes the codec, the state machine, and the link into poll().
+
+    Every `poll()` call returns an `EngineSnapshot` classified from what
+    that poll (and, for arming, the LAST successful poll) actually
+    observed — never from elapsed time or assumptions about why a request
+    failed. `EngineState`'s own docstring is the invariant this class
+    exists to uphold: state is derived from poll evidence only.
+    """
+
+    def __init__(
+        self,
+        link: SolarmaxLink,
+        address: int,
+        sun_below: Callable[[], bool],
+        verify_checksum: bool = True,
+        low_pdc_watts: float = LOW_PDC_WATTS,
+        grace_seconds: float = STARTUP_GRACE_SECONDS,
+        clock: Callable[[], float] = time.monotonic,
+    ) -> None:
+        self._link = link
+        self._address = address
+        self._sun_below = sun_below
+        self._verify_checksum = verify_checksum
+        self._grace_seconds = grace_seconds
+        self._clock = clock
+        self._tracker = ArmingTracker(low_pdc_watts)
+        self._diagnostics = EngineDiagnostics()
+        self._values: dict[str, dict[str, float | int]] = {}
+        self._statics_loaded = False
+        self._state = EngineState.UNKNOWN
+        self._fault_since: datetime | None = None
+        # Anchors "how long have we been unable to reach a good state":
+        # set at construction (covers the startup grace below), cleared on
+        # every successful poll, and re-anchored to "now" on the FIRST
+        # failure after a success (covers the post-ONLINE reconnecting
+        # grace). Both grace windows share this one anchor.
+        self._disconnected_since: float | None = self._clock()
+
+    async def poll(self) -> EngineSnapshot:
+        try:
+            async with asyncio.timeout(POLL_BUDGET_SECONDS):  # spec: poll budget < 10s
+                return await self._poll_inner()
+        except TimeoutError:
+            return await self._on_failure()
+
+    async def close(self) -> None:
+        await self._link.close()
+
+    async def _poll_inner(self) -> EngineSnapshot:
+        try:
+            if not self._statics_loaded:
+                static = parse_response(
+                    await self._link.request(
+                        build_request(self._address, STATIC_FIELDS + DEVICE_FIELDS)
+                    ),
+                    self._verify_checksum,
+                )
+                self._values.update(static)
+                self._statics_loaded = True
+            raw = await self._request_with_retry(
+                build_request(self._address, HOT_FIELDS)
+            )
+            values = parse_response(raw, self._verify_checksum)
+        except (LinkTimeout, LinkClosed, RetryableProtocolError):
+            return await self._on_failure()
+        except ProtocolError:
+            return await self._on_failure()  # IPR/IPN: no data either way
+        return self._on_success(values)
+
+    async def _request_with_retry(self, payload: str) -> str:
+        """Fetch `payload`, retrying once if the response fails to parse.
+
+        Only `RetryableProtocolError` (checksum/frame corruption — line
+        noise) triggers the retry. `LinkClosed` is already retried
+        transparently inside `SolarmaxLink`; `LinkTimeout` is deliberately
+        NOT retried here — a dark device fails fast by design, and
+        retrying a timeout would double the poll budget for the one case
+        where the honest answer is "no response".
+        """
+        raw = await self._link.request(payload)
+        try:
+            parse_response(raw, self._verify_checksum)
+        except RetryableProtocolError:
+            raw = await self._link.request(payload)
+        return raw
+
+    def _on_success(self, values: dict[str, dict[str, float | int]]) -> EngineSnapshot:
+        # Absent keys keep their last reading (Q15) — never drop a value
+        # just because this poll's frame didn't repeat it.
+        self._values.update(values)
+
+        was_armed = self._tracker.armed
+        self._tracker.observe(values)
+        if self._tracker.armed and not was_armed:
+            self._diagnostics.last_shutdown_announcement = datetime.now(UTC)
+
+        previous_state = self._state
+        self._state = EngineState.ONLINE
+        if previous_state is not self._state:
+            self._diagnostics.record_transition(previous_state, self._state)
+        self._diagnostics.polls_ok += 1
+        self._diagnostics.last_successful_poll = datetime.now(UTC)
+
+        self._fault_since = None
+        self._disconnected_since = None
+
+        return self._snapshot(reconnecting=False, expected_outside_twilight=False)
+
+    async def _on_failure(self) -> EngineSnapshot:
+        previous_state = self._state
+        armed = self._tracker.armed
+        sun_below = self._sun_below()
+
+        if armed or sun_below:
+            new_state = EngineState.OFFLINE_EXPECTED
+            expected_outside_twilight = not sun_below and armed
+            reconnecting = False
+            # Deliberate deviation: re-fetch statics on OFFLINE_EXPECTED
+            # entry rather than on every transparent Link reconnect. The
+            # spec's "once per connection establishment" is read loosely
+            # here — statics cannot change mid-day, so paying for a
+            # re-fetch only at dusk/dawn is enough.
+            await self._link.close()
+            self._statics_loaded = False
+        else:
+            expected_outside_twilight = False
+            if self._disconnected_since is None:
+                self._disconnected_since = self._clock()
+            reconnecting = (
+                self._clock() - self._disconnected_since
+            ) < self._grace_seconds
+            if previous_state is EngineState.UNKNOWN and reconnecting:
+                # Startup grace covers UNKNOWN only (spec).
+                new_state = EngineState.UNKNOWN
+            else:
+                # Honest FAULT on the first failed poll; grace only
+                # softens `reconnecting`/logging, never `state`, and never
+                # delays `fault_since` (spec Q19(b)).
+                new_state = EngineState.OFFLINE_FAULT
+                if self._fault_since is None:
+                    self._fault_since = datetime.now(UTC)
+
+        self._state = new_state
+        if previous_state is not new_state:
+            self._diagnostics.record_transition(previous_state, new_state)
+
+        return self._snapshot(
+            reconnecting=reconnecting,
+            expected_outside_twilight=expected_outside_twilight,
+        )
+
+    def _snapshot(
+        self, *, reconnecting: bool, expected_outside_twilight: bool
+    ) -> EngineSnapshot:
+        # Every snapshot rebuilds diagnostics from the link's live
+        # counters so they never go stale/zero (Task 7 serialises these).
+        self._diagnostics.connection_attempts = self._link.attempts
+        self._diagnostics.reconnects = self._link.reconnects
+        self._diagnostics.timeouts = self._link.timeouts
+        return EngineSnapshot(
+            state=self._state,
+            values=dict(self._values),  # fresh copy every snapshot
+            shutdown_announced=self._tracker.armed,
+            reconnecting=reconnecting,
+            expected_outside_twilight=expected_outside_twilight,
+            fault_since=self._fault_since,
+            diagnostics=asdict(self._diagnostics),
+        )
