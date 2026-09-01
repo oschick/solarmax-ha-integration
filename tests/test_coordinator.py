@@ -6,6 +6,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.update_coordinator import UpdateFailed
+from homeassistant.util import dt as dt_util
 from pytest_homeassistant_custom_component.common import MockConfigEntry
 
 from custom_components.solarmax.const import (
@@ -423,3 +424,14 @@ async def test_repair_issue_deleted_when_night_failures_start(coordinator, hass)
     assert (
         async_get(hass).async_get_issue(DOMAIN, "connection_issues_test_entry") is None
     )
+
+
+async def test_async_handle_midnight_notifies_listeners(hass, mock_config_entry):
+    """The midnight callback must force listeners to re-read native_value."""
+    mock_config_entry.add_to_hass(hass)
+    coordinator = SolarmaxCoordinator(hass, mock_config_entry)
+
+    with patch.object(coordinator, "async_update_listeners") as notify:
+        coordinator.async_handle_midnight(dt_util.now())
+
+    notify.assert_called_once()

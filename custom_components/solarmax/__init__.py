@@ -9,8 +9,15 @@ from homeassistant.const import Platform
 from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import ConfigEntryNotReady
 from homeassistant.helpers import entity_registry as er
+from homeassistant.helpers.event import async_track_time_change
 
-from .const import CONF_HOST, CONF_PORT, DOMAIN
+from .const import (
+    CONF_HOST,
+    CONF_NIGHT_KEEP_VALUES,
+    CONF_PORT,
+    DEFAULT_NIGHT_KEEP_VALUES,
+    DOMAIN,
+)
 from .coordinator import SolarmaxCoordinator
 
 _LOGGER = logging.getLogger(__name__)
@@ -67,6 +74,16 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
     # Use runtime_data instead of hass.data
     entry.runtime_data = coordinator
+
+    # When night_keep_values is on, sensors keep showing yesterday's held
+    # values overnight — Energy Day has to notice the day boundary itself.
+    # Registering nothing by default keeps the common path free.
+    if entry.data.get(CONF_NIGHT_KEEP_VALUES, DEFAULT_NIGHT_KEEP_VALUES):
+        entry.async_on_unload(
+            async_track_time_change(
+                hass, coordinator.async_handle_midnight, hour=0, minute=0, second=0
+            )
+        )
 
     # Set up update listener for options changes
     entry.async_on_unload(entry.add_update_listener(async_update_listener))

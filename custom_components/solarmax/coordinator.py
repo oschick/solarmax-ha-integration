@@ -7,7 +7,7 @@ from datetime import datetime, timedelta
 from typing import Any
 
 from homeassistant.config_entries import ConfigEntry
-from homeassistant.core import HomeAssistant
+from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers.issue_registry import (
     IssueSeverity,
     async_create_issue,
@@ -122,6 +122,17 @@ class SolarmaxCoordinator(DataUpdateCoordinator[dict[str, Any]]):
     def is_night_time(self) -> bool:
         """Return True if it is currently night time."""
         return self._is_night_time()
+
+    @callback
+    def async_handle_midnight(self, now: datetime) -> None:
+        """Force sensors to re-evaluate at the local day boundary.
+
+        The base coordinator skips async_update_listeners() while polls are
+        consecutively failing, so nothing re-reads native_value between dusk
+        and dawn. Energy Day depends on noticing midnight, so we push one
+        update ourselves.
+        """
+        self.async_update_listeners()
 
     async def _async_update_data(self) -> dict[str, Any]:
         """Fetch data from the inverter with intelligent error handling."""
