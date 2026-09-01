@@ -15,12 +15,8 @@ from typing import Any
 
 from . import protocol
 from .protocol import (
-    FIELD_MAP_INVERTER,  # noqa: F401  (re-exported for tests/tools)
+    FIELD_MAP_INVERTER,  # noqa: F401  (re-exported for tests/test_api.py)
     PROTO_ETX,
-    PROTO_FRS,  # noqa: F401  (re-exported for tests/tools)
-    PROTO_FS,  # noqa: F401  (re-exported for tests/tools)
-    PROTO_STX,  # noqa: F401  (re-exported for tests/tools)
-    PROTO_US,  # noqa: F401  (re-exported for tests/tools)
     ProtocolError,
     RetryableProtocolError,
 )
@@ -250,7 +246,7 @@ class SolarmaxAPI:
 
     @property
     def last_successful_connection(self) -> datetime | None:
-        """Return the timestamp of the last successful data retrieval."""
+        """Return the timestamp of the last successful connection."""
         return self._last_successful_connection
 
     def build_request(self, field_map: dict[str, str]) -> str:
