@@ -12,10 +12,10 @@ from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 from homeassistant.util import dt as dt_util
 
+from .connection import EngineState
 from .const import (
     CONF_DEVICE_NAME,
     CONF_NIGHT_KEEP_VALUES,
-    DAYTIME_FAILURE_GRACE,
     DEFAULT_NIGHT_KEEP_VALUES,
     DOMAIN,
     NIGHT_POLICY,
@@ -25,8 +25,8 @@ from .const import (
     SENSOR_TYPE_ALARM,
     SENSOR_TYPE_STATUS,
     SENSOR_TYPES,
-    SYS_STATE_CONNECTION_FAILED,
-    SYS_STATE_OFFLINE_NIGHT,
+    SYS_STATE_OFFLINE_EXPECTED,
+    SYS_STATE_OFFLINE_FAULT,
     SYS_STATE_UNKNOWN,
     SYS_STATUS_MAP,
     NightPolicy,
@@ -37,6 +37,13 @@ _LOGGER = logging.getLogger(__name__)
 
 # Limit parallel updates to prevent overwhelming the inverter
 PARALLEL_UPDATES = 1
+
+# Non-ONLINE engine states mapped to the status sensor's enum option keys.
+_SYS_OFFLINE_STATE_MAP: dict[EngineState, str] = {
+    EngineState.OFFLINE_EXPECTED: SYS_STATE_OFFLINE_EXPECTED,
+    EngineState.OFFLINE_FAULT: SYS_STATE_OFFLINE_FAULT,
+    EngineState.UNKNOWN: SYS_STATE_UNKNOWN,
+}
 
 
 async def async_setup_entry(
@@ -114,15 +121,14 @@ class SolarmaxSensor(CoordinatorEntity[SolarmaxCoordinator], SensorEntity):
     def _night_policy(self) -> NightPolicy | None:
         """Return the night policy in force right now, else None.
 
-        None means "fall through to the original behaviour" — the coordinator
-        is healthy, the option is off, it is not night, or this sensor has no
-        honest night-time value.
+        None means "fall through to the original behaviour" — the engine is
+        not reporting OFFLINE_EXPECTED, the option is off, or this sensor has
+        no honest night-time value.
         """
-        if self.coordinator.last_update_success:
-            return None
         if not self._night_keep_values:
             return None
-        if not (self.coordinator.is_expected_offline or self.coordinator.is_night_time):
+        snapshot = self.coordinator.data
+        if snapshot is None or snapshot.state is not EngineState.OFFLINE_EXPECTED:
             return None
         policy = NIGHT_POLICY.get(self.sensor_key, NightPolicy.UNAVAILABLE)
         return None if policy is NightPolicy.UNAVAILABLE else policy
@@ -149,14 +155,15 @@ class SolarmaxSensor(CoordinatorEntity[SolarmaxCoordinator], SensorEntity):
     def _held_value(self) -> Any:
         """Return the value retained from the last successful poll, if any.
 
-        The coordinator keeps its last successful payload across failed polls,
-        but a key the inverter never reported is simply absent — there is then
-        nothing to hold and the sensor must go unavailable rather than sit
-        available reporting `unknown`.
+        The engine keeps its last-known reading for each key across an
+        outage, but a key the inverter never reported is simply absent —
+        there is then nothing to hold and the sensor must go unavailable
+        rather than sit available reporting `unknown`.
         """
-        if not self.coordinator.data:
+        snapshot = self.coordinator.data
+        if snapshot is None:
             return None
-        sensor_data = self.coordinator.data.get(self.sensor_key)
+        sensor_data = snapshot.values.get(self.sensor_key)
         if sensor_data is None:
             return None
         return sensor_data.get("value")
@@ -165,23 +172,25 @@ class SolarmaxSensor(CoordinatorEntity[SolarmaxCoordinator], SensorEntity):
     def native_value(self) -> str | int | float | None:
         """Return the state of the sensor."""
         is_status = self.sensor_key == SENSOR_TYPE_STATUS
+        snapshot = self.coordinator.data
 
-        # Status sensor reports the offline reason when the coordinator fails.
-        if is_status and not self.coordinator.last_update_success:
-            if self.coordinator.is_expected_offline:
-                return SYS_STATE_OFFLINE_NIGHT
-            return SYS_STATE_CONNECTION_FAILED
+        # Status sensor reports the connection state whenever the engine
+        # isn't reporting a live (ONLINE) poll.
+        if is_status:
+            state = snapshot.state if snapshot is not None else EngineState.UNKNOWN
+            if state is not EngineState.ONLINE:
+                return _SYS_OFFLINE_STATE_MAP.get(state, SYS_STATE_UNKNOWN)
 
         # A resolved "zero" is synthetic and needs no history; "hold" falls
-        # through to coordinator.data, which retains the last successful poll.
+        # through to the snapshot, which retains the last successful poll.
         policy = self._night_policy
         if policy is not None and self._night_value_source(policy) == "zero":
             return 0
 
-        if not self.coordinator.data:
+        if snapshot is None:
             return None
 
-        sensor_data = self.coordinator.data.get(self.sensor_key)
+        sensor_data = snapshot.values.get(self.sensor_key)
         if sensor_data is None:
             return None
 
@@ -206,16 +215,18 @@ class SolarmaxSensor(CoordinatorEntity[SolarmaxCoordinator], SensorEntity):
         attributes: dict[str, Any] = {
             "raw_value": "offline",
             "code": "offline",
-            "consecutive_failures": self.coordinator.consecutive_failures,
-            "expected_offline": self.coordinator.is_expected_offline,
         }
+        snapshot = self.coordinator.data
+        if snapshot is not None:
+            if snapshot.reconnecting:
+                attributes["reconnecting"] = True
+            if snapshot.expected_outside_twilight:
+                attributes["expected_outside_twilight"] = True
+            if snapshot.fault_since is not None:
+                attributes["fault_since"] = snapshot.fault_since.isoformat()
         if self.coordinator.last_successful_update:
             attributes["last_successful_update"] = (
                 self.coordinator.last_successful_update.isoformat()
-            )
-        if self.coordinator.api.last_successful_connection:
-            attributes["last_api_connection"] = (
-                self.coordinator.api.last_successful_connection.isoformat()
             )
         return attributes
 
@@ -223,9 +234,12 @@ class SolarmaxSensor(CoordinatorEntity[SolarmaxCoordinator], SensorEntity):
     def extra_state_attributes(self) -> dict[str, Any] | None:
         """Return additional state attributes."""
         is_status = self.sensor_key == SENSOR_TYPE_STATUS
+        snapshot = self.coordinator.data
 
-        if is_status and not self.coordinator.last_update_success:
-            return self._offline_attributes()
+        if is_status:
+            state = snapshot.state if snapshot is not None else EngineState.UNKNOWN
+            if state is not EngineState.ONLINE:
+                return self._offline_attributes()
 
         # A synthesised zero has no underlying poll data, so it must be built
         # here — the empty-data guards below would otherwise return None.
@@ -236,10 +250,10 @@ class SolarmaxSensor(CoordinatorEntity[SolarmaxCoordinator], SensorEntity):
                 # Do not advertise the stale raw_value behind a synthetic 0.
                 return {"raw_value": 0, "night_value_source": "zero"}
 
-        if not self.coordinator.data:
+        if snapshot is None:
             return None
 
-        sensor_data = self.coordinator.data.get(self.sensor_key)
+        sensor_data = snapshot.values.get(self.sensor_key)
         if sensor_data is None:
             return None
 
@@ -258,13 +272,11 @@ class SolarmaxSensor(CoordinatorEntity[SolarmaxCoordinator], SensorEntity):
             if active_alarms := self._decode_sal_alarms(value):
                 attributes["active_alarms"] = active_alarms
 
-        # Surface connection health on the status sensor.
-        if is_status:
-            attributes["consecutive_failures"] = self.coordinator.consecutive_failures
-            if self.coordinator.last_successful_update:
-                attributes["last_successful_update"] = (
-                    self.coordinator.last_successful_update.isoformat()
-                )
+        # Surface the last successful poll time on the status sensor.
+        if is_status and self.coordinator.last_successful_update:
+            attributes["last_successful_update"] = (
+                self.coordinator.last_successful_update.isoformat()
+            )
 
         # Flag held values so automations can tell them from live readings.
         if night_source is not None:
@@ -275,7 +287,8 @@ class SolarmaxSensor(CoordinatorEntity[SolarmaxCoordinator], SensorEntity):
     @property
     def available(self) -> bool:
         """Return if entity is available."""
-        if self.coordinator.last_update_success:
+        snapshot = self.coordinator.data
+        if snapshot is not None and snapshot.state is EngineState.ONLINE:
             return True
 
         # The status sensor stays available so it can report the offline state.
@@ -290,9 +303,5 @@ class SolarmaxSensor(CoordinatorEntity[SolarmaxCoordinator], SensorEntity):
                 return True
             return self._held_value() is not None
 
-        # Other sensors go unavailable when the inverter is expectedly offline
-        # (night) or after a sustained run of day-time failures.
-        if self.coordinator.is_expected_offline or self.coordinator.is_night_time:
-            return False
-
-        return self.coordinator.consecutive_failures <= DAYTIME_FAILURE_GRACE
+        # OFFLINE_FAULT / UNKNOWN (or no snapshot yet): no honest value to report.
+        return False

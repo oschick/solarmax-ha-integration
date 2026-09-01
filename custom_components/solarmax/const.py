@@ -33,11 +33,6 @@ DEFAULT_VERIFY_CHECKSUM = True
 # horizon.
 DEFAULT_TWILIGHT_ELEVATION_THRESHOLD = 5
 
-# Consecutive day-time poll failures tolerated before sensors go unavailable.
-# One coordinator poll already makes DATA_RETRIES connection attempts with
-# back-off, so a single failure is not a blip — the outer window only needs to
-# be wide enough to survive one bad round, not five.
-DAYTIME_FAILURE_GRACE = 2
 DEFAULT_NIGHT_KEEP_VALUES = False
 
 # Coordinator poll cadence (seconds) when the engine reports OFFLINE_EXPECTED.
@@ -320,15 +315,15 @@ SYS_STATUS_MAP: dict[int, str] = {
     20999: "device_error_999",
 }
 
-# Special SYS states (not from inverter data)
-SYS_STATE_OFFLINE_NIGHT = "offline_night"
-SYS_STATE_CONNECTION_FAILED = "connection_failed"
+# Special SYS states (not from inverter data) — mirror EngineState, minus ONLINE.
+SYS_STATE_OFFLINE_EXPECTED = "offline_expected"
+SYS_STATE_OFFLINE_FAULT = "offline_fault"
 SYS_STATE_UNKNOWN = "unknown"
 
 # All possible SYS options for the enum sensor
 SYS_OPTIONS: list[str] = list(SYS_STATUS_MAP.values()) + [
-    SYS_STATE_OFFLINE_NIGHT,
-    SYS_STATE_CONNECTION_FAILED,
+    SYS_STATE_OFFLINE_EXPECTED,
+    SYS_STATE_OFFLINE_FAULT,
     SYS_STATE_UNKNOWN,
 ]
 
