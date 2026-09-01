@@ -1,11 +1,13 @@
 """Test the Solarmax sensor functionality."""
 
+from datetime import timedelta
 from unittest.mock import Mock
 
 import pytest
 from homeassistant.components.sensor import SensorDeviceClass, SensorStateClass
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.helpers.entity import EntityCategory
+from homeassistant.util import dt as dt_util
 
 from custom_components.solarmax.const import SENSOR_TYPES
 from custom_components.solarmax.coordinator import SolarmaxCoordinator
@@ -324,5 +326,52 @@ def test_night_policy_ignored_when_option_disabled(mock_coordinator, mock_config
     _set_night(mock_coordinator)
 
     sensor = _make_sensor(mock_coordinator, mock_config_entry, "PAC")
+
+    assert sensor.available is False
+
+
+def test_kdy_holds_before_midnight(mock_coordinator, night_entry):
+    """Same local day as the last poll: the day's total still stands."""
+    mock_coordinator.data["KDY"] = {"value": 24.5, "raw_value": 245}
+    mock_coordinator.last_successful_update = dt_util.now()
+    _set_night(mock_coordinator)
+
+    sensor = _make_sensor(mock_coordinator, night_entry, "KDY")
+
+    assert sensor.available is True
+    assert sensor.native_value == 24.5
+
+
+def test_kdy_reads_zero_after_midnight(mock_coordinator, night_entry):
+    """Last poll was an earlier local day: today's total is 0."""
+    mock_coordinator.data["KDY"] = {"value": 24.5, "raw_value": 245}
+    mock_coordinator.last_successful_update = dt_util.now() - timedelta(days=1)
+    _set_night(mock_coordinator)
+
+    sensor = _make_sensor(mock_coordinator, night_entry, "KDY")
+
+    assert sensor.available is True
+    assert sensor.native_value == 0
+
+
+def test_kdy_after_midnight_needs_no_held_value(mock_coordinator, night_entry):
+    """Once the day has rolled over the 0 is synthetic, not derived."""
+    mock_coordinator.data = {}
+    mock_coordinator.last_successful_update = dt_util.now() - timedelta(days=1)
+    _set_night(mock_coordinator)
+
+    sensor = _make_sensor(mock_coordinator, night_entry, "KDY")
+
+    assert sensor.available is True
+    assert sensor.native_value == 0
+
+
+def test_kdy_unavailable_when_never_polled(mock_coordinator, night_entry):
+    """No successful poll ever: nothing to hold and no day boundary crossed."""
+    mock_coordinator.data = {}
+    mock_coordinator.last_successful_update = None
+    _set_night(mock_coordinator)
+
+    sensor = _make_sensor(mock_coordinator, night_entry, "KDY")
 
     assert sensor.available is False

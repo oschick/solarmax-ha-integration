@@ -11,6 +11,7 @@ from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity import generate_entity_id
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
+from homeassistant.util import dt as dt_util
 
 from .const import (
     CONF_DEVICE_NAME,
@@ -128,7 +129,22 @@ class SolarmaxSensor(CoordinatorEntity[SolarmaxCoordinator], SensorEntity):
 
     def _night_value_source(self, policy: NightPolicy) -> str:
         """Resolve a policy in force to the value it produces right now."""
-        return "zero" if policy is NightPolicy.ZERO else "hold"
+        if policy is NightPolicy.ZERO:
+            return "zero"
+        if policy is NightPolicy.HOLD_UNTIL_MIDNIGHT and self._is_new_day():
+            return "zero"
+        return "hold"
+
+    def _is_new_day(self) -> bool:
+        """True when the last successful poll fell on an earlier local day.
+
+        Stateless and restart-safe: derived from the timestamp rather than a
+        latch, so it cannot drift out of sync with the wall clock.
+        """
+        last = self.coordinator.last_successful_update
+        if last is None:
+            return False
+        return last.date() != dt_util.now().date()
 
     def _held_value(self) -> Any:
         """Return the value retained from the last successful poll, if any.
