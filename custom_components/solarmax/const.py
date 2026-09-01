@@ -40,6 +40,12 @@ DEFAULT_TWILIGHT_ELEVATION_THRESHOLD = 5
 DAYTIME_FAILURE_GRACE = 2
 DEFAULT_NIGHT_KEEP_VALUES = False
 
+# Coordinator poll cadence (seconds) when the engine reports OFFLINE_EXPECTED.
+NIGHT_POLL_SECONDS = 900
+DAWN_POLL_SECONDS = 60
+# How long an OFFLINE_FAULT must persist before a repair issue is raised.
+FAULT_REPAIR_SECONDS = 300
+
 # Static device-identification MaxComm keys (queried once for device info)
 DEVICE_KEY_TYPE = "TYP"  # device type / model identifier
 DEVICE_KEY_FIRMWARE = "SWV"  # firmware version number
