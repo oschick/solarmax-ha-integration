@@ -6,7 +6,6 @@ import logging
 from typing import Any
 
 from homeassistant.components.sensor import SensorEntity, SensorEntityDescription
-from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity import generate_entity_id
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
@@ -31,7 +30,7 @@ from .const import (
     SYS_STATUS_MAP,
     NightPolicy,
 )
-from .coordinator import SolarmaxCoordinator
+from .coordinator import SolarmaxConfigEntry, SolarmaxCoordinator
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -41,7 +40,7 @@ PARALLEL_UPDATES = 1
 
 async def async_setup_entry(
     hass: HomeAssistant,
-    entry: ConfigEntry,
+    entry: SolarmaxConfigEntry,
     async_add_entities: AddEntitiesCallback,
 ) -> None:
     """Set up Solarmax sensor platform."""
@@ -62,7 +61,7 @@ class SolarmaxSensor(CoordinatorEntity[SolarmaxCoordinator], SensorEntity):
     def __init__(
         self,
         coordinator: SolarmaxCoordinator,
-        entry: ConfigEntry,
+        entry: SolarmaxConfigEntry,
         description: SensorEntityDescription,
         device_name: str,
     ) -> None:

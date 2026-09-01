@@ -5,18 +5,17 @@ from __future__ import annotations
 from typing import Any
 
 from homeassistant.components.diagnostics import async_redact_data
-from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 from homeassistant.loader import async_get_integration
 
 from .const import CONF_HOST
-from .coordinator import SolarmaxCoordinator
+from .coordinator import SolarmaxConfigEntry, SolarmaxCoordinator
 
 REDACT_KEYS = {CONF_HOST}
 
 
 async def async_get_config_entry_diagnostics(
-    hass: HomeAssistant, entry: ConfigEntry
+    hass: HomeAssistant, entry: SolarmaxConfigEntry
 ) -> dict[str, Any]:
     """Return diagnostics for a config entry."""
     coordinator: SolarmaxCoordinator = entry.runtime_data

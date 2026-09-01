@@ -323,3 +323,9 @@ class SolarmaxCoordinator(DataUpdateCoordinator[dict[str, Any]]):
     def serial_number(self) -> str | None:
         """Return the detected serial number (from DIN key)."""
         return self._serial_number
+
+
+# Typed config entry: gives `entry.runtime_data` a real type instead of Any,
+# so mypy can actually check every coordinator access through it.
+# Plain assignment rather than PEP 695 `type` — pyproject targets >=3.11.
+SolarmaxConfigEntry = ConfigEntry[SolarmaxCoordinator]

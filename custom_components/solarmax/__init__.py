@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import logging
 
-from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import Platform
 from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import ConfigEntryNotReady
@@ -18,7 +17,7 @@ from .const import (
     DEFAULT_NIGHT_KEEP_VALUES,
     DOMAIN,
 )
-from .coordinator import SolarmaxCoordinator
+from .coordinator import SolarmaxConfigEntry, SolarmaxCoordinator
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -30,7 +29,7 @@ _UNIQUE_ID_MIGRATIONS = {
 }
 
 
-def _migrate_unique_ids(hass: HomeAssistant, entry: ConfigEntry) -> None:
+def _migrate_unique_ids(hass: HomeAssistant, entry: SolarmaxConfigEntry) -> None:
     """Migrate renamed sensor unique IDs to prevent orphaned entities."""
     registry = er.async_get(hass)
 
@@ -57,7 +56,7 @@ def _migrate_unique_ids(hass: HomeAssistant, entry: ConfigEntry) -> None:
                 registry.async_update_entity(entity_id, new_unique_id=new_unique_id)
 
 
-async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
+async def async_setup_entry(hass: HomeAssistant, entry: SolarmaxConfigEntry) -> bool:
     """Set up Solarmax Inverter from a config entry."""
     # Migrate renamed entity unique IDs (v1.2.0 → v1.2.1: KDL → KLD)
     _migrate_unique_ids(hass, entry)
@@ -98,18 +97,14 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     return True
 
 
-async def async_update_listener(hass: HomeAssistant, entry: ConfigEntry) -> None:
+async def async_update_listener(
+    hass: HomeAssistant, entry: SolarmaxConfigEntry
+) -> None:
     """Handle options update."""
     # Reload the integration when options are updated
     await hass.config_entries.async_reload(entry.entry_id)
 
 
-async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
+async def async_unload_entry(hass: HomeAssistant, entry: SolarmaxConfigEntry) -> bool:
     """Unload a config entry (runtime_data is cleaned up automatically)."""
     return await hass.config_entries.async_unload_platforms(entry, PLATFORMS)
-
-
-async def async_reload_entry(hass: HomeAssistant, entry: ConfigEntry) -> None:
-    """Reload config entry."""
-    await async_unload_entry(hass, entry)
-    await async_setup_entry(hass, entry)
