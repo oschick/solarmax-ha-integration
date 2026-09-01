@@ -283,6 +283,17 @@ def test_hold_policy_sensor_keeps_last_value_at_night(mock_coordinator, night_en
     assert sensor.native_value == 12345
 
 
+def test_hold_policy_sensor_survives_midnight(mock_coordinator, night_entry):
+    """Only KDY resets at midnight; lifetime totals keep holding."""
+    mock_coordinator.data["KT0"] = {"value": 12345, "raw_value": 12345}
+    mock_coordinator.last_successful_update = dt_util.now() - timedelta(days=1)
+    _set_night(mock_coordinator)
+
+    sensor = _make_sensor(mock_coordinator, night_entry, "KT0")
+
+    assert sensor.native_value == 12345
+
+
 def test_hold_policy_sensor_unavailable_with_nothing_to_hold(
     mock_coordinator, night_entry
 ):
