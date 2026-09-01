@@ -227,6 +227,15 @@ class SolarmaxSensor(CoordinatorEntity[SolarmaxCoordinator], SensorEntity):
         if is_status and not self.coordinator.last_update_success:
             return self._offline_attributes()
 
+        # A synthesised zero has no underlying poll data, so it must be built
+        # here — the empty-data guards below would otherwise return None.
+        night_source = None
+        if (policy := self._night_policy) is not None:
+            night_source = self._night_value_source(policy)
+            if night_source == "zero":
+                # Do not advertise the stale raw_value behind a synthetic 0.
+                return {"raw_value": 0, "night_value_source": "zero"}
+
         if not self.coordinator.data:
             return None
 
@@ -256,6 +265,10 @@ class SolarmaxSensor(CoordinatorEntity[SolarmaxCoordinator], SensorEntity):
                 attributes["last_successful_update"] = (
                     self.coordinator.last_successful_update.isoformat()
                 )
+
+        # Flag held values so automations can tell them from live readings.
+        if night_source is not None:
+            attributes["night_value_source"] = night_source
 
         return attributes
 

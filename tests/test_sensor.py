@@ -386,3 +386,76 @@ def test_kdy_unavailable_when_never_polled(mock_coordinator, night_entry):
     sensor = _make_sensor(mock_coordinator, night_entry, "KDY")
 
     assert sensor.available is False
+
+
+def test_night_value_source_reports_zero(mock_coordinator, night_entry):
+    """A synthesised zero says so, and does not advertise a stale raw_value."""
+    _set_night(mock_coordinator)
+
+    sensor = _make_sensor(mock_coordinator, night_entry, "PAC")
+    attributes = sensor.extra_state_attributes
+
+    assert attributes["night_value_source"] == "zero"
+    assert attributes["raw_value"] == 0
+
+
+def test_night_value_source_present_without_coordinator_data(
+    mock_coordinator, night_entry
+):
+    """The attribute must survive the empty-data early return."""
+    mock_coordinator.data = {}
+    _set_night(mock_coordinator)
+
+    sensor = _make_sensor(mock_coordinator, night_entry, "PAC")
+
+    assert sensor.extra_state_attributes["night_value_source"] == "zero"
+
+
+def test_night_value_source_reports_hold(mock_coordinator, night_entry):
+    """A held value keeps its original raw_value."""
+    mock_coordinator.data["KT0"] = {"value": 12345, "raw_value": 12345}
+    _set_night(mock_coordinator)
+
+    sensor = _make_sensor(mock_coordinator, night_entry, "KT0")
+    attributes = sensor.extra_state_attributes
+
+    assert attributes["night_value_source"] == "hold"
+    assert attributes["raw_value"] == 12345
+
+
+def test_held_alarm_sensor_keeps_decoded_attributes(mock_coordinator, night_entry):
+    """SAL holds so a dusk alarm stays legible — decoding must survive."""
+    mock_coordinator.data["SAL"] = {"value": 6, "raw_value": 6}
+    _set_night(mock_coordinator)
+
+    sensor = _make_sensor(mock_coordinator, night_entry, "SAL")
+    attributes = sensor.extra_state_attributes
+
+    assert attributes["night_value_source"] == "hold"
+    assert attributes["code"] == 6
+    assert attributes["active_alarms"] == [
+        "insulation_fault_dc",
+        "earth_fault_current",
+    ]
+
+
+def test_night_value_source_absent_during_normal_operation(
+    mock_coordinator, night_entry
+):
+    """Absence means the reading is real — automations test for presence."""
+    sensor = _make_sensor(mock_coordinator, night_entry, "PAC")
+
+    assert "night_value_source" not in (sensor.extra_state_attributes or {})
+
+
+def test_kdy_after_midnight_reports_zero_source_and_raw(mock_coordinator, night_entry):
+    """KDY's midnight zero is synthetic too — it must not show a stale raw_value."""
+    mock_coordinator.data["KDY"] = {"value": 24.5, "raw_value": 245}
+    mock_coordinator.last_successful_update = dt_util.now() - timedelta(days=1)
+    _set_night(mock_coordinator)
+
+    sensor = _make_sensor(mock_coordinator, night_entry, "KDY")
+    attributes = sensor.extra_state_attributes
+
+    assert attributes["night_value_source"] == "zero"
+    assert attributes["raw_value"] == 0
