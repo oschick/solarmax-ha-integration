@@ -16,6 +16,7 @@ restructure the names defined here.
 from __future__ import annotations
 
 import asyncio
+import logging
 import socket
 import time
 from collections.abc import Callable
@@ -32,6 +33,8 @@ from .protocol import (
     build_request,
     parse_response,
 )
+
+_LOGGER = logging.getLogger(__name__)
 
 LOW_PDC_WATTS = 25
 SHUTDOWN_ANNOUNCE_SYS = 20002
@@ -322,12 +325,10 @@ class ConnectionEngine:
     async def _poll_inner(self) -> EngineSnapshot:
         try:
             if not self._statics_loaded:
-                static = parse_response(
-                    await self._link.request(
-                        build_request(self._address, STATIC_FIELDS + DEVICE_FIELDS)
-                    ),
-                    self._verify_checksum,
+                static_raw = await self._request_with_retry(
+                    build_request(self._address, STATIC_FIELDS + DEVICE_FIELDS)
                 )
+                static = parse_response(static_raw, self._verify_checksum)
                 self._values.update(static)
                 self._statics_loaded = True
             raw = await self._request_with_retry(
@@ -382,7 +383,17 @@ class ConnectionEngine:
     async def _on_failure(self) -> EngineSnapshot:
         previous_state = self._state
         armed = self._tracker.armed
-        sun_below = self._sun_below()
+        try:
+            sun_below = self._sun_below()
+        except Exception:
+            # An unknown sun position must never suppress a real fault, so
+            # a broken callback falls back to "not below the threshold"
+            # (the conservative reading) rather than crossing poll()'s
+            # "never raises" boundary.
+            _LOGGER.warning(
+                "sun_below callback raised; assuming sun is up", exc_info=True
+            )
+            sun_below = False
 
         if armed or sun_below:
             new_state = EngineState.OFFLINE_EXPECTED

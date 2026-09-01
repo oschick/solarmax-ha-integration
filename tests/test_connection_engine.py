@@ -203,3 +203,44 @@ async def test_recovery_clears_everything(emulator):
         assert snapshot.fault_since is None
     finally:
         await engine.close()
+
+
+async def test_statics_retried_within_the_poll(emulator):
+    """The statics frame gets the same one-shot retry as the hot frame.
+
+    Review fix: `_poll_inner` used to fetch statics via a bare
+    `self._link.request(...)`, bypassing `_request_with_retry` entirely —
+    a single CRC glitch on the statics frame failed the whole poll. Since
+    `_statics_loaded` resets on every OFFLINE_EXPECTED entry, that
+    unretried request is exactly the dawn poll after every dusk.
+    """
+    engine = _engine(emulator)
+    try:
+        emulator.inject("corrupt_crc")  # poisons the *statics* frame (first request)
+        snapshot = await engine.poll()
+        assert snapshot.state is EngineState.ONLINE
+        assert "PIN" in snapshot.values
+    finally:
+        await engine.close()
+
+
+async def test_sun_below_callback_exception_does_not_escape_poll(emulator):
+    """A broken sun_below callback must not cross poll()'s "never raises" boundary.
+
+    Review fix: `_on_failure` called `self._sun_below()` unguarded; an
+    exception from a HA sun-integration callback raised straight out of
+    poll(). Falls back to sun_below=False — the conservative reading, so
+    an unknown sun position never suppresses a real fault.
+    """
+
+    def _raising_sun_below() -> bool:
+        raise RuntimeError("boom")
+
+    engine = _engine(emulator, sun_below=_raising_sun_below)
+    try:
+        await engine.poll()
+        emulator.dark = True
+        snapshot = await engine.poll()  # must not raise
+        assert snapshot.state is EngineState.OFFLINE_FAULT
+    finally:
+        await engine.close()
