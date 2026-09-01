@@ -2,11 +2,14 @@
 
 import json
 import pathlib
-from unittest.mock import AsyncMock, patch
+from datetime import UTC, datetime
+from unittest.mock import MagicMock, patch
 
 import pytest
 from homeassistant.core import HomeAssistant
 
+from custom_components.solarmax.connection import EngineSnapshot, EngineState
+from custom_components.solarmax.coordinator import SolarmaxCoordinator
 from custom_components.solarmax.diagnostics import async_get_config_entry_diagnostics
 
 MANIFEST = json.loads(
@@ -19,41 +22,66 @@ MANIFEST = json.loads(
 )
 
 
+def _snapshot(**overrides) -> EngineSnapshot:
+    """A real EngineSnapshot, matching the shape the engine actually produces."""
+    defaults: dict = {
+        "state": EngineState.ONLINE,
+        "values": {
+            "PAC": {"value": 1000, "raw_value": 1000},
+            "PDC": {"value": 1050, "raw_value": 1050},
+        },
+        "shutdown_announced": False,
+        "reconnecting": False,
+        "expected_outside_twilight": False,
+        "fault_since": None,
+        "diagnostics": {
+            "connection_attempts": 5,
+            "reconnects": 1,
+            "timeouts": 0,
+            "polls_ok": 10,
+            "last_successful_poll": datetime(2025, 9, 11, 10, 0, tzinfo=UTC),
+            "last_shutdown_announcement": None,
+            "transitions": [],
+        },
+    }
+    defaults.update(overrides)
+    return EngineSnapshot(**defaults)
+
+
+def _mock_coordinator(**attrs) -> MagicMock:
+    """A coordinator mock spec'd against the real class.
+
+    `spec=SolarmaxCoordinator` makes an access to a removed attribute (e.g.
+    the old `is_expected_offline`/`consecutive_failures`/`api`) raise
+    AttributeError immediately, the way it would in production — this is
+    what would have caught diagnostics.py's live AttributeError before it
+    shipped.
+    """
+    coordinator = MagicMock(spec=SolarmaxCoordinator)
+    coordinator.last_update_success = True
+    coordinator.last_exception = None
+    coordinator.update_interval.total_seconds.return_value = 30
+    coordinator.device_model = "SolarMax 7TP2"
+    coordinator.last_successful_update = None
+    coordinator.data = _snapshot()
+    for key, value in attrs.items():
+        setattr(coordinator, key, value)
+    return coordinator
+
+
 @pytest.mark.asyncio
 async def test_config_entry_diagnostics(hass: HomeAssistant, mock_config_entry):
     """Test config entry diagnostics."""
-    # Mock coordinator
-    mock_coordinator = AsyncMock()
-    mock_coordinator.last_update_success = True
-    mock_coordinator.last_exception = None
-    mock_coordinator.update_interval.total_seconds.return_value = 30
-    mock_coordinator.data = {
-        "PAC": {"value": 1000, "raw_value": "1000", "timestamp": "2025-09-11T10:00:00"},
-        "PDC": {"value": 1050, "raw_value": "1050", "timestamp": "2025-09-11T10:00:00"},
-    }
-    mock_coordinator.consecutive_failures = 0
-    mock_coordinator.last_successful_update = None
-    mock_coordinator.is_expected_offline = False
-    mock_coordinator.device_model = "SolarMax 7TP2"
-
-    # Mock API
-    mock_api = AsyncMock()
-    mock_api.last_successful_connection = None
-    mock_api.connection_attempts = 5
-    mock_api.timeout_errors = 0
-    mock_coordinator.api = mock_api
-
-    # Set up config entry
+    mock_coordinator = _mock_coordinator()
     mock_config_entry.runtime_data = mock_coordinator
 
-    # Mock hass version
     with patch.object(hass.config, "as_dict", return_value={"version": "2024.1.0"}):
         diagnostics = await async_get_config_entry_diagnostics(hass, mock_config_entry)
 
     # Verify diagnostics structure
     assert "config_entry" in diagnostics
     assert "coordinator" in diagnostics
-    assert "api_connection" in diagnostics
+    assert "connection" in diagnostics
     assert "sensor_data" in diagnostics
     assert "system_info" in diagnostics
     assert "device_info" in diagnostics
@@ -65,12 +93,20 @@ async def test_config_entry_diagnostics(hass: HomeAssistant, mock_config_entry):
     assert config_data["data"]["host"] == "**REDACTED**"
     assert "port" in config_data["data"]
 
-    # Verify coordinator data
+    # Verify coordinator data (snapshot-derived fields)
     coordinator_data = diagnostics["coordinator"]
     assert coordinator_data["last_update_success"] is True
-    assert coordinator_data["data_available"] is True
-    assert "PAC" in coordinator_data["data_keys"]
-    assert "PDC" in coordinator_data["data_keys"]
+    assert coordinator_data["state"] == EngineState.ONLINE
+    assert coordinator_data["reconnecting"] is False
+    assert coordinator_data["fault_since"] is None
+
+    # Verify the engine's own counters/transitions are exposed (Task 7: the
+    # dead `hasattr` counters this replaced were never real; these are)
+    connection_data = diagnostics["connection"]
+    assert connection_data["connection_attempts"] == 5
+    assert connection_data["reconnects"] == 1
+    assert connection_data["timeouts"] == 0
+    assert connection_data["transitions"] == []
 
     # Verify sensor data
     sensor_data = diagnostics["sensor_data"]
@@ -94,23 +130,15 @@ async def test_config_entry_diagnostics(hass: HomeAssistant, mock_config_entry):
 
 @pytest.mark.asyncio
 async def test_diagnostics_with_no_data(hass: HomeAssistant, mock_config_entry):
-    """Test diagnostics when coordinator has no data."""
-    # Mock coordinator with no data
-    mock_coordinator = AsyncMock()
-    mock_coordinator.last_update_success = False
-    mock_coordinator.last_exception = Exception("Connection failed")
-    mock_coordinator.update_interval.total_seconds.return_value = 30
-    mock_coordinator.data = None
-    mock_coordinator.device_model = None
-
-    # Mock API
-    mock_api = AsyncMock()
-    mock_coordinator.api = mock_api
-
-    # Set up config entry
+    """Test diagnostics when the coordinator has not completed a poll yet."""
+    mock_coordinator = _mock_coordinator(
+        last_update_success=False,
+        last_exception=Exception("Connection failed"),
+        data=None,
+        device_model=None,
+    )
     mock_config_entry.runtime_data = mock_coordinator
 
-    # Mock hass version
     with patch.object(hass.config, "as_dict", return_value={"version": "2024.1.0"}):
         diagnostics = await async_get_config_entry_diagnostics(hass, mock_config_entry)
 
@@ -119,15 +147,41 @@ async def test_diagnostics_with_no_data(hass: HomeAssistant, mock_config_entry):
     assert "coordinator" in diagnostics
     assert "sensor_data" in diagnostics
 
-    # Verify no data handling
+    # Verify no-snapshot handling
     coordinator_data = diagnostics["coordinator"]
     assert coordinator_data["last_update_success"] is False
-    assert coordinator_data["data_available"] is False
-    assert coordinator_data["data_keys"] == []
+    assert coordinator_data["state"] is None
+    assert coordinator_data["reconnecting"] is None
+    assert coordinator_data["fault_since"] is None
     assert "Connection failed" in coordinator_data["last_exception"]
 
-    # Verify empty sensor data
+    # Verify empty sensor/connection data
     assert diagnostics["sensor_data"] == {}
+    assert diagnostics["connection"] == {}
+
+
+@pytest.mark.asyncio
+async def test_diagnostics_reports_fault_since_and_reconnecting(
+    hass: HomeAssistant, mock_config_entry
+):
+    """A live fault must surface fault_since/reconnecting for support triage."""
+    fault_since = datetime(2025, 9, 11, 9, 30, tzinfo=UTC)
+    mock_coordinator = _mock_coordinator(
+        data=_snapshot(
+            state=EngineState.OFFLINE_FAULT,
+            reconnecting=True,
+            fault_since=fault_since,
+        )
+    )
+    mock_config_entry.runtime_data = mock_coordinator
+
+    with patch.object(hass.config, "as_dict", return_value={"version": "2024.1.0"}):
+        diagnostics = await async_get_config_entry_diagnostics(hass, mock_config_entry)
+
+    coordinator_data = diagnostics["coordinator"]
+    assert coordinator_data["state"] == EngineState.OFFLINE_FAULT
+    assert coordinator_data["reconnecting"] is True
+    assert coordinator_data["fault_since"] == fault_since.isoformat()
 
 
 @pytest.mark.asyncio
@@ -135,15 +189,9 @@ async def test_diagnostics_redacts_sensitive_data(
     hass: HomeAssistant, mock_config_entry
 ):
     """Test that sensitive data is properly redacted."""
-    # Mock coordinator
-    mock_coordinator = AsyncMock()
-    mock_coordinator.data = {}
-    mock_coordinator.api = AsyncMock()
-
-    # Set up config entry (fixture data already contains host/port/device_name)
+    mock_coordinator = _mock_coordinator(data=_snapshot(values={}))
     mock_config_entry.runtime_data = mock_coordinator
 
-    # Mock hass version
     with patch.object(hass.config, "as_dict", return_value={"version": "2024.1.0"}):
         diagnostics = await async_get_config_entry_diagnostics(hass, mock_config_entry)
 

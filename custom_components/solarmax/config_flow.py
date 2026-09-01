@@ -11,6 +11,7 @@ from homeassistant.config_entries import ConfigFlowResult
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.exceptions import HomeAssistantError
 
+from .connection import LinkClosed, LinkTimeout, SolarmaxLink
 from .const import (
     CONF_ADDRESS,
     CONF_DEVICE_NAME,
@@ -29,7 +30,7 @@ from .const import (
     DEFAULT_VERIFY_CHECKSUM,
     DOMAIN,
 )
-from .solarmax_api import SolarmaxAPI
+from .protocol import build_request
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -80,17 +81,18 @@ async def validate_input(hass: HomeAssistant, data: dict[str, Any]) -> dict[str,
     """Validate the user input allows us to connect.
 
     Data has the keys from the config schema with values provided by the user.
+    A one-shot PAC probe over a throwaway link; the `finally` close is a hard
+    invariant — a leaked probe socket locks the single-client inverter out
+    for ~128s, which would fail the very next setup attempt.
     """
-    api = SolarmaxAPI(
-        data[CONF_HOST],
-        data[CONF_PORT],
-        data.get(CONF_ADDRESS, DEFAULT_ADDRESS),
-        verify_checksum=data.get(CONF_VERIFY_CHECKSUM, DEFAULT_VERIFY_CHECKSUM),
-    )
-
-    # Test the connection
-    if not await hass.async_add_executor_job(api.test_connection):
-        raise CannotConnect
+    link = SolarmaxLink(data[CONF_HOST], data[CONF_PORT])
+    try:
+        address = data.get(CONF_ADDRESS, DEFAULT_ADDRESS)
+        await link.request(build_request(address, ["PAC"]))
+    except (LinkTimeout, LinkClosed, OSError) as err:
+        raise CannotConnect from err
+    finally:
+        await link.close()
 
     # Return info that you want to store in the config entry.
     return {"title": data[CONF_DEVICE_NAME]}

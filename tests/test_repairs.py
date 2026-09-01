@@ -14,7 +14,7 @@ from custom_components.solarmax.repairs import (
 @pytest.mark.asyncio
 async def test_connection_repair_flow():
     """Test connection repair flow."""
-    data = {"host": "192.168.1.100", "port": 12345, "failures": 5}
+    data = {"host": "192.168.1.100", "port": 12345, "minutes": "5"}
 
     flow = SolarmaxConnectionRepairFlow(data)
 
@@ -29,7 +29,7 @@ async def test_connection_repair_flow():
     assert result["step_id"] == "confirm"
     assert "192.168.1.100" in str(result["description_placeholders"]["host"])
     assert "12345" in str(result["description_placeholders"]["port"])
-    assert "5" in str(result["description_placeholders"]["failures"])
+    assert "5" in str(result["description_placeholders"]["minutes"])
 
     # Test confirm with user input
     result = await flow.async_step_confirm({"confirm": True})
@@ -94,6 +94,7 @@ async def test_connection_repair_flow_survives_null_data():
 
     assert placeholders["host"] == "unknown"
     assert placeholders["port"] == "unknown"
+    assert placeholders["minutes"] == "?"
 
 
 @pytest.mark.asyncio

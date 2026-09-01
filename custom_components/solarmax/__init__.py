@@ -6,7 +6,6 @@ import logging
 
 from homeassistant.const import Platform
 from homeassistant.core import HomeAssistant
-from homeassistant.exceptions import ConfigEntryNotReady
 from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers.event import async_track_time_change
 
@@ -63,13 +62,10 @@ async def async_setup_entry(hass: HomeAssistant, entry: SolarmaxConfigEntry) -> 
 
     coordinator = SolarmaxCoordinator(hass, entry)
 
-    # Test connection before proceeding with setup
-    try:
-        await coordinator.async_config_entry_first_refresh()
-    except Exception as err:
-        level = logging.DEBUG if coordinator.is_night_time else logging.ERROR
-        _LOGGER.log(level, "Failed to connect to inverter during setup: %s", err)
-        raise ConfigEntryNotReady(f"Failed to connect to inverter: {err}") from err
+    # The coordinator's _async_update_data() never raises (see its class
+    # docstring), so this can never fail and never needs ConfigEntryNotReady:
+    # entities exist immediately even against a dark inverter, engine UNKNOWN.
+    await coordinator.async_config_entry_first_refresh()
 
     # Use runtime_data instead of hass.data
     entry.runtime_data = coordinator
@@ -106,5 +102,11 @@ async def async_update_listener(
 
 
 async def async_unload_entry(hass: HomeAssistant, entry: SolarmaxConfigEntry) -> bool:
-    """Unload a config entry (runtime_data is cleaned up automatically)."""
+    """Unload a config entry (runtime_data is cleaned up automatically).
+
+    Closes the connection engine BEFORE platform teardown: close precedes
+    task cancellation, so no in-flight poll can be left holding the
+    single-client inverter's one TCP slot once entities go away.
+    """
+    await entry.runtime_data.engine.close()
     return await hass.config_entries.async_unload_platforms(entry, PLATFORMS)

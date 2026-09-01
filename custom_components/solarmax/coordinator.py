@@ -129,11 +129,6 @@ class SolarmaxCoordinator(DataUpdateCoordinator[EngineSnapshot]):
             current_hour = dt_util.now().hour
             return current_hour >= 20 or current_hour < 6
 
-    @property
-    def is_night_time(self) -> bool:
-        """Alias for sun_below_threshold(), kept for sensor.py compatibility."""
-        return self.sun_below_threshold()
-
     @callback
     def async_handle_midnight(self, now: datetime) -> None:
         """Force a listener refresh at local midnight for Energy Day sensors.

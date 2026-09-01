@@ -1,6 +1,6 @@
 """Test the Solarmax config flow."""
 
-from unittest.mock import patch
+from unittest.mock import AsyncMock, patch
 
 import pytest
 from homeassistant import config_entries, data_entry_flow
@@ -8,6 +8,8 @@ from homeassistant.core import HomeAssistant
 from homeassistant.data_entry_flow import FlowResultType
 from pytest_homeassistant_custom_component.common import MockConfigEntry
 
+from custom_components.solarmax.config_flow import CannotConnect, validate_input
+from custom_components.solarmax.connection import LinkClosed, LinkTimeout
 from custom_components.solarmax.const import (
     CONF_ADDRESS,
     CONF_DEVICE_NAME,
@@ -21,6 +23,10 @@ from custom_components.solarmax.const import (
     DEFAULT_TWILIGHT_ELEVATION_THRESHOLD,
     DOMAIN,
 )
+from custom_components.solarmax.protocol import build_request
+
+_LINK_REQUEST = "custom_components.solarmax.config_flow.SolarmaxLink.request"
+_LINK_CLOSE = "custom_components.solarmax.config_flow.SolarmaxLink.close"
 
 
 async def test_form(hass: HomeAssistant) -> None:
@@ -32,10 +38,10 @@ async def test_form(hass: HomeAssistant) -> None:
     assert result["errors"] == {}
 
 
-@patch("custom_components.solarmax.config_flow.SolarmaxAPI")
-async def test_form_successful_connection(mock_api, hass: HomeAssistant) -> None:
+@patch(_LINK_REQUEST, new_callable=AsyncMock)
+async def test_form_successful_connection(mock_request, hass: HomeAssistant) -> None:
     """Test successful config flow."""
-    mock_api.return_value.test_connection.return_value = True
+    mock_request.return_value = "{FB;01;10|64:PAC=03E8,0|1234}"
 
     result = await hass.config_entries.flow.async_init(
         DOMAIN, context={"source": config_entries.SOURCE_USER}
@@ -66,35 +72,59 @@ async def test_form_successful_connection(mock_api, hass: HomeAssistant) -> None
     }
 
 
-@patch("custom_components.solarmax.config_flow.SolarmaxAPI")
-async def test_verify_checksum_passed_to_api(mock_api, hass: HomeAssistant) -> None:
-    """Test that the verify_checksum option is passed to the API for validation."""
-    mock_api.return_value.test_connection.return_value = True
+@patch(_LINK_CLOSE, new_callable=AsyncMock)
+@patch(_LINK_REQUEST, new_callable=AsyncMock)
+async def test_validate_input_closes_probe_link_on_success(
+    mock_request, mock_close, hass: HomeAssistant
+) -> None:
+    """The `finally: await link.close()` is a hard invariant (spec: a leaked
+    probe socket locks the single-client inverter out for ~128s and would
+    fail the very next setup attempt) — must run even when the probe
+    succeeds. Also pins that the configured address reaches the PAC probe.
+    """
+    mock_request.return_value = "{FB;01;10|64:PAC=03E8,0|1234}"
 
-    result = await hass.config_entries.flow.async_init(
-        DOMAIN, context={"source": config_entries.SOURCE_USER}
-    )
-
-    result2 = await hass.config_entries.flow.async_configure(
-        result["flow_id"],
+    await validate_input(
+        hass,
         {
             CONF_HOST: "192.168.1.100",
             CONF_PORT: 12345,
-            CONF_ADDRESS: 1,
+            CONF_ADDRESS: 2,
             CONF_DEVICE_NAME: "Test Inverter",
-            CONF_UPDATE_INTERVAL: 30,
-            CONF_VERIFY_CHECKSUM: False,
         },
     )
 
-    assert result2["type"] == FlowResultType.CREATE_ENTRY
-    mock_api.assert_called_once_with("192.168.1.100", 12345, 1, verify_checksum=False)
+    mock_close.assert_awaited_once()
+    mock_request.assert_awaited_once_with(build_request(2, ["PAC"]))
 
 
-@patch("custom_components.solarmax.config_flow.SolarmaxAPI")
-async def test_update_interval_out_of_range(mock_api, hass: HomeAssistant) -> None:
+@patch(_LINK_CLOSE, new_callable=AsyncMock)
+@patch(_LINK_REQUEST, new_callable=AsyncMock)
+async def test_validate_input_closes_probe_link_on_failure(
+    mock_request, mock_close, hass: HomeAssistant
+) -> None:
+    """Same invariant on the failure path — and covers the LinkClosed arm of
+    the except tuple, which no other test exercises.
+    """
+    mock_request.side_effect = LinkClosed("peer closed the connection")
+
+    with pytest.raises(CannotConnect):
+        await validate_input(
+            hass,
+            {
+                CONF_HOST: "192.168.1.100",
+                CONF_PORT: 12345,
+                CONF_DEVICE_NAME: "Test Inverter",
+            },
+        )
+
+    mock_close.assert_awaited_once()
+
+
+@patch(_LINK_REQUEST, new_callable=AsyncMock)
+async def test_update_interval_out_of_range(mock_request, hass: HomeAssistant) -> None:
     """Test that an out-of-range update interval is rejected by the schema."""
-    mock_api.return_value.test_connection.return_value = True
+    mock_request.return_value = "{FB;01;10|64:PAC=03E8,0|1234}"
 
     result = await hass.config_entries.flow.async_init(
         DOMAIN, context={"source": config_entries.SOURCE_USER}
@@ -111,10 +141,10 @@ async def test_update_interval_out_of_range(mock_api, hass: HomeAssistant) -> No
         )
 
 
-@patch("custom_components.solarmax.config_flow.SolarmaxAPI")
-async def test_form_cannot_connect(mock_api, hass: HomeAssistant) -> None:
-    """Test we handle cannot connect error."""
-    mock_api.return_value.test_connection.return_value = False
+@patch(_LINK_REQUEST, new_callable=AsyncMock)
+async def test_form_cannot_connect(mock_request, hass: HomeAssistant) -> None:
+    """Test we handle cannot connect error (LinkTimeout -> cannot_connect)."""
+    mock_request.side_effect = LinkTimeout("no response")
 
     result = await hass.config_entries.flow.async_init(
         DOMAIN, context={"source": config_entries.SOURCE_USER}
@@ -132,10 +162,10 @@ async def test_form_cannot_connect(mock_api, hass: HomeAssistant) -> None:
     assert result2["errors"] == {"base": "cannot_connect"}
 
 
-@patch("custom_components.solarmax.config_flow.SolarmaxAPI")
-async def test_form_unexpected_exception(mock_api, hass: HomeAssistant) -> None:
+@patch(_LINK_REQUEST, new_callable=AsyncMock)
+async def test_form_unexpected_exception(mock_request, hass: HomeAssistant) -> None:
     """Test we handle unexpected exceptions."""
-    mock_api.return_value.test_connection.side_effect = Exception("Test exception")
+    mock_request.side_effect = Exception("Test exception")
 
     result = await hass.config_entries.flow.async_init(
         DOMAIN, context={"source": config_entries.SOURCE_USER}
@@ -153,10 +183,10 @@ async def test_form_unexpected_exception(mock_api, hass: HomeAssistant) -> None:
     assert result2["errors"] == {"base": "unknown"}
 
 
-@patch("custom_components.solarmax.config_flow.SolarmaxAPI")
-async def test_duplicate_entry_prevention(mock_api, hass: HomeAssistant) -> None:
+@patch(_LINK_REQUEST, new_callable=AsyncMock)
+async def test_duplicate_entry_prevention(mock_request, hass: HomeAssistant) -> None:
     """Test that duplicate entries are prevented."""
-    mock_api.return_value.test_connection.return_value = True
+    mock_request.return_value = "{FB;01;10|64:PAC=03E8,0|1234}"
 
     # Create first entry
     result = await hass.config_entries.flow.async_init(
@@ -211,10 +241,10 @@ def _make_entry() -> MockConfigEntry:
     )
 
 
-@patch("custom_components.solarmax.config_flow.SolarmaxAPI")
-async def test_options_flow(mock_api, hass: HomeAssistant) -> None:
+@patch(_LINK_REQUEST, new_callable=AsyncMock)
+async def test_options_flow(mock_request, hass: HomeAssistant) -> None:
     """Test options flow."""
-    mock_api.return_value.test_connection.return_value = True
+    mock_request.return_value = "{FB;01;10|64:PAC=03E8,0|1234}"
 
     entry = _make_entry()
     entry.add_to_hass(hass)
@@ -239,10 +269,10 @@ async def test_options_flow(mock_api, hass: HomeAssistant) -> None:
     assert entry.data[CONF_UPDATE_INTERVAL] == 60
 
 
-@patch("custom_components.solarmax.config_flow.SolarmaxAPI")
-async def test_options_flow_connection_error(mock_api, hass: HomeAssistant) -> None:
+@patch(_LINK_REQUEST, new_callable=AsyncMock)
+async def test_options_flow_connection_error(mock_request, hass: HomeAssistant) -> None:
     """Test options flow with connection error."""
-    mock_api.return_value.test_connection.return_value = False
+    mock_request.side_effect = LinkTimeout("no response")
 
     entry = _make_entry()
     entry.add_to_hass(hass)

@@ -19,6 +19,7 @@ async def async_get_config_entry_diagnostics(
 ) -> dict[str, Any]:
     """Return diagnostics for a config entry."""
     coordinator: SolarmaxCoordinator = entry.runtime_data
+    snapshot = coordinator.data
 
     integration = await async_get_integration(hass, entry.domain)
 
@@ -41,12 +42,24 @@ async def async_get_config_entry_diagnostics(
                 str(coordinator.last_exception) if coordinator.last_exception else None
             ),
             "update_interval": str(coordinator.update_interval),
-            "data_available": coordinator.data is not None,
-            "data_keys": list(coordinator.data.keys()) if coordinator.data else [],
-            "consecutive_failures": coordinator.consecutive_failures,
-            "is_expected_offline": coordinator.is_expected_offline,
+            "state": snapshot.state if snapshot else None,
+            "reconnecting": snapshot.reconnecting if snapshot else None,
+            "fault_since": (
+                snapshot.fault_since.isoformat()
+                if snapshot and snapshot.fault_since
+                else None
+            ),
+            "last_successful_update": (
+                coordinator.last_successful_update.isoformat()
+                if coordinator.last_successful_update
+                else None
+            ),
         },
-        "api_connection": {},
+        # The engine's own connection/reconnect/timeout counters and its
+        # recent state-transition history — dict(...) copies out of the
+        # snapshot rather than aliasing it, matching the shape of every
+        # other block here.
+        "connection": dict(snapshot.diagnostics) if snapshot else {},
         "sensor_data": {},
         "system_info": {
             "ha_version": hass.config.as_dict().get("version"),
@@ -54,37 +67,14 @@ async def async_get_config_entry_diagnostics(
         },
     }
 
-    if coordinator.last_successful_update:
-        diagnostics_data["coordinator"]["last_successful_update"] = (
-            coordinator.last_successful_update.isoformat()
-        )
-
-    # API connection diagnostics
-    if coordinator.api.last_successful_connection:
-        diagnostics_data["api_connection"]["last_successful_connection"] = (
-            coordinator.api.last_successful_connection.isoformat()
-        )
-
-    # These counters are optional (not all API versions expose them).
-    if hasattr(coordinator.api, "connection_attempts"):
-        diagnostics_data["api_connection"]["connection_attempts"] = (
-            coordinator.api.connection_attempts
-        )
-
-    if hasattr(coordinator.api, "timeout_errors"):
-        diagnostics_data["api_connection"]["timeout_errors"] = (
-            coordinator.api.timeout_errors
-        )
-
     # Add current sensor data
-    if coordinator.data:
+    if snapshot:
         diagnostics_data["sensor_data"] = {
             sensor_key: {
-                "value": sensor_data.get("value"),
-                "raw_value": sensor_data.get("raw_value"),
-                "timestamp": sensor_data.get("timestamp"),
+                "value": sensor_value.get("value"),
+                "raw_value": sensor_value.get("raw_value"),
             }
-            for sensor_key, sensor_data in coordinator.data.items()
+            for sensor_key, sensor_value in snapshot.values.items()
         }
 
     # Add device information (identifiers as a list: diagnostics payloads are
