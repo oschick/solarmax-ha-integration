@@ -167,21 +167,30 @@ class SolarmaxLink:
                 reader, writer = await asyncio.open_connection(self.host, self.port)
         except TimeoutError as err:
             self.timeouts += 1
-            await self._close_transport()
+            self._abort_transport()
             raise LinkTimeout(f"connect to {self.host}:{self.port} timed out") from err
         except OSError as err:
-            await self._close_transport()
+            self._abort_transport()
             raise LinkClosed(
                 f"connect to {self.host}:{self.port} failed: {err}"
             ) from err
 
-        sock = writer.get_extra_info("socket")
-        if sock is not None:
-            sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
-            sock.setsockopt(socket.SOL_SOCKET, socket.SO_KEEPALIVE, 1)
+        # Assign before setsockopt so a failure below leaves a live writer
+        # reachable by `_abort_transport` — never an orphaned open socket.
         self._reader = reader
         self._writer = writer
         self.connected = True
+
+        try:
+            sock = writer.get_extra_info("socket")
+            if sock is not None:
+                sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
+                sock.setsockopt(socket.SOL_SOCKET, socket.SO_KEEPALIVE, 1)
+        except OSError as err:
+            self._abort_transport()
+            raise LinkClosed(
+                f"connect to {self.host}:{self.port} failed: {err}"
+            ) from err
 
     async def _send_receive(self, payload: str) -> str:
         reader, writer = self._reader, self._writer
@@ -200,7 +209,7 @@ class SolarmaxLink:
                 return buf.decode(errors="ignore")
         except TimeoutError as err:
             self.timeouts += 1
-            await self._close_transport()
+            self._abort_transport()
             raise LinkTimeout(
                 f"no response from {self.host}:{self.port} "
                 f"within {self.response_timeout}s"
@@ -210,6 +219,30 @@ class SolarmaxLink:
         except OSError as err:
             await self._close_transport()
             raise LinkClosed(f"{self.host}:{self.port}: {err}") from err
+        except asyncio.CancelledError:
+            # External cancellation (e.g. an outer asyncio.timeout wrapping a
+            # poll, or HA cancelling a coordinator refresh on unload) can land
+            # here mid-read. Abort synchronously — no `await` — so an
+            # in-flight response can never be left on the wire for the NEXT
+            # request() to read as a stale frame.
+            self._abort_transport()
+            raise
+
+    def _abort_transport(self) -> None:
+        """Synchronous, non-blocking transport teardown.
+
+        `writer.close()` + `await writer.wait_closed()` is a graceful
+        shutdown that can block if the peer has stopped reading (the
+        measured silent-hang lockout). `transport.abort()` tears the socket
+        down immediately and has no `await`, so it is also safe to call
+        while unwinding a `CancelledError`.
+        """
+        writer = self._writer
+        self._writer = None
+        self._reader = None
+        self.connected = False
+        if writer is not None:
+            writer.transport.abort()
 
     async def _close_transport(self) -> None:
         writer = self._writer

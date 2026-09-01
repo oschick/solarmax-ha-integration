@@ -1,7 +1,9 @@
 """SolarmaxLink transport tests — real sockets against the emulator."""
 
 import asyncio
+import socket
 import time
+from unittest.mock import patch
 
 import pytest
 
@@ -45,6 +47,63 @@ async def test_dark_device_times_out_within_budget(emulator):
         with pytest.raises(LinkTimeout):
             await link.request(build_request(1, ["PAC"]))
         assert time.monotonic() - start < 2.0
+    finally:
+        await link.close()
+
+
+async def test_cancellation_mid_request_aborts_transport_no_stale_frame(emulator):
+    """Cancelling a request mid-flight must abort synchronously, leaving the
+    link deterministically closed rather than a live, desynchronised stream
+    that would hand the NEXT request a leftover frame."""
+    link = SolarmaxLink(*emulator.addr)
+    try:
+        first = await link.request(build_request(1, ["PAC"]))
+        assert "PAC=" in first
+
+        emulator.begin_dusk(announce_seconds=0)
+        await asyncio.sleep(0.3)  # emulator now swallows requests silently
+
+        # An outer asyncio.timeout shorter than response_timeout cancels the
+        # in-flight request(); asyncio.timeout converts that CancelledError
+        # to TimeoutError on its own __aexit__ once it reaches the caller.
+        with pytest.raises(TimeoutError):
+            async with asyncio.timeout(0.05):
+                await link.request(build_request(1, ["PAC"]))
+        assert link.connected is False
+
+        emulator.wake()
+        response = await link.request(build_request(1, ["PAC"]))
+        assert "PAC=" in response
+    finally:
+        await link.close()
+
+
+async def test_setsockopt_failure_after_connect_raises_link_closed(emulator):
+    """A live-but-freshly-opened socket that fails setsockopt must be
+    reachable by `close`/abort — never orphaned — and never leak a raw
+    OSError. Targets SO_KEEPALIVE specifically: asyncio's own
+    open_connection already sets TCP_NODELAY internally, so mocking that
+    option would also trip on asyncio's own call before ours ever runs."""
+    from custom_components.solarmax.connection import LinkClosed
+
+    real_setsockopt = socket.socket.setsockopt
+
+    def _boom(self, *args):
+        if args[:2] == (socket.SOL_SOCKET, socket.SO_KEEPALIVE):
+            raise OSError("simulated setsockopt failure")
+        return real_setsockopt(self, *args)
+
+    link = SolarmaxLink(*emulator.addr)
+    try:
+        with patch.object(socket.socket, "setsockopt", _boom):
+            with pytest.raises(LinkClosed):
+                await link.request(build_request(1, ["PAC"]))
+        assert link.connected is False
+
+        # The live socket must have been torn down, not orphaned: a fresh
+        # link must be able to connect and get a real answer right after.
+        response = await link.request(build_request(1, ["PAC"]))
+        assert "PAC=" in response
     finally:
         await link.close()
 
