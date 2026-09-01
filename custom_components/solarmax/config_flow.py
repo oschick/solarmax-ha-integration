@@ -15,12 +15,14 @@ from .const import (
     CONF_ADDRESS,
     CONF_DEVICE_NAME,
     CONF_HOST,
+    CONF_NIGHT_KEEP_VALUES,
     CONF_PORT,
     CONF_TWILIGHT_ELEVATION_THRESHOLD,
     CONF_UPDATE_INTERVAL,
     CONF_VERIFY_CHECKSUM,
     DEFAULT_ADDRESS,
     DEFAULT_DEVICE_NAME,
+    DEFAULT_NIGHT_KEEP_VALUES,
     DEFAULT_PORT,
     DEFAULT_TWILIGHT_ELEVATION_THRESHOLD,
     DEFAULT_UPDATE_INTERVAL,
@@ -41,6 +43,7 @@ _DEFAULT_VALUES: dict[str, Any] = {
     CONF_DEVICE_NAME: DEFAULT_DEVICE_NAME,
     CONF_VERIFY_CHECKSUM: DEFAULT_VERIFY_CHECKSUM,
     CONF_TWILIGHT_ELEVATION_THRESHOLD: DEFAULT_TWILIGHT_ELEVATION_THRESHOLD,
+    CONF_NIGHT_KEEP_VALUES: DEFAULT_NIGHT_KEEP_VALUES,
 }
 
 
@@ -61,6 +64,9 @@ def _build_schema(values: dict[str, Any]) -> vol.Schema:
             vol.Optional(CONF_DEVICE_NAME, default=values[CONF_DEVICE_NAME]): str,
             vol.Optional(
                 CONF_VERIFY_CHECKSUM, default=values[CONF_VERIFY_CHECKSUM]
+            ): bool,
+            vol.Optional(
+                CONF_NIGHT_KEEP_VALUES, default=values[CONF_NIGHT_KEEP_VALUES]
             ): bool,
             vol.Optional(
                 CONF_TWILIGHT_ELEVATION_THRESHOLD,

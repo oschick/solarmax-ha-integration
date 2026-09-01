@@ -12,10 +12,12 @@ from custom_components.solarmax.const import (
     CONF_ADDRESS,
     CONF_DEVICE_NAME,
     CONF_HOST,
+    CONF_NIGHT_KEEP_VALUES,
     CONF_PORT,
     CONF_TWILIGHT_ELEVATION_THRESHOLD,
     CONF_UPDATE_INTERVAL,
     CONF_VERIFY_CHECKSUM,
+    DEFAULT_NIGHT_KEEP_VALUES,
     DEFAULT_TWILIGHT_ELEVATION_THRESHOLD,
     DOMAIN,
 )
@@ -59,6 +61,7 @@ async def test_form_successful_connection(mock_api, hass: HomeAssistant) -> None
         CONF_DEVICE_NAME: "Test Inverter",
         CONF_UPDATE_INTERVAL: 30,
         CONF_VERIFY_CHECKSUM: True,
+        CONF_NIGHT_KEEP_VALUES: DEFAULT_NIGHT_KEEP_VALUES,
         CONF_TWILIGHT_ELEVATION_THRESHOLD: DEFAULT_TWILIGHT_ELEVATION_THRESHOLD,
     }
 
@@ -260,3 +263,17 @@ async def test_options_flow_connection_error(mock_api, hass: HomeAssistant) -> N
 
     assert result2["type"] == FlowResultType.FORM
     assert result2["errors"] == {"base": "cannot_connect"}
+
+
+async def test_night_keep_values_defaults_to_disabled(hass):
+    """The new option must not change behaviour for anyone who ignores it."""
+    result = await hass.config_entries.flow.async_init(
+        DOMAIN, context={"source": config_entries.SOURCE_USER}
+    )
+
+    # Read the default off the vol.Optional marker rather than validating
+    # an empty dict — the schema has vol.Required("host"), so schema({})
+    # raises MultipleInvalid instead of applying defaults.
+    schema_keys = {str(key): key for key in result["data_schema"].schema}
+    assert "night_keep_values" in schema_keys
+    assert schema_keys["night_keep_values"].default() is False

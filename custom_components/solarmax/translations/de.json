@@ -11,6 +11,7 @@
           "update_interval": "Aktualisierungsintervall (Sekunden)",
           "device_name": "Gerätename",
           "verify_checksum": "Antwort-Prüfsumme verifizieren",
+          "night_keep_values": "Sensorwerte über Nacht beibehalten",
           "twilight_elevation_threshold": "Dämmerungs-Höhenwinkelschwelle (Grad)"
         }
       }
@@ -37,6 +38,7 @@
           "update_interval": "Aktualisierungsintervall (Sekunden)",
           "device_name": "Gerätename",
           "verify_checksum": "Antwort-Prüfsumme verifizieren",
+          "night_keep_values": "Sensorwerte über Nacht beibehalten",
           "twilight_elevation_threshold": "Dämmerungs-Höhenwinkelschwelle (Grad)"
         }
       }

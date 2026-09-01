@@ -11,6 +11,7 @@
           "update_interval": "Update interval (seconds)",
           "device_name": "Device name",
           "verify_checksum": "Verify response checksum",
+          "night_keep_values": "Keep sensor values overnight",
           "twilight_elevation_threshold": "Twilight elevation threshold (degrees)"
         }
       }
@@ -37,6 +38,7 @@
           "update_interval": "Update interval (seconds)",
           "device_name": "Device name",
           "verify_checksum": "Verify response checksum",
+          "night_keep_values": "Keep sensor values overnight",
           "twilight_elevation_threshold": "Twilight elevation threshold (degrees)"
         }
       }

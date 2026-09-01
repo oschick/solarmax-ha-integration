@@ -130,6 +130,7 @@ The integration can be configured through the Home Assistant UI:
    - **Update Interval**: How often to poll data (default: 30 seconds)
    - **Device Name**: Friendly name for your inverter
    - **Verify response checksum**: Validate CRC on inverter responses (default: enabled)
+   - **Keep sensor values overnight**: Give applicable sensors a meaningful value while the inverter sleeps, instead of going unavailable (default: disabled)
    - **Twilight elevation threshold**: Sun elevation (degrees) below which the inverter is expected to be offline (default: 5)
 
 ### Twilight Elevation Threshold
@@ -150,6 +151,27 @@ To disable checksum verification:
 5. Click **Submit**
 
 > **Note:** Disabling checksum verification means corrupted responses will not be detected. Only disable this if you are experiencing checksum errors and have verified that the data values are otherwise correct.
+
+### Night-Time Sensor Behavior
+
+By default, all sensors go **unavailable** whenever the inverter itself is offline — including overnight, when the inverter powers down because there is no sunlight to convert. This is accurate but can be inconvenient: history graphs gap out every night, and automations that key off a sensor's state have nothing to read.
+
+The **Keep sensor values overnight** option (off by default) changes this for sensors where a meaningful overnight value actually exists. Enabling it does not affect daytime behavior at all — if the inverter drops offline during the day (a real fault), affected sensors still go unavailable exactly as before. The option only changes what happens once night has been detected (see [Twilight Elevation Threshold](#twilight-elevation-threshold)).
+
+When enabled, each sensor is treated according to which of four groups it falls into:
+
+| Group | Sensors | Overnight value | Why |
+|---|---|---|---|
+| **Zeroed** | AC Power, DC Power, DC Power String 1-3, Relative Power (`PAC`, `PDC`, `PD01`-`PD03`, `PRL`); DC Current, DC Current String 1-3, AC Current Phase 1-3 (`IDC`, `ID01`-`ID03`, `IL1`-`IL3`); DC Voltage, DC Voltage String 1-3 (`UDC`, `UD01`-`UD03`) | `0` | There is no production at night: power and current are genuinely zero, and unlit DC strings sit at roughly 0 V. |
+| **Held** | Energy Month, Energy Year, Energy Total, Power On Hours, Startups (`KMT`, `KYR`, `KT0`, `KHR`, `CAC`); Energy Yesterday, Energy Last Month, Energy Last Year (`KLD`, `KLM`, `KLY`); Installed Power, Grid Voltage Upper/Lower Limit, Grid Frequency Upper/Lower Limit (`PIN`, `ULH`, `ULL`, `TNH`, `TNL`); Alarm Status (`SAL`) | Last known value | These are cumulative counters that must never regress, historical totals, or static configuration reads that don't change overnight. An alarm that was live at dusk also stays visible through the night rather than silently disappearing. |
+| **Held, then reset at midnight** | Energy Day (`KDY`) | Last known value, then `0` after local midnight | The inverter resets its own daily energy counter at midnight, so the integration mirrors that reset locally rather than holding yesterday's total into the new day. |
+| **Still unavailable** | AC Voltage Phase 1-3 (`UL1`-`UL3`); Grid Frequency (`TNF`); Inverter Temperature, Inverter Temperature 2-3 (`TKK`, `TK2`, `TK3`) | *(unchanged — unavailable)* | These have no honest overnight value: grid voltage isn't 0 V, the grid isn't at 0 Hz, and the inverter cools down overnight, so a held temperature would be a lie. |
+
+Any sensor not listed above is not affected by this option.
+
+Sensors reporting a synthesized value expose a `night_value_source` attribute set to `"hold"` or `"zero"`. This attribute is only present while the value is synthetic — it is **absent entirely** during normal (daytime, or option-disabled) operation. Automations should check for the attribute's presence rather than compare it to `false`.
+
+> **Known limitation:** if Home Assistant restarts while the inverter is offline overnight, the integration cannot create any entities at all — setup raises `ConfigEntryNotReady` because the very first refresh can't reach the inverter, and there is no previous state to hold or zero. If you enable this option and Home Assistant (or the add-on/container it runs in) restarts overnight, expect to see no Solarmax entities until the inverter answers again at dawn.
 
 ### Reconfiguration
 
@@ -332,7 +354,7 @@ automation:
 - **No Control**: Read-only integration (monitoring only, no inverter control)
 - **No String Detection**: Cannot auto-detect number of DC strings
 - **Basic Diagnostics**: Limited to data provided by inverter protocol
-- **Night Mode**: All sensors unavailable when inverter is offline at night
+- **Night Mode**: Sensors go unavailable when the inverter is offline at night, unless the optional **Keep sensor values overnight** setting is enabled (see [Night-Time Sensor Behavior](#night-time-sensor-behavior))
 
 ### Performance Considerations
 - **Update Frequency**: Minimum recommended interval is 10 seconds

@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **Configurable night-time sensor behavior**: an opt-in `Keep sensor values overnight` option keeps sensors meaningful while the inverter sleeps — production readings report 0, cumulative counters and static config reads hold their last value, and AC grid voltage/frequency and temperatures still go unavailable because they have no honest night-time value. Synthesised values are flagged with a `night_value_source` attribute. Disabled by default, so existing installs are unchanged.
+
 ## [1.3.3] - 2026-08-11
 
 ### Added
