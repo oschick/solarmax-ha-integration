@@ -12,7 +12,7 @@
           "device_name": "Gerätename",
           "verify_checksum": "Antwort-Prüfsumme verifizieren",
           "night_keep_values": "Sensorwerte über Nacht beibehalten",
-          "twilight_elevation_threshold": "Dämmerungs-Höhenwinkelschwelle (Grad)"
+          "twilight_elevation_threshold": "Sonnenhöhenwinkel, unterhalb dessen eine unangekündigte Verbindungstrennung als erwartet gilt (startet außerdem die schnellere Abfrage in der Dämmerung)"
         }
       }
     },
@@ -39,7 +39,7 @@
           "device_name": "Gerätename",
           "verify_checksum": "Antwort-Prüfsumme verifizieren",
           "night_keep_values": "Sensorwerte über Nacht beibehalten",
-          "twilight_elevation_threshold": "Dämmerungs-Höhenwinkelschwelle (Grad)"
+          "twilight_elevation_threshold": "Sonnenhöhenwinkel, unterhalb dessen eine unangekündigte Verbindungstrennung als erwartet gilt (startet außerdem die schnellere Abfrage in der Dämmerung)"
         }
       }
     },
@@ -64,7 +64,15 @@
   "issues": {
     "connection_issues": {
       "title": "Wechselrichter Verbindungsprobleme",
-      "description": "Der Wechselrichter bei {host}:{port} hatte {failures} aufeinanderfolgende Verbindungsfehler. Überprüfen Sie die Netzwerkverbindung und den Wechselrichterstatus."
+      "description": "Der Wechselrichter bei {host}:{port} ist seit {minutes} Minuten nicht erreichbar. Überprüfen Sie die Netzwerkverbindung und den Wechselrichterstatus.",
+      "fix_flow": {
+        "step": {
+          "confirm": {
+            "title": "Wechselrichter nicht erreichbar",
+            "description": "Der Wechselrichter bei {host}:{port} ist seit {minutes} Minuten tagsüber nicht erreichbar. Überprüfen Sie Stromversorgung, Netzwerk und die DC-Seite und bestätigen Sie anschließend, um dieses Problem zu schließen."
+          }
+        }
+      }
     },
     "configuration_issue": {
       "title": "Konfigurationsproblem",
@@ -254,8 +262,8 @@
           "device_error_121": "Gerätefehler 121",
           "grid_voltage_high": "Netzspannung zu hoch",
           "grid_voltage_low": "Netzspannung zu niedrig",
-          "device_error_124": "Gerätefehler 124",
-          "device_error_125": "Gerätefehler 125",
+          "temperature_too_high": "Temperatur zu hoch",
+          "grid_current_asymmetric": "Netzstrom asymmetrisch",
           "external_input_error_1": "Fehler externer Eingang 1",
           "external_input_error_2": "Fehler externer Eingang 2",
           "device_error_128": "Gerätefehler 128",
@@ -319,8 +327,8 @@
           "device_error_198": "Gerätefehler 198",
           "device_error_199": "Gerätefehler 199",
           "device_error_999": "Gerätefehler 999",
-          "offline_night": "Offline (Nacht)",
-          "connection_failed": "Verbindung fehlgeschlagen",
+          "offline_expected": "Offline (erwartet)",
+          "offline_fault": "Offline (Störung)",
           "unknown": "Unbekannt"
         }
       }

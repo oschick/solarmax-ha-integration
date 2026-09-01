@@ -135,7 +135,7 @@ The integration can be configured through the Home Assistant UI:
 
 ### Twilight Elevation Threshold
 
-During dusk and dawn, the sun may technically be above the horizon while irradiance is still too low for the inverter to operate. The integration treats the inverter as expected to be offline while the sun's elevation is below this configurable threshold, avoiding false "unavailable" warnings during these twilight periods.
+During dusk and dawn, the sun may technically be above the horizon while irradiance is still too low for the inverter to operate. Whenever a disconnect isn't otherwise recognized as a normal shutdown (see [Connection States & Offline Detection](#connection-states--offline-detection)), the integration falls back to treating the inverter as expected to be offline while the sun's elevation is below this threshold. It also sets the boundary for adaptive polling: every 15 minutes below the threshold, every 60 seconds above it while still offline.
 
 If your inverter starts up later or shuts down earlier relative to sunrise/sunset than expected, adjust this value (0-90 degrees) via **Configure** on the integration.
 
@@ -171,7 +171,7 @@ Any sensor not listed above is not affected by this option.
 
 Sensors reporting a synthesized value expose a `night_value_source` attribute set to `"hold"` or `"zero"`. This attribute is only present while the value is synthetic — it is **absent entirely** during normal (daytime, or option-disabled) operation. Automations should check for the attribute's presence rather than compare it to `false`.
 
-> **Known limitation:** if Home Assistant restarts while the inverter is offline overnight, the integration cannot create any entities at all — setup raises `ConfigEntryNotReady` because the very first refresh can't reach the inverter, and there is no previous state to hold or zero. If you enable this option and Home Assistant (or the add-on/container it runs in) restarts overnight, expect to see no Solarmax entities until the inverter answers again at dawn.
+> **Note:** Home Assistant restarts overnight now create entities immediately — the coordinator's first refresh can no longer fail (a dark inverter simply produces a connection-state snapshot instead of raising), so there is no `ConfigEntryNotReady` and no missing-entities window. With this option enabled, zeroed sensors (`PAC`, `PDC`, etc.) report `0` from the moment Home Assistant starts, even on a fresh restart; held sensors (`KMT`, `KYR`, `SAL`, etc.) stay `unavailable` until the first successful poll actually captures a value to hold, since there is nothing from a previous restart to carry over.
 
 ### Reconfiguration
 
@@ -188,12 +188,43 @@ You can modify the integration settings without removing and re-adding:
 The integration uses **local polling** via the **MaxComm protocol** to retrieve data from your inverter:
 
 - **Protocol**: MaxComm (proprietary SolarMax TCP protocol, documented August 2022)
-- **Update Method**: Direct TCP/IP connection to inverter (default port 12345)
-- **Update Frequency**: Configurable (default: 30 seconds)
-- **Night Mode**: Automatically detects when inverter is offline at night
-- **Retry Logic**: Smart retry with exponential backoff for connection failures
-- **Connection Health**: Tracks consecutive failures and connection statistics
+- **Update Method**: One persistent TCP connection (default port 12345), reused across polls rather than reconnecting every cycle
+- **Update Frequency**: Configurable during the day (default: 30 seconds); adaptive while offline — see [Connection States & Offline Detection](#connection-states--offline-detection)
+- **Retry Logic**: One retry per poll, only for a corrupted/truncated response (line noise); a timeout or a closed connection is never retried within the same poll
 - **Checksum Verification**: Validates response CRC to detect corrupt data
+
+### Connection States & Offline Detection
+
+The integration keeps one persistent connection open and classifies its state from what each poll actually observes — never from elapsed time or assumptions about why a request failed. The **Status Code** sensor always reflects the current connection state as one of four values:
+
+| State | Meaning |
+|---|---|
+| `online` | The last poll succeeded. |
+| `offline_expected` | The inverter is offline for a reason the integration recognizes as normal (see "Arming" below). |
+| `offline_fault` | The inverter is offline for an unrecognized reason during the day — a real problem. |
+| `unknown` | No poll has completed yet, e.g. immediately after Home Assistant starts. |
+
+**Arming — what counts as "expected":** the integration watches the last successful poll for two independent signals that the inverter is about to power down on its own:
+- it announces the shutdown via status code `SYS 20002` ("low irradiation"), or
+- DC power (`PDC`) reads below 25 W on that single poll (a strict `<`, not `<=`).
+
+Either signal arms the connection: the *next* disconnect is then classified `offline_expected` regardless of its actual cause. Arming is cleared on every successful poll and re-evaluated from scratch each time.
+
+Some firmware versions never announce the shutdown or dip below the `PDC` threshold before dropping off the network. For those, a disconnect while the sun is below the configured [twilight elevation threshold](#twilight-elevation-threshold) is also classified `offline_expected`, armed or not.
+
+**Polling cadence:** the configured update interval applies whenever the connection is `online` or `offline_fault`. Once `offline_expected`, polling slows down: every 15 minutes (900 s) while the sun is below the twilight threshold, or every 60 seconds once the sun is back above it — fast enough to notice the inverter waking up at dawn without polling a sleeping device all night.
+
+**Daytime faults:** a poll failure that is neither armed nor below the twilight threshold is an honest `offline_fault` starting with the very first failed poll — all sensors except Status Code go `unavailable` immediately (there is no multi-failure grace window). If the fault persists for 5 minutes, a **repair issue** appears under **Settings → Repairs** with the host, port, and elapsed minutes, refreshing every minute and clearing automatically once the connection recovers.
+
+**Diagnostic attributes** on the Status Code sensor while not `online`:
+
+| Attribute | Meaning |
+|---|---|
+| `fault_since` | ISO timestamp of when the current fault began (only set for `offline_fault`). |
+| `reconnecting` | `true` for the first 150 seconds after any unclean disconnect (including right after Home Assistant starts), while the integration is still within its reconnect grace window. |
+| `expected_outside_twilight` | `true` when the inverter armed (announced shutdown or low `PDC`) *before* the sun actually reached the twilight threshold — an anomaly worth investigating (e.g. shading), rather than a normal dusk. |
+
+> **Migrating from an older version:** the Status Code sensor's connection states were renamed — `offline_night` → `offline_expected`, `connection_failed` → `offline_fault`. Automations or dashboards matching the old strings need updating. Three status-sensor attributes were also removed: `expected_offline`, `consecutive_failures`, and `last_api_connection`; the attributes above (`fault_since`, `reconnecting`, `expected_outside_twilight`) replace them.
 
 ### MaxComm Protocol Overview
 
@@ -204,6 +235,7 @@ The MaxComm protocol is a Master-Slave TCP protocol used by SolarMax inverters:
 - **Response Time**: Typical 300ms, maximum timeout 3000ms
 - **Addressing**: Device addresses 1–249 (configurable on the inverter)
 - **Error Detection**: 4-character hex CRC checksum on every packet
+- **Single client only**: the inverter accepts exactly one TCP connection at a time and FINs an idle connection after roughly 100 seconds. Running two pollers against the same inverter (this integration plus a vendor app, or two Home Assistant instances) will cause one of them to fail. If a connection is ever leaked without a clean close (a crash, a force-kill), the inverter can lock out new connections for up to ~128 seconds before accepting one again — the integration always closes its connection deterministically on unload for exactly this reason.
 
 Request/response format:
 ```
@@ -213,11 +245,11 @@ Request/response format:
 The integration queries all supported data keys in a single request. Keys not recognized by the inverter are simply omitted from the response (graceful degradation).
 
 ### Update Process
-1. Integration connects to inverter via TCP socket (port 12345)
-2. Builds a MaxComm protocol request with all monitored data keys
-3. Receives and validates response (CRC checksum verification)
+1. On the first poll (or the first poll after re-arming at dusk/dawn), the integration opens its one TCP connection and requests the static/device keys once; every poll after that reuses the same connection
+2. Builds a MaxComm protocol request with the monitored data keys and sends it
+3. Receives and validates the response (CRC checksum verification), retrying once if the frame is corrupted or truncated
 4. Parses hex-encoded values and applies network variable scaling
-5. Handles errors gracefully (temporary network issues, night mode, etc.)
+5. Classifies the poll's outcome into a connection state (see [Connection States & Offline Detection](#connection-states--offline-detection)) — a poll never raises an exception that Home Assistant would treat as a coordinator failure
 6. Logs diagnostic information for troubleshooting
 
 ## Use Cases
@@ -354,11 +386,11 @@ automation:
 - **No Control**: Read-only integration (monitoring only, no inverter control)
 - **No String Detection**: Cannot auto-detect number of DC strings
 - **Basic Diagnostics**: Limited to data provided by inverter protocol
-- **Night Mode**: Sensors go unavailable when the inverter is offline at night, unless the optional **Keep sensor values overnight** setting is enabled (see [Night-Time Sensor Behavior](#night-time-sensor-behavior))
+- **Offline Sensors**: Sensors go unavailable whenever the inverter is offline (night, or a daytime fault), unless the optional **Keep sensor values overnight** setting is enabled (see [Night-Time Sensor Behavior](#night-time-sensor-behavior)); the Status Code sensor always stays available and reports why (see [Connection States & Offline Detection](#connection-states--offline-detection))
 
 ### Performance Considerations
 - **Update Frequency**: Minimum recommended interval is 10 seconds
-- **Network Impact**: Each update requires TCP connection establishment
+- **Network Impact**: One TCP connection is opened and reused across polls, not re-established every update
 - **Memory Usage**: Minimal, but stores recent connection history
 
 ## Troubleshooting
@@ -395,15 +427,15 @@ automation:
 
 #### Problem: "Sensors showing 'unavailable'"
 **Possible Causes:**
-- Inverter is in night mode (expected behavior)
-- Temporary connection failure
+- The inverter is offline for a recognized reason — night, dusk/dawn, or an announced shutdown (`offline_expected`)
+- A genuine daytime connection fault (`offline_fault`) — sensors go unavailable from the first failed poll
 - Protocol communication error
 
 **Solutions:**
-1. Check if it's nighttime (sensors automatically become unavailable)
+1. Check the **Status Code** sensor — it always stays available and reports `offline_expected` (normal) or `offline_fault` (a real problem); see [Connection States & Offline Detection](#connection-states--offline-detection)
 2. Review logs for connection errors
-3. Wait for sunrise if inverter is in night mode
-4. Restart integration if issue persists during day
+3. If `offline_expected`, wait for dawn — polling automatically speeds up as the sun approaches the twilight threshold
+4. If `offline_fault` persists for 5 minutes, a repair issue appears under **Settings → Repairs**; otherwise restart the integration if the issue persists during the day
 
 #### Problem: "Incorrect sensor values"
 **Possible Causes:**
@@ -551,8 +583,8 @@ The **Status Code** and **Alarm Status** sensors use Home Assistant's enum senso
 | 20190 | `below_average_yield` | Below-average yield |
 | 20191 | `limitation_error` | Limitation error |
 | 20999 | `device_error_999` | Device error 999 |
-| — | `offline_night` | Offline (Night) |
-| — | `connection_failed` | Connection failed |
+| — | `offline_expected` | Offline (expected) |
+| — | `offline_fault` | Offline (fault) |
 | — | `unknown` | Unknown |
 
 Codes 20101–20199 not listed above are mapped as generic `device_error_NNN` states. All states are translated into English, German, and French.
@@ -581,7 +613,7 @@ To contribute a new language translation:
 
 1. Copy `custom_components/solarmax/translations/en.json` to a new file named with the [BCP 47 language code](https://en.wikipedia.org/wiki/IETF_language_tag) (e.g. `es.json` for Spanish, `nl.json` for Dutch).
 2. Translate all string values — **do not change any keys**.
-3. Keep all placeholder variables intact (e.g. `{host}`, `{port}`, `{failures}`).
+3. Keep all placeholder variables intact (e.g. `{host}`, `{port}`, `{minutes}`).
 4. Submit a pull request.
 
 Example for a new file `es.json`:

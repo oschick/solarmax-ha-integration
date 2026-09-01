@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed — BREAKING
+- **Status sensor vocabulary**: `offline_night` → `offline_expected`, `connection_failed` → `offline_fault`. Automations matching the old strings must be updated.
+- **Complete connection-engine redesign**: async persistent connection (measured single-client behaviour respected), observation-based offline classification (inverter shutdown announcement SYS 20002 or DC power < 25 W, sun-position fallback), adaptive polling (15 min at night, 60 s from dawn), sensors go unavailable on the first failed daytime poll, and Home Assistant restarts at night now create entities immediately.
+
 ### Added
 - **Configurable night-time sensor behavior**: an opt-in `Keep sensor values overnight` option keeps sensors meaningful while the inverter sleeps — production readings report 0, cumulative counters and static config reads hold their last value, and AC grid voltage/frequency and temperatures still go unavailable because they have no honest night-time value. Synthesised values are flagged with a `night_value_source` attribute. Disabled by default, so existing installs are unchanged.
 

@@ -12,7 +12,7 @@
           "device_name": "Device name",
           "verify_checksum": "Verify response checksum",
           "night_keep_values": "Keep sensor values overnight",
-          "twilight_elevation_threshold": "Twilight elevation threshold (degrees)"
+          "twilight_elevation_threshold": "Sun elevation below which an unannounced disconnect counts as expected (also starts fast dawn polling)"
         }
       }
     },
@@ -39,7 +39,7 @@
           "device_name": "Device name",
           "verify_checksum": "Verify response checksum",
           "night_keep_values": "Keep sensor values overnight",
-          "twilight_elevation_threshold": "Twilight elevation threshold (degrees)"
+          "twilight_elevation_threshold": "Sun elevation below which an unannounced disconnect counts as expected (also starts fast dawn polling)"
         }
       }
     },
@@ -64,7 +64,15 @@
   "issues": {
     "connection_issues": {
       "title": "Inverter Connection Issues",
-      "description": "The inverter at {host}:{port} has had {failures} consecutive connection failures. Check network connectivity and inverter status."
+      "description": "The inverter at {host}:{port} has been unreachable for {minutes} minutes. Check network connectivity and inverter status.",
+      "fix_flow": {
+        "step": {
+          "confirm": {
+            "title": "Inverter unreachable",
+            "description": "The inverter at {host}:{port} has been unreachable for {minutes} minutes during daytime. Check power, network, and the DC side, then confirm to dismiss."
+          }
+        }
+      }
     },
     "configuration_issue": {
       "title": "Configuration Issue",
@@ -303,8 +311,8 @@
           "device_error_198": "Device error 198",
           "device_error_199": "Device error 199",
           "device_error_999": "Device error 999",
-          "offline_night": "Offline (Night)",
-          "connection_failed": "Connection failed",
+          "offline_expected": "Offline (expected)",
+          "offline_fault": "Offline (fault)",
           "unknown": "Unknown"
         }
       },
