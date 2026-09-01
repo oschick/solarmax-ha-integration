@@ -136,16 +136,6 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             step_id="user",
             data_schema=_build_schema(_DEFAULT_VALUES),
             errors=errors,
-            description_placeholders={
-                "host": "IP address of your Solarmax inverter",
-                "port": "Communication port (usually 12345)",
-                "update_interval": "How often to poll for data (seconds)",
-                "device_name": "Friendly name for this inverter",
-                "twilight_elevation_threshold": (
-                    "Sun elevation (degrees) below which the inverter is "
-                    "expected to be offline"
-                ),
-            },
         )
 
 

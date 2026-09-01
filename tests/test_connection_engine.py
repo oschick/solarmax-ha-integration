@@ -244,3 +244,57 @@ async def test_sun_below_callback_exception_does_not_escape_poll(emulator):
         assert snapshot.state is EngineState.OFFLINE_FAULT
     finally:
         await engine.close()
+
+
+async def test_dawn_recovery_after_on_failure_closed_link(emulator):
+    """Final-review finding #1 regression guard.
+
+    `ConnectionEngine._on_failure` calls `self._link.close()` on every
+    OFFLINE_EXPECTED entry (so statics get re-fetched on the next connect,
+    see the comment in `_on_failure`). The close()-vs-in-flight-poll race
+    fix must NOT make `SolarmaxLink._closing` sticky: if it were never
+    cleared, this routine close() at dusk would permanently refuse to
+    reconnect and the integration would stay dark forever after the first
+    night. `request()` clearing `_closing` on its own next entry is what
+    keeps this dusk -> dawn recovery working.
+    """
+    engine = _engine(emulator, sun_below=lambda: True)
+    try:
+        snapshot = await engine.poll()
+        assert snapshot.state is EngineState.ONLINE
+
+        emulator.dark = True
+        snapshot = await engine.poll()  # -> OFFLINE_EXPECTED, engine closes link
+        assert snapshot.state is EngineState.OFFLINE_EXPECTED
+
+        emulator.wake()
+        snapshot = await engine.poll()  # dawn: link must be able to reconnect
+        assert snapshot.state is EngineState.ONLINE
+    finally:
+        await engine.close()
+
+
+async def test_empty_first_statics_frame_is_refetched(emulator):
+    """Final-review finding #4: an empty statics frame must not latch
+    `_statics_loaded`.
+
+    `inject("empty_data")` poisons exactly the next response, which is the
+    very first request a fresh engine sends (statics + device fields). That
+    parses cleanly to `{}` — no exception — so before the fix
+    `_statics_loaded` was set True unconditionally and TYP/PIN never
+    arrived for the life of the entry. The fix gates on the device-info
+    keys actually landing, so the next poll must re-fetch and succeed.
+    """
+    emulator.inject("empty_data")
+    engine = _engine(emulator)
+    try:
+        snapshot = await engine.poll()
+        assert snapshot.state is EngineState.ONLINE
+        assert "TYP" not in snapshot.values
+        assert "PIN" not in snapshot.values
+
+        snapshot = await engine.poll()  # must re-fetch statics this time
+        assert "TYP" in snapshot.values
+        assert "PIN" in snapshot.values
+    finally:
+        await engine.close()

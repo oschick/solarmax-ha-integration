@@ -112,9 +112,9 @@ def test_other_sensor_unavailable_when_offline_fault(
 ):
     """A daytime OFFLINE_FAULT makes a normal sensor unavailable immediately.
 
-    DAYTIME_FAILURE_GRACE is gone: the engine already absorbs transient
-    failures (retries, then an UNKNOWN reconnect grace) before ever
-    reporting OFFLINE_FAULT, so a sensor-level grace on top was redundant.
+    DAYTIME_FAILURE_GRACE is gone: the spec mandates unavailable on the
+    first failed daytime poll (Q19(b)), and a sensor-level grace on top
+    would have directly contradicted that.
     """
     _set_fault(mock_coordinator)
 

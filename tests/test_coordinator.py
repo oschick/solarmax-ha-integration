@@ -217,11 +217,14 @@ async def test_state_transition_logging(coordinator, caplog):
     def records() -> list[logging.LogRecord]:
         return [r for r in caplog.records if r.name == logger_name]
 
-    # No previous data (fresh coordinator) -> OFFLINE_FAULT: one WARNING.
+    # No previous data (fresh coordinator) -> OFFLINE_FAULT: one WARNING,
+    # naming the host:port (final-review #7) so a fault is triage-able
+    # without opening diagnostics first.
     assert coordinator.data is None
     await coordinator._async_handle_snapshot(_snap(EngineState.OFFLINE_FAULT))
     assert len(records()) == 1
     assert records()[0].levelname == "WARNING"
+    assert "192.168.1.100:12345" in records()[0].getMessage()
     coordinator.data = _snap(EngineState.OFFLINE_FAULT)
     caplog.clear()
 

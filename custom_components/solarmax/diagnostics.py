@@ -37,10 +37,6 @@ async def async_get_config_entry_diagnostics(
             "state": entry.state.value if entry.state else None,
         },
         "coordinator": {
-            "last_update_success": coordinator.last_update_success,
-            "last_exception": (
-                str(coordinator.last_exception) if coordinator.last_exception else None
-            ),
             "update_interval": str(coordinator.update_interval),
             "state": snapshot.state if snapshot else None,
             "reconnecting": snapshot.reconnecting if snapshot else None,

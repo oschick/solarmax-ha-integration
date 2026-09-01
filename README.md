@@ -434,7 +434,7 @@ automation:
 **Solutions:**
 1. Check the **Status Code** sensor — it always stays available and reports `offline_expected` (normal) or `offline_fault` (a real problem); see [Connection States & Offline Detection](#connection-states--offline-detection)
 2. Review logs for connection errors
-3. If `offline_expected`, wait for dawn — polling automatically speeds up as the sun approaches the twilight threshold
+3. If `offline_expected`, wait for dawn — fast polling starts once the sun rises above the twilight threshold
 4. If `offline_fault` persists for 5 minutes, a repair issue appears under **Settings → Repairs**; otherwise restart the integration if the issue persists during the day
 
 #### Problem: "Incorrect sensor values"

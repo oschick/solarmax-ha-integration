@@ -133,25 +133,39 @@ class SolarmaxCoordinator(DataUpdateCoordinator[EngineSnapshot]):
     def async_handle_midnight(self, now: datetime) -> None:
         """Force a listener refresh at local midnight for Energy Day sensors.
 
-        The base coordinator skips async_update_listeners() while polls are
-        consecutively failing, so nothing re-reads native_value between dusk
-        and dawn. Energy Day depends on noticing midnight, so we push one
-        update ourselves.
+        `coordinator.data` is reassigned every poll regardless — the engine
+        never raises, so that assignment always runs. What's suppressed is
+        `async_update_listeners()`, and the mechanism is `always_update=False`
+        plus `EngineSnapshot` equality (its `diagnostics` field is
+        `compare=False` for exactly this reason): HA only notifies listeners
+        when the new snapshot differs from the last one it notified with.
+        Not `last_update_success` — that stays True all night, since
+        `_async_update_data` never raises. Two consecutive OFFLINE_EXPECTED
+        snapshots overnight compare equal, so nothing re-reads native_value
+        between dusk and dawn. Energy Day depends on noticing midnight, so
+        we push one update ourselves, bypassing the equality check.
 
-        That also makes this the *only* state write between dusk and dawn,
-        which is what keeps the night policy safe. In the dawn gap — after
-        the sun clears the twilight threshold but before the inverter
-        answers a poll — the engine's snapshot classification moves off
-        OFFLINE_EXPECTED (to UNKNOWN/OFFLINE_FAULT), so the night policy
-        disengages and native_value falls through to the stale value still
-        sitting in coordinator.data. If state were written in that window,
-        a HOLD_UNTIL_MIDNIGHT sensor like KDY would jump from the midnight 0
-        back up to yesterday's total, and HA reads that rise on a
-        TOTAL_INCREASING sensor as real growth — injecting a phantom day's
-        energy into the Energy dashboard every morning. It cannot happen
-        today only because nothing else writes state there. Any future
-        change that adds a second state-write path in that window — a
-        forced homeassistant.update_entity call, an
+        That also makes this the *only* state write between dusk and dawn
+        along the *armed* path — the inverter announced its own shutdown
+        (SYS 20002 or low PDC) before going dark, so ArmingTracker.armed
+        stays True all night and, per `armed or sun_below`, classification
+        holds OFFLINE_EXPECTED straight through the dawn gap (sun already
+        above the twilight threshold, inverter not yet answering) with no
+        write at all — which is what keeps the night policy safe there. The
+        *sun-fallback* path (no shutdown announcement was ever observed, so
+        armed never latched) has no such protection: once the sun clears the
+        threshold, `armed or sun_below` goes False and the snapshot moves off
+        OFFLINE_EXPECTED (to UNKNOWN/OFFLINE_FAULT) — a real change, so this
+        one *does* notify. But `_night_policy` requires state ==
+        OFFLINE_EXPECTED, so that write only ever produces `unavailable`,
+        never a numeric value — and a TOTAL_INCREASING sensor going
+        unavailable is not read as a rise. If state were written with a
+        *numeric* value in that window instead, a HOLD_UNTIL_MIDNIGHT sensor
+        like KDY would jump from the midnight 0 back up to yesterday's
+        total, and HA reads that rise on a TOTAL_INCREASING sensor as real
+        growth — injecting a phantom day's energy into the Energy dashboard
+        every morning. Any future change that adds a second state-write path
+        in that window — a forced homeassistant.update_entity call, an
         always_update/availability-polling change, or RestoreSensor work —
         reopens this hole and needs the same care.
         """
@@ -214,7 +228,11 @@ class SolarmaxCoordinator(DataUpdateCoordinator[EngineSnapshot]):
         previous_state = self.data.state if self.data else None
         if snapshot.state is not previous_state:
             if snapshot.state is EngineState.OFFLINE_FAULT:
-                _LOGGER.warning("Inverter unreachable during daytime (fault)")
+                _LOGGER.warning(
+                    "Inverter %s:%s unreachable (fault)",
+                    self._entry.data[CONF_HOST],
+                    self._entry.data[CONF_PORT],
+                )
             else:
                 _LOGGER.info(
                     "Connection state %s -> %s", previous_state, snapshot.state

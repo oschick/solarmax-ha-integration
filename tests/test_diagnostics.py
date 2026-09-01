@@ -95,7 +95,6 @@ async def test_config_entry_diagnostics(hass: HomeAssistant, mock_config_entry):
 
     # Verify coordinator data (snapshot-derived fields)
     coordinator_data = diagnostics["coordinator"]
-    assert coordinator_data["last_update_success"] is True
     assert coordinator_data["state"] == EngineState.ONLINE
     assert coordinator_data["reconnecting"] is False
     assert coordinator_data["fault_since"] is None
@@ -132,8 +131,6 @@ async def test_config_entry_diagnostics(hass: HomeAssistant, mock_config_entry):
 async def test_diagnostics_with_no_data(hass: HomeAssistant, mock_config_entry):
     """Test diagnostics when the coordinator has not completed a poll yet."""
     mock_coordinator = _mock_coordinator(
-        last_update_success=False,
-        last_exception=Exception("Connection failed"),
         data=None,
         device_model=None,
     )
@@ -149,11 +146,9 @@ async def test_diagnostics_with_no_data(hass: HomeAssistant, mock_config_entry):
 
     # Verify no-snapshot handling
     coordinator_data = diagnostics["coordinator"]
-    assert coordinator_data["last_update_success"] is False
     assert coordinator_data["state"] is None
     assert coordinator_data["reconnecting"] is None
     assert coordinator_data["fault_since"] is None
-    assert "Connection failed" in coordinator_data["last_exception"]
 
     # Verify empty sensor/connection data
     assert diagnostics["sensor_data"] == {}

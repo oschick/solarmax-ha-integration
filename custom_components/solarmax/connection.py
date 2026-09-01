@@ -152,27 +152,44 @@ class SolarmaxLink:
         self.timeouts = 0
         self._reader: asyncio.StreamReader | None = None
         self._writer: asyncio.StreamWriter | None = None
+        self._closing = False
 
     async def request(self, payload: str) -> str:
         """Send `payload` and return the response, reusing the connection."""
+        self._closing = False  # a fresh request IS the re-open
         if not self.connected:
             await self._connect()
         try:
             return await self._send_receive(payload)
-        except _PeerClosed:
+        except _PeerClosed as err:
             await self._close_transport()
+            if self._closing:  # closed underneath us — do NOT reopen
+                raise LinkClosed(
+                    f"{self.host}:{self.port}: closed during poll"
+                ) from err
             self.reconnects += 1
             await self._connect()
             try:
                 return await self._send_receive(payload)
-            except _PeerClosed as err:
+            except _PeerClosed as err2:
                 await self._close_transport()
                 raise LinkClosed(
                     f"peer at {self.host}:{self.port} closed the connection"
-                ) from err
+                ) from err2
 
     async def close(self) -> None:
-        """Idempotent, deterministic close; always leaves `connected` False."""
+        """Idempotent, deterministic close; always leaves `connected` False.
+
+        Sets `_closing` before the transport actually tears down, so a
+        `request()` racing this close() on another task (e.g. an in-flight
+        poll during HA unload) sees it in its `_PeerClosed` handler and does
+        not resurrect the connection. Never cleared here: `request()` clears
+        it on its own next entry instead, since a fresh request IS the
+        intentional re-open — including the one `ConnectionEngine._on_failure`
+        makes on every OFFLINE_EXPECTED entry, which closes the link on
+        purpose and must still be able to reconnect at dawn.
+        """
+        self._closing = True
         await self._close_transport()
 
     async def _connect(self) -> None:
@@ -330,7 +347,16 @@ class ConnectionEngine:
                 )
                 static = parse_response(static_raw, self._verify_checksum)
                 self._values.update(static)
-                self._statics_loaded = True
+                # An empty/short frame (e.g. inject("empty_data")) parses to
+                # {} with no exception; `bool(static)` would latch "loaded"
+                # on that (or on any non-empty-but-still-fieldless reply)
+                # and lose TYP/PIN/etc. for the life of the entry. Gate on
+                # the device-info keys actually landing instead. The
+                # tradeoff: an inverter that never reports them re-fetches
+                # statics on every poll forever (doubled traffic) rather
+                # than once — accepted deliberately, since silently losing
+                # device info is worse than the extra request.
+                self._statics_loaded = any(k in static for k in DEVICE_FIELDS)
             raw = await self._request_with_retry(
                 build_request(self._address, HOT_FIELDS)
             )
