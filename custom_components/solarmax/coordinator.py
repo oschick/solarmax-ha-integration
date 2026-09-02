@@ -14,6 +14,9 @@ from homeassistant.helpers.issue_registry import (
     async_create_issue,
     async_delete_issue,
 )
+from homeassistant.helpers.issue_registry import (
+    async_get as async_get_issue_registry,
+)
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator
 from homeassistant.util import dt as dt_util
 
@@ -38,6 +41,7 @@ from .const import (
     DOMAIN,
     FAULT_REPAIR_SECONDS,
     NIGHT_POLL_SECONDS,
+    REPAIR_DISMISS_SUPPRESS_SECONDS,
 )
 
 _LOGGER = logging.getLogger(__name__)
@@ -78,12 +82,23 @@ class SolarmaxCoordinator(DataUpdateCoordinator[EngineSnapshot]):
         super().__init__(
             hass,
             _LOGGER,
+            config_entry=entry,
             name=DOMAIN,
             update_interval=self._configured_interval,
             always_update=False,  # Only notify listeners when data changes
         )
 
         self._repair_issue_id = f"connection_issues_{entry.entry_id}"
+        # Q28b: repair-issue episode tracking. `_issue_raised` is True once
+        # this fault episode has actually created the issue; `_dismissed_at`
+        # is set when the user completes the fix flow (issue deleted) while
+        # the fault is still ongoing, and suppresses re-creation for
+        # REPAIR_DISMISS_SUPPRESS_SECONDS. In-memory only — an HA restart
+        # mid-fault forgets the dismissal (accepted by the ruling). Both
+        # reset on a new episode (recovery to ONLINE or reclassification to
+        # OFFLINE_EXPECTED).
+        self._issue_raised = False
+        self._dismissed_at: datetime | None = None
 
     @property
     def engine(self) -> ConnectionEngine:
@@ -241,12 +256,32 @@ class SolarmaxCoordinator(DataUpdateCoordinator[EngineSnapshot]):
         if snapshot.state is EngineState.OFFLINE_FAULT and snapshot.fault_since:
             fault_seconds = (dt_util.utcnow() - snapshot.fault_since).total_seconds()
             if fault_seconds >= FAULT_REPAIR_SECONDS:
-                # No "already raised" guard: `minutes` must keep refreshing
-                # for the life of the fault. async_create_issue no-ops (no
-                # new update event) when the replacement issue is identical
-                # to the one already registered, so recomputing every poll
-                # is cheap and only actually updates the dialog when the
-                # minute count ticks over.
+                if self._issue_raised and (
+                    async_get_issue_registry(self.hass).async_get_issue(
+                        DOMAIN, self._repair_issue_id
+                    )
+                    is None
+                ):
+                    # The user completed the fix flow (issue deleted) while
+                    # the fault is still ongoing — do not immediately
+                    # re-raise it under them.
+                    self._issue_raised = False
+                    self._dismissed_at = dt_util.utcnow()
+
+                if self._dismissed_at is not None:
+                    dismissed_seconds = (
+                        dt_util.utcnow() - self._dismissed_at
+                    ).total_seconds()
+                    if dismissed_seconds < REPAIR_DISMISS_SUPPRESS_SECONDS:
+                        return
+                    self._dismissed_at = None
+
+                # No "already raised" guard beyond the above: `minutes` must
+                # keep refreshing for the life of the fault. async_create_issue
+                # no-ops (no new update event) when the replacement issue is
+                # identical to the one already registered, so recomputing
+                # every poll is cheap and only actually updates the dialog
+                # when the minute count ticks over.
                 issue_context: dict[str, str] = {
                     "host": self._entry.data[CONF_HOST],
                     "port": str(self._entry.data[CONF_PORT]),
@@ -269,8 +304,12 @@ class SolarmaxCoordinator(DataUpdateCoordinator[EngineSnapshot]):
                     # though every value here is already a str.
                     data=cast("dict[str, str | int | float | None]", issue_context),
                 )
+                self._issue_raised = True
                 return
 
+        # Any state that is not a sustained fault ends the current episode.
+        self._issue_raised = False
+        self._dismissed_at = None
         async_delete_issue(self.hass, DOMAIN, self._repair_issue_id)
 
     def _static_raw(self, key: str) -> Any:

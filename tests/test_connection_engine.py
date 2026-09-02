@@ -3,17 +3,37 @@
 import asyncio
 
 from custom_components.solarmax.connection import (
+    ARMED_ESCALATION_MIN_FAILURES,
+    ARMED_ESCALATION_SECONDS,
+    POLL_BUDGET_SECONDS,
     ConnectionEngine,
     EngineState,
     SolarmaxLink,
 )
 
 
-def _engine(emulator, *, sun_below=lambda: False, grace=0.0, timeout=0.5):
+class _FakeClock:
+    """Deterministic stand-in for `time.monotonic` — advanced explicitly so
+    escalation-window tests never need a real hour-long sleep."""
+
+    def __init__(self) -> None:
+        self.now = 0.0
+
+    def __call__(self) -> float:
+        return self.now
+
+    def advance(self, seconds: float) -> None:
+        self.now += seconds
+
+
+def _engine(emulator, *, sun_below=lambda: False, grace=0.0, timeout=0.5, clock=None):
     # grace=0.0 disables the startup window so classification is tested directly;
     # the two grace tests pass an explicit grace to exercise the window itself.
     link = SolarmaxLink(*emulator.addr, response_timeout=timeout)
-    return ConnectionEngine(link, address=1, sun_below=sun_below, grace_seconds=grace)
+    kwargs = {} if clock is None else {"clock": clock}
+    return ConnectionEngine(
+        link, address=1, sun_below=sun_below, grace_seconds=grace, **kwargs
+    )
 
 
 async def test_online_poll_returns_values_and_statics(emulator):
@@ -298,3 +318,169 @@ async def test_empty_first_statics_frame_is_refetched(emulator):
         assert "PIN" in snapshot.values
     finally:
         await engine.close()
+
+
+# --- Review-fix-wave: fault_since / armed escalation / closed / retry / lock ---
+
+
+async def test_fault_since_is_not_backdated_across_a_night(emulator):
+    """G16: fault_since must not survive an OFFLINE_EXPECTED window — a fault
+    reclassified back to FAULT at dawn must get a fresh timestamp, not the
+    one from before dusk (which would make the repair issue fire instantly,
+    counting the whole night as part of the fault)."""
+    sun_below = False  # noon
+    engine = _engine(emulator, sun_below=lambda: sun_below, grace=0.0)
+    try:
+        await engine.poll()
+        emulator.dark = True  # sudden daytime fault at "14:00", sun still up
+        fault_snapshot = await engine.poll()
+        assert fault_snapshot.state is EngineState.OFFLINE_FAULT
+        assert fault_snapshot.fault_since is not None
+
+        sun_below = True  # dusk falls; the same unresolved outage now reads EXPECTED
+        expected_snapshot = await engine.poll()
+        assert expected_snapshot.state is EngineState.OFFLINE_EXPECTED
+        assert expected_snapshot.fault_since is None  # G16: cleared on entry
+
+        sun_below = False  # dawn: sun is back up, device still not responding
+        dawn_snapshot = await engine.poll()
+        assert dawn_snapshot.state is EngineState.OFFLINE_FAULT
+        assert dawn_snapshot.fault_since is not None
+        assert dawn_snapshot.fault_since > fault_snapshot.fault_since  # fresh
+    finally:
+        await engine.close()
+
+
+async def test_armed_escalates_to_fault_after_sustained_anomaly(emulator):
+    """Q24: armed OFFLINE_EXPECTED with the sun staying up for >=1h and
+    >=10 failed probes (zero successes) escalates to OFFLINE_FAULT; arming
+    clears and fault_since stamps fresh at escalation.
+
+    Drives `_on_failure()` directly for the repeated-failure steps (rather
+    than `poll()` against a dark emulator) to avoid ~20 real connect/timeout
+    cycles for what is purely internal counting/threshold logic; the wiring
+    from `poll()` into `_on_failure()` on every failure path is already
+    covered by every other test in this module.
+    """
+    clock = _FakeClock()
+    engine = _engine(emulator, sun_below=lambda: False, clock=clock)
+    try:
+        await engine.poll()
+        emulator.begin_dusk(announce_seconds=0.4)
+        armed_snapshot = await engine.poll()  # sees SYS 20002 + low PDC -> arms
+        assert armed_snapshot.shutdown_announced is True
+
+        for _ in range(9):  # below the 10-failure floor: no escalation yet
+            snapshot = await engine._on_failure()
+        assert snapshot.state is EngineState.OFFLINE_EXPECTED
+        assert snapshot.expected_outside_twilight is True
+        assert snapshot.shutdown_announced is True
+
+        clock.advance(ARMED_ESCALATION_SECONDS + 1)
+        snapshot = await engine._on_failure()  # 10th failed probe, window elapsed
+        assert snapshot.state is EngineState.OFFLINE_FAULT
+        assert snapshot.shutdown_announced is False  # armed cleared on escalation
+        assert snapshot.expected_outside_twilight is False
+        assert snapshot.fault_since is not None
+    finally:
+        await engine.close()
+
+
+async def test_armed_anomaly_below_window_stays_expected(emulator):
+    """Q24: >=10 failures with the elapsed window still short must not
+    escalate — both thresholds are required together."""
+    clock = _FakeClock()
+    engine = _engine(emulator, sun_below=lambda: False, clock=clock)
+    try:
+        await engine.poll()
+        emulator.begin_dusk(announce_seconds=0.4)
+        await engine.poll()  # arms
+
+        clock.advance(100.0)  # well under ARMED_ESCALATION_SECONDS
+        snapshot = None
+        for _ in range(ARMED_ESCALATION_MIN_FAILURES + 5):
+            snapshot = await engine._on_failure()
+        assert snapshot.state is EngineState.OFFLINE_EXPECTED
+        assert snapshot.expected_outside_twilight is True
+    finally:
+        await engine.close()
+
+
+async def test_armed_with_sun_below_needs_no_escalation(emulator):
+    """Q24: a sun-classified (non-anomalous) EXPECTED never escalates, no
+    matter how long it persists or how many probes fail."""
+    clock = _FakeClock()
+    engine = _engine(emulator, sun_below=lambda: True, clock=clock)
+    try:
+        await engine.poll()
+        emulator.begin_dusk(announce_seconds=0.4)
+        await engine.poll()  # arms, but sun is already below threshold
+
+        clock.advance(ARMED_ESCALATION_SECONDS * 2)
+        snapshot = None
+        for _ in range(ARMED_ESCALATION_MIN_FAILURES + 5):
+            snapshot = await engine._on_failure()
+        assert snapshot.state is EngineState.OFFLINE_EXPECTED
+        assert snapshot.expected_outside_twilight is False
+    finally:
+        await engine.close()
+
+
+async def test_poll_after_close_never_touches_link(emulator):
+    """Engine-level closed flag: once close() has run, poll() must return
+    without ever calling into the link again — no reconnect, no request.
+
+    This is what closes the reload leak: a scheduled refresh racing HA
+    unload used to reach `SolarmaxLink.request()`, whose first line clears
+    `_closing` (a fresh request IS the intentional re-open) and resurrects
+    the connection behind close()'s back.
+    """
+    link = SolarmaxLink(*emulator.addr, response_timeout=0.5)
+    engine = ConnectionEngine(
+        link, address=1, sun_below=lambda: False, grace_seconds=0.0
+    )
+    online_snapshot = await engine.poll()
+    assert online_snapshot.state is EngineState.ONLINE
+    attempts_before = link.attempts
+
+    await engine.close()
+    snapshot = await engine.poll()
+
+    assert link.attempts == attempts_before
+    assert snapshot.state is EngineState.ONLINE  # previous snapshot, not touched
+
+
+async def test_timeout_is_retried_once_within_the_poll(emulator):
+    """Q26: a single dropped response is retried once in-poll, same as line
+    noise — the poll still comes back ONLINE rather than failing."""
+    engine = _engine(emulator, timeout=1.0)
+    try:
+        await engine.poll()  # baseline: statics loaded
+        emulator.inject("drop")  # swallow exactly the next request, no reply
+        snapshot = await engine.poll()
+        assert snapshot.state is EngineState.ONLINE
+    finally:
+        await engine.close()
+
+
+async def test_concurrent_polls_are_serialized(emulator):
+    """Poll lock: HA's debouncer can run a refresh concurrently with a
+    scheduled one; without serialising, two `poll()`s racing the same
+    `SolarmaxLink` corrupt each other's connect/request sequencing."""
+    link = SolarmaxLink(*emulator.addr)
+    engine = ConnectionEngine(
+        link, address=1, sun_below=lambda: False, grace_seconds=0.0
+    )
+    try:
+        results = await asyncio.gather(engine.poll(), engine.poll())
+        assert all(s.state is EngineState.ONLINE for s in results)
+        assert link.attempts == 1  # one connection served both polls, serially
+    finally:
+        await engine.close()
+
+
+def test_timeouts_widened_per_q27():
+    """Q27: response timeout 2.0 -> 3.5s, POLL_BUDGET 10 -> 15s."""
+    link = SolarmaxLink("127.0.0.1", 1)
+    assert link.response_timeout == 3.5
+    assert POLL_BUDGET_SECONDS == 15.0

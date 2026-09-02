@@ -39,7 +39,12 @@ _LOGGER = logging.getLogger(__name__)
 LOW_PDC_WATTS = 25
 SHUTDOWN_ANNOUNCE_SYS = 20002
 STARTUP_GRACE_SECONDS = 150.0
-POLL_BUDGET_SECONDS = 10.0
+POLL_BUDGET_SECONDS = 15.0
+# Q24: an armed OFFLINE_EXPECTED that stays outside the twilight window this
+# long, with this many failed probes and zero successes, is reclassified
+# OFFLINE_FAULT — a stuck "armed" flag must not mask a real fault forever.
+ARMED_ESCALATION_SECONDS = 3600.0
+ARMED_ESCALATION_MIN_FAILURES = 10
 
 
 class EngineState(StrEnum):
@@ -140,7 +145,7 @@ class SolarmaxLink:
         host: str,
         port: int,
         connect_timeout: float = 3.0,
-        response_timeout: float = 2.0,
+        response_timeout: float = 3.5,
     ) -> None:
         self.host = host
         self.port = port
@@ -328,15 +333,46 @@ class ConnectionEngine:
         # failure after a success (covers the post-ONLINE reconnecting
         # grace). Both grace windows share this one anchor.
         self._disconnected_since: float | None = self._clock()
+        # Q24 armed-escalation window: anchors "how long has this armed
+        # OFFLINE_EXPECTED stayed anomalous (sun up)" and how many failed
+        # probes it has seen since. Reset on any success or once the sun
+        # itself explains the disconnect (self-correcting, no escalation).
+        self._escalation_since: float | None = None
+        self._escalation_failures = 0
+        # Set by close(); once True, poll() is inert for the engine's
+        # remaining lifetime — see close()'s docstring for the leak this
+        # closes.
+        self._closed = False
+        # Serialises poll() end-to-end: HA's debouncer can run a refresh
+        # concurrently with a scheduled one, and two polls racing the same
+        # SolarmaxLink would interleave connect()/request() against it.
+        self._poll_lock = asyncio.Lock()
 
     async def poll(self) -> EngineSnapshot:
-        try:
-            async with asyncio.timeout(POLL_BUDGET_SECONDS):  # spec: poll budget < 10s
-                return await self._poll_inner()
-        except TimeoutError:
-            return await self._on_failure()
+        async with self._poll_lock:
+            if self._closed:
+                return self._snapshot(
+                    reconnecting=False, expected_outside_twilight=False
+                )
+            try:
+                async with asyncio.timeout(
+                    POLL_BUDGET_SECONDS
+                ):  # spec: poll budget < 15s
+                    return await self._poll_inner()
+            except TimeoutError:
+                return await self._on_failure()
 
     async def close(self) -> None:
+        """Idempotent; the last word — no poll() may touch the link again.
+
+        Sets `_closed` before tearing down the link, so a poll() racing
+        this close() (e.g. a scheduled refresh during HA unload) sees it
+        and returns without ever reaching `SolarmaxLink.request()` — whose
+        first line clears `_closing` (a fresh request IS the intentional
+        re-open) and would otherwise resurrect the connection behind
+        close()'s back.
+        """
+        self._closed = True
         await self._link.close()
 
     async def _poll_inner(self) -> EngineSnapshot:
@@ -368,16 +404,18 @@ class ConnectionEngine:
         return self._on_success(values)
 
     async def _request_with_retry(self, payload: str) -> str:
-        """Fetch `payload`, retrying once if the response fails to parse.
+        """Fetch `payload`, retrying once on a timeout or a parse failure.
 
-        Only `RetryableProtocolError` (checksum/frame corruption — line
-        noise) triggers the retry. `LinkClosed` is already retried
-        transparently inside `SolarmaxLink`; `LinkTimeout` is deliberately
-        NOT retried here — a dark device fails fast by design, and
-        retrying a timeout would double the poll budget for the one case
-        where the honest answer is "no response".
+        Q26: a `LinkTimeout` (no answer within the response-timeout window)
+        gets exactly one retry, same as `RetryableProtocolError`
+        (checksum/frame corruption — line noise) — either way the total
+        stays one retry per request, never both stacked on the same call.
+        `LinkClosed` is already retried transparently inside `SolarmaxLink`.
         """
-        raw = await self._link.request(payload)
+        try:
+            raw = await self._link.request(payload)
+        except LinkTimeout:
+            return await self._link.request(payload)
         try:
             parse_response(raw, self._verify_checksum)
         except RetryableProtocolError:
@@ -403,6 +441,8 @@ class ConnectionEngine:
 
         self._fault_since = None
         self._disconnected_since = None
+        self._escalation_since = None
+        self._escalation_failures = 0
 
         return self._snapshot(reconnecting=False, expected_outside_twilight=False)
 
@@ -425,6 +465,11 @@ class ConnectionEngine:
             new_state = EngineState.OFFLINE_EXPECTED
             expected_outside_twilight = not sun_below and armed
             reconnecting = False
+            # G16: a fault from before this EXPECTED window must not
+            # survive it — otherwise a fault reclassified back to FAULT
+            # later (e.g. at dawn) keeps the pre-window timestamp and the
+            # repair issue fires instantly, counting the whole window.
+            self._fault_since = None
             # Deliberate deviation: re-fetch statics on OFFLINE_EXPECTED
             # entry rather than on every transparent Link reconnect. The
             # spec's "once per connection establishment" is read loosely
@@ -432,8 +477,33 @@ class ConnectionEngine:
             # re-fetch only at dusk/dawn is enough.
             await self._link.close()
             self._statics_loaded = False
+
+            if expected_outside_twilight:
+                # Q24: armed but the sun never explained it — track how
+                # long and how many failed probes this anomaly has lasted.
+                if self._escalation_since is None:
+                    self._escalation_since = self._clock()
+                self._escalation_failures += 1
+                escalate = (
+                    self._clock() - self._escalation_since >= ARMED_ESCALATION_SECONDS
+                    and self._escalation_failures >= ARMED_ESCALATION_MIN_FAILURES
+                )
+                if escalate:
+                    new_state = EngineState.OFFLINE_FAULT
+                    expected_outside_twilight = False
+                    self._tracker.armed = False
+                    self._fault_since = datetime.now(UTC)
+                    self._escalation_since = None
+                    self._escalation_failures = 0
+            else:
+                # Sun-classified (or now sun-explained) EXPECTED
+                # self-corrects — no escalation tracking needed.
+                self._escalation_since = None
+                self._escalation_failures = 0
         else:
             expected_outside_twilight = False
+            self._escalation_since = None
+            self._escalation_failures = 0
             if self._disconnected_since is None:
                 self._disconnected_since = self._clock()
             reconnecting = (

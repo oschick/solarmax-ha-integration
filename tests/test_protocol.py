@@ -249,3 +249,19 @@ def test_parse_response_multi_frame():
     assert result["CAC"]["raw_value"] == 0x193D
     assert "TNF" in result
     assert result["TNF"]["value"] == 0x138A / 100.0
+
+
+def test_parse_response_skips_malformed_field():
+    """Finding 7: a malformed field value (non-hex, or empty after '=') must
+    be skipped with a debug log, not fail the whole frame — only frame-level
+    CRC/IPR handling stays fatal."""
+    inner = "01;FB;30|64:PAC=BB8;KDY=;SYS=4E33,0;SAL=0|"
+    crc = calculate_checksum(inner)
+    response = "{" + inner + crc + "}"
+
+    result = parse_response(response)
+
+    assert set(result) == {"PAC", "SYS", "SAL"}
+    assert result["PAC"]["raw_value"] == 3000
+    assert result["SYS"]["raw_value"] == 0x4E33
+    assert result["SAL"]["raw_value"] == 0

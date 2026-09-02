@@ -427,11 +427,16 @@ class SolarmaxEmulator:
         else:
             return format(raw, "X")
 
-    def build_response(self, requested_fields: list[str]) -> str:
+    def build_response(self, requested_fields: list[str]) -> str | None:
         if self._respond_only is not None:
             requested_fields = [f for f in requested_fields if f in self._respond_only]
         response = self._build_response_clean(requested_fields)
         failure, self._inject = self._inject, None
+        if failure == "drop":
+            # One-shot: swallow this request entirely, no reply at all —
+            # simulates a single lost response (line noise, not a dark
+            # device) that a client-side timeout-retry should recover from.
+            return None
         if failure == "corrupt_crc":
             return response[:-5] + "0000}"
         if failure == "truncate":
@@ -548,6 +553,9 @@ class SolarmaxEmulator:
                 fields = self.parse_request(data)
                 if fields:
                     response = self.build_response(fields)
+                    if response is None:
+                        _LOGGER.debug("  Dropped request (drop injection)")
+                        continue
                     _LOGGER.debug(f"  Response: {response}")
                     client_socket.send(response.encode("utf-8"))
                 else:
@@ -655,8 +663,8 @@ class SolarmaxEmulator:
         self.dark = False
 
     def inject(self, failure: str) -> None:
-        """Poison exactly the next response: corrupt_crc | truncate | empty_data."""
-        if failure not in ("corrupt_crc", "truncate", "empty_data"):
+        """Poison exactly the next response: corrupt_crc | truncate | empty_data | drop."""
+        if failure not in ("corrupt_crc", "truncate", "empty_data", "drop"):
             raise ValueError(f"unknown failure: {failure}")
         self._inject = failure
 

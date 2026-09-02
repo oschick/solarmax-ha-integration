@@ -145,30 +145,28 @@ class OptionsFlow(config_entries.OptionsFlow):
     async def async_step_init(
         self, user_input: dict[str, Any] | None = None
     ) -> ConfigFlowResult:
-        """Manage the options."""
-        errors: dict[str, str] = {}
+        """Manage the options.
 
+        Finding 1/13: unlike the initial config flow, this does NOT probe
+        the inverter. The running coordinator's engine already holds the
+        device's single client slot, so a second connection opened here
+        would always fail cannot_connect (or always fail at night) —
+        making the options flow permanently unsaveable. The engine itself
+        is the ongoing connectivity proof; a wrong edit still surfaces
+        within one poll after reload. Only the schema is validated, which
+        the flow manager already does before this step runs.
+        """
         if user_input is not None:
-            try:
-                # Validate the new configuration
-                await validate_input(self.hass, user_input)
-            except CannotConnect:
-                errors["base"] = "cannot_connect"
-            except Exception:  # pylint: disable=broad-except
-                _LOGGER.exception("Unexpected exception during reconfiguration")
-                errors["base"] = "unknown"
-            else:
-                # Update the config entry with new data
-                self.hass.config_entries.async_update_entry(
-                    self.config_entry,
-                    data=user_input,
-                    title=user_input.get(CONF_DEVICE_NAME, self.config_entry.title),
-                )
+            self.hass.config_entries.async_update_entry(
+                self.config_entry,
+                data=user_input,
+                title=user_input.get(CONF_DEVICE_NAME, self.config_entry.title),
+            )
 
-                # Trigger a reload of the integration to apply changes
-                await self.hass.config_entries.async_reload(self.config_entry.entry_id)
+            # Trigger a reload of the integration to apply changes
+            await self.hass.config_entries.async_reload(self.config_entry.entry_id)
 
-                return self.async_create_entry(title="", data={})
+            return self.async_create_entry(title="", data={})
 
         # Pre-populate the shared schema with the entry's current values.
         current_data = self.config_entry.data
@@ -180,7 +178,6 @@ class OptionsFlow(config_entries.OptionsFlow):
         return self.async_show_form(
             step_id="init",
             data_schema=_build_schema(values),
-            errors=errors,
             description_placeholders={
                 "current_host": current_data.get(CONF_HOST, "Unknown"),
                 "current_port": str(current_data.get(CONF_PORT, DEFAULT_PORT)),

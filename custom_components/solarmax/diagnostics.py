@@ -8,10 +8,13 @@ from homeassistant.components.diagnostics import async_redact_data
 from homeassistant.core import HomeAssistant
 from homeassistant.loader import async_get_integration
 
-from .const import CONF_HOST
+from .const import CONF_HOST, DEVICE_KEY_SERIAL
 from .coordinator import SolarmaxConfigEntry, SolarmaxCoordinator
 
-REDACT_KEYS = {CONF_HOST}
+# DEVICE_KEY_SERIAL ("DIN") redacts the inverter's serial number wherever it
+# appears — currently under sensor_data; "serial_number" covers any device
+# block that surfaces it by that name too.
+REDACT_KEYS = {CONF_HOST, DEVICE_KEY_SERIAL, "serial_number"}
 
 
 async def async_get_config_entry_diagnostics(
@@ -63,23 +66,29 @@ async def async_get_config_entry_diagnostics(
         },
     }
 
-    # Add current sensor data
+    # Add current sensor data (redacted: DIN is the inverter's serial number)
     if snapshot:
-        diagnostics_data["sensor_data"] = {
-            sensor_key: {
-                "value": sensor_value.get("value"),
-                "raw_value": sensor_value.get("raw_value"),
-            }
-            for sensor_key, sensor_value in snapshot.values.items()
-        }
+        diagnostics_data["sensor_data"] = async_redact_data(
+            {
+                sensor_key: {
+                    "value": sensor_value.get("value"),
+                    "raw_value": sensor_value.get("raw_value"),
+                }
+                for sensor_key, sensor_value in snapshot.values.items()
+            },
+            REDACT_KEYS,
+        )
 
     # Add device information (identifiers as a list: diagnostics payloads are
     # JSON-serialized, and a set would not survive json.dumps)
-    diagnostics_data["device_info"] = {
-        "identifiers": [(entry.domain, entry.entry_id)],
-        "name": entry.data.get("device_name", "Solarmax Inverter"),
-        "manufacturer": "Solarmax",
-        "model": coordinator.device_model or "Inverter",
-    }
+    diagnostics_data["device_info"] = async_redact_data(
+        {
+            "identifiers": [(entry.domain, entry.entry_id)],
+            "name": entry.data.get("device_name", "Solarmax Inverter"),
+            "manufacturer": "Solarmax",
+            "model": coordinator.device_model or "Inverter",
+        },
+        REDACT_KEYS,
+    )
 
     return diagnostics_data

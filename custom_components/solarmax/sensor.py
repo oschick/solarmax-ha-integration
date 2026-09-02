@@ -3,10 +3,12 @@
 from __future__ import annotations
 
 import logging
+from collections.abc import Callable
 from typing import Any
 
 from homeassistant.components.sensor import SensorEntity, SensorEntityDescription
-from homeassistant.core import HomeAssistant
+from homeassistant.core import HomeAssistant, callback
+from homeassistant.helpers import device_registry as dr
 from homeassistant.helpers.entity import generate_entity_id
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
@@ -59,6 +61,46 @@ async def async_setup_entry(
         SolarmaxSensor(coordinator, entry, description, device_name)
         for description in SENSOR_TYPES
     )
+
+    entry.async_on_unload(
+        coordinator.async_add_listener(
+            _make_device_registry_updater(hass, entry, coordinator)
+        )
+    )
+
+
+def _make_device_registry_updater(
+    hass: HomeAssistant, entry: SolarmaxConfigEntry, coordinator: SolarmaxCoordinator
+) -> Callable[[], None]:
+    """Build a coordinator listener that refreshes the device registry entry
+    once static device info (TYP/SWV/DIN) lands in a snapshot.
+
+    `_attr_device_info` is baked into each sensor at construction time with
+    the "Inverter" placeholder when setup happens dark; this keeps the
+    registry entry from carrying that placeholder for the device's whole
+    life once real statics arrive. `async_update_device` early-returns when
+    nothing actually changed, so firing on every coordinator update is cheap.
+    """
+
+    @callback
+    def _update_device_registry() -> None:
+        model = coordinator.device_model
+        if model is None:
+            return
+        device_registry = dr.async_get(hass)
+        device = device_registry.async_get_device(
+            identifiers={(DOMAIN, entry.entry_id)}
+        )
+        if device is None:
+            return
+        device_registry.async_update_device(
+            device.id,
+            model=model,
+            sw_version=coordinator.sw_version,
+            serial_number=coordinator.serial_number,
+        )
+
+    return _update_device_registry
 
 
 class SolarmaxSensor(CoordinatorEntity[SolarmaxCoordinator], SensorEntity):
@@ -136,10 +178,20 @@ class SolarmaxSensor(CoordinatorEntity[SolarmaxCoordinator], SensorEntity):
     def _night_value_source(self, policy: NightPolicy) -> str:
         """Resolve a policy in force to the value it produces right now."""
         if policy is NightPolicy.ZERO:
+            # Q25a: an armed disconnect outside twilight is an anomaly (e.g.
+            # shading), not a normal dusk — there is no honest zero to
+            # report, so go unavailable instead of fabricating one.
+            if self._anomalous_expected():
+                return "unavailable"
             return "zero"
         if policy is NightPolicy.HOLD_UNTIL_MIDNIGHT and self._is_new_day():
             return "zero"
         return "hold"
+
+    def _anomalous_expected(self) -> bool:
+        """True when the current OFFLINE_EXPECTED was armed outside twilight."""
+        snapshot = self.coordinator.data
+        return snapshot is not None and snapshot.expected_outside_twilight
 
     def _is_new_day(self) -> bool:
         """True when the last successful poll fell on an earlier local day.
@@ -183,9 +235,14 @@ class SolarmaxSensor(CoordinatorEntity[SolarmaxCoordinator], SensorEntity):
 
         # A resolved "zero" is synthetic and needs no history; "hold" falls
         # through to the snapshot, which retains the last successful poll.
-        policy = self._night_policy
-        if policy is not None and self._night_value_source(policy) == "zero":
-            return 0
+        # "unavailable" (Q25a) has no honest value either — `available`
+        # reports the entity unavailable, so None here is never surfaced.
+        if (policy := self._night_policy) is not None:
+            night_source = self._night_value_source(policy)
+            if night_source == "zero":
+                return 0
+            if night_source == "unavailable":
+                return None
 
         if snapshot is None:
             return None
@@ -249,6 +306,9 @@ class SolarmaxSensor(CoordinatorEntity[SolarmaxCoordinator], SensorEntity):
             if night_source == "zero":
                 # Do not advertise the stale raw_value behind a synthetic 0.
                 return {"raw_value": 0, "night_value_source": "zero"}
+            if night_source == "unavailable":
+                # Q25a: no fabricated zero and no stale raw_value either.
+                return {"night_value_source": "unavailable"}
 
         if snapshot is None:
             return None
@@ -296,10 +356,14 @@ class SolarmaxSensor(CoordinatorEntity[SolarmaxCoordinator], SensorEntity):
             return True
 
         # A sensor with a night policy stays available to report it — except a
-        # HOLD sensor with nothing held, which has no value to offer.
+        # HOLD sensor with nothing held, or a ZERO sensor gated unavailable
+        # by an anomalous disconnect (Q25a), neither of which has a value.
         policy = self._night_policy
         if policy is not None:
-            if self._night_value_source(policy) == "zero":
+            night_source = self._night_value_source(policy)
+            if night_source == "unavailable":
+                return False
+            if night_source == "zero":
                 return True
             return self._held_value() is not None
 

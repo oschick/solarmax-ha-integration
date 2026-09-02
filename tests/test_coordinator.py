@@ -428,3 +428,91 @@ async def test_async_handle_midnight_notifies_listeners(hass, mock_config_entry)
         coordinator.async_handle_midnight(dt_util.now())
 
     notify.assert_called_once()
+
+
+# --- Q28b: repair-issue episodes and the 24h dismissal window --------------
+
+
+async def test_repair_dismissal_suppresses_recreation_within_24h(coordinator, hass):
+    """Completing the fix flow (issue deleted) while the fault persists must
+    not immediately re-raise the issue on the very next poll."""
+    old = dt_util.utcnow() - timedelta(seconds=FAULT_REPAIR_SECONDS + 60)
+    await coordinator._async_handle_snapshot(
+        _snap(EngineState.OFFLINE_FAULT, fault_since=old)
+    )
+    assert (
+        ir.async_get(hass).async_get_issue(DOMAIN, coordinator._repair_issue_id)
+        is not None
+    )
+
+    # User completes the fix flow: HA deletes the issue on CREATE_ENTRY.
+    ir.async_delete_issue(hass, DOMAIN, coordinator._repair_issue_id)
+
+    # Same fault, further aged, on the next poll.
+    older = dt_util.utcnow() - timedelta(seconds=FAULT_REPAIR_SECONDS + 120)
+    await coordinator._async_handle_snapshot(
+        _snap(EngineState.OFFLINE_FAULT, fault_since=older)
+    )
+    assert (
+        ir.async_get(hass).async_get_issue(DOMAIN, coordinator._repair_issue_id) is None
+    )
+
+
+async def test_repair_recreated_after_24h_dismiss_window_elapses(coordinator, hass):
+    """Past the 24h suppression window, a still-ongoing fault re-raises."""
+    old = dt_util.utcnow() - timedelta(seconds=FAULT_REPAIR_SECONDS + 60)
+    await coordinator._async_handle_snapshot(
+        _snap(EngineState.OFFLINE_FAULT, fault_since=old)
+    )
+    ir.async_delete_issue(hass, DOMAIN, coordinator._repair_issue_id)
+
+    # First poll after dismissal is still suppressed (proves the window works).
+    await coordinator._async_handle_snapshot(
+        _snap(EngineState.OFFLINE_FAULT, fault_since=old)
+    )
+    assert (
+        ir.async_get(hass).async_get_issue(DOMAIN, coordinator._repair_issue_id) is None
+    )
+
+    # Simulate >24h elapsed since the dismissal.
+    coordinator._dismissed_at = dt_util.utcnow() - timedelta(hours=24, seconds=1)
+    await coordinator._async_handle_snapshot(
+        _snap(EngineState.OFFLINE_FAULT, fault_since=old)
+    )
+    assert (
+        ir.async_get(hass).async_get_issue(DOMAIN, coordinator._repair_issue_id)
+        is not None
+    )
+
+
+async def test_repair_new_episode_after_recovery_recreates_immediately(
+    coordinator, hass
+):
+    """Recovery (or reclassification via EXPECTED) ends the dismissal
+    suppression — a brand-new fault episode raises immediately."""
+    old = dt_util.utcnow() - timedelta(seconds=FAULT_REPAIR_SECONDS + 60)
+    await coordinator._async_handle_snapshot(
+        _snap(EngineState.OFFLINE_FAULT, fault_since=old)
+    )
+    ir.async_delete_issue(hass, DOMAIN, coordinator._repair_issue_id)
+    await coordinator._async_handle_snapshot(
+        _snap(EngineState.OFFLINE_FAULT, fault_since=old)
+    )
+    assert (
+        ir.async_get(hass).async_get_issue(DOMAIN, coordinator._repair_issue_id) is None
+    )
+
+    # Recovery ends the episode and clears the dismissal anchor.
+    await coordinator._async_handle_snapshot(_snap(EngineState.ONLINE))
+    assert coordinator._dismissed_at is None
+    assert coordinator._issue_raised is False
+
+    # A brand-new fault raises immediately, with no 24h suppression left over.
+    new_old = dt_util.utcnow() - timedelta(seconds=FAULT_REPAIR_SECONDS + 10)
+    await coordinator._async_handle_snapshot(
+        _snap(EngineState.OFFLINE_FAULT, fault_since=new_old)
+    )
+    assert (
+        ir.async_get(hass).async_get_issue(DOMAIN, coordinator._repair_issue_id)
+        is not None
+    )

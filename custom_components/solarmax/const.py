@@ -40,6 +40,9 @@ NIGHT_POLL_SECONDS = 900
 DAWN_POLL_SECONDS = 60
 # How long an OFFLINE_FAULT must persist before a repair issue is raised.
 FAULT_REPAIR_SECONDS = 300
+# Q28b: once the user completes the repair's fix flow (deleting the issue)
+# while the fault is still ongoing, suppress re-creating it for this long.
+REPAIR_DISMISS_SUPPRESS_SECONDS = 24 * 60 * 60
 
 # Static device-identification MaxComm keys (queried once for device info)
 DEVICE_KEY_TYPE = "TYP"  # device type / model identifier

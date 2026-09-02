@@ -195,3 +195,28 @@ async def test_diagnostics_redacts_sensitive_data(
     assert config_data["host"] == "**REDACTED**"
     assert config_data["port"] == 12345
     assert config_data["device_name"] == "Test Inverter"
+
+
+@pytest.mark.asyncio
+async def test_diagnostics_redacts_serial_number_in_sensor_data(
+    hass: HomeAssistant, mock_config_entry
+):
+    """Finding 14: DIN (the inverter serial number) leaks in plain text
+    under sensor_data even though host is redacted. It must be redacted
+    like every other sensitive field."""
+    mock_coordinator = _mock_coordinator(
+        data=_snapshot(
+            values={
+                "PAC": {"value": 1000, "raw_value": 1000},
+                "DIN": {"value": 123456789, "raw_value": 123456789},
+            }
+        )
+    )
+    mock_config_entry.runtime_data = mock_coordinator
+
+    with patch.object(hass.config, "as_dict", return_value={"version": "2024.1.0"}):
+        diagnostics = await async_get_config_entry_diagnostics(hass, mock_config_entry)
+
+    assert "123456789" not in str(diagnostics)  # no raw DIN value anywhere
+    assert diagnostics["sensor_data"]["DIN"] == "**REDACTED**"
+    assert diagnostics["sensor_data"]["PAC"]["value"] == 1000  # unrelated data intact

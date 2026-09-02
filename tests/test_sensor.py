@@ -500,3 +500,63 @@ def test_kdy_after_midnight_reports_zero_source_and_raw(mock_coordinator, night_
 
     assert attributes["night_value_source"] == "zero"
     assert attributes["raw_value"] == 0
+
+
+# --- Q25a: anomalous-expected gating (armed outside twilight) ---------------
+
+
+def test_zero_policy_sensor_unavailable_when_anomalous_expected(
+    mock_coordinator, night_entry
+):
+    """A ZERO-policy sensor (PAC) must not fabricate a 0 when the armed
+    disconnect happened outside twilight — that is an anomaly (e.g.
+    shading), not a normal dusk, so there is no honest zero to report."""
+    mock_coordinator.data = _make_snapshot(
+        state=EngineState.OFFLINE_EXPECTED, expected_outside_twilight=True
+    )
+
+    sensor = _make_sensor(mock_coordinator, night_entry, "PAC")
+
+    assert sensor.available is False
+    assert sensor.native_value is None
+
+
+def test_hold_policy_sensor_still_holds_when_anomalous_expected(
+    mock_coordinator, night_entry
+):
+    """A HOLD-policy sensor (KT0) keeps holding its last-known value even
+    when the disconnect is anomalous — only ZERO-policy sensors are gated."""
+    mock_coordinator.data = _make_snapshot(
+        state=EngineState.OFFLINE_EXPECTED,
+        values={"KT0": {"value": 12345, "raw_value": 12345}},
+        expected_outside_twilight=True,
+    )
+
+    sensor = _make_sensor(mock_coordinator, night_entry, "KT0")
+
+    assert sensor.available is True
+    assert sensor.native_value == 12345
+
+
+def test_normal_dusk_zero_policy_sensor_still_reads_zero(mock_coordinator, night_entry):
+    """Sanity: a normal (twilight) EXPECTED is unaffected — PAC still reads
+    0 exactly as before (the default `expected_outside_twilight=False`)."""
+    _set_night(mock_coordinator)
+
+    sensor = _make_sensor(mock_coordinator, night_entry, "PAC")
+
+    assert sensor.available is True
+    assert sensor.native_value == 0
+
+
+def test_anomalous_expected_night_value_source_is_unavailable(
+    mock_coordinator, night_entry
+):
+    """The night_value_source attribute reports the gated state honestly."""
+    mock_coordinator.data = _make_snapshot(
+        state=EngineState.OFFLINE_EXPECTED, expected_outside_twilight=True
+    )
+
+    sensor = _make_sensor(mock_coordinator, night_entry, "PAC")
+
+    assert sensor.extra_state_attributes["night_value_source"] == "unavailable"

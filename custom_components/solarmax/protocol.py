@@ -413,11 +413,21 @@ def parse_response(
 
             field, value_str = item.split("=", 1)
 
-            if field == "SYS":
-                # SYS uses format "VALUE,0" (status value with sub-state)
-                value = int(value_str.split(",")[0], 16)
-            else:
-                value = int(value_str, 16)
+            try:
+                if field == "SYS":
+                    # SYS uses format "VALUE,0" (status value with sub-state)
+                    value = int(value_str.split(",")[0], 16)
+                else:
+                    value = int(value_str, 16)
+            except ValueError:
+                # A single malformed field (non-hex, or empty after '=')
+                # must not fail the whole frame — skip it, keep the rest.
+                _LOGGER.debug(
+                    "MaxComm: field '%s' has a malformed value %r; skipping",
+                    field,
+                    value_str,
+                )
+                continue
 
             result_dict[field] = {
                 "value": scale_value(field, value),

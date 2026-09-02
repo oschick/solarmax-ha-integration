@@ -243,9 +243,10 @@ def _make_entry() -> MockConfigEntry:
 
 @patch(_LINK_REQUEST, new_callable=AsyncMock)
 async def test_options_flow(mock_request, hass: HomeAssistant) -> None:
-    """Test options flow."""
-    mock_request.return_value = "{FB;01;10|64:PAC=03E8,0|1234}"
-
+    """Test options flow saves without probing the inverter (finding 1/13):
+    the running engine already holds the device's single client slot, so a
+    second connection here always fails — cannot_connect at any time of
+    day, or always at night. The options flow validates the schema only."""
     entry = _make_entry()
     entry.add_to_hass(hass)
 
@@ -267,11 +268,17 @@ async def test_options_flow(mock_request, hass: HomeAssistant) -> None:
     assert result2["type"] == FlowResultType.CREATE_ENTRY
     assert entry.data[CONF_HOST] == "192.168.1.101"
     assert entry.data[CONF_UPDATE_INTERVAL] == 60
+    mock_request.assert_not_awaited()  # no live probe was ever attempted
 
 
 @patch(_LINK_REQUEST, new_callable=AsyncMock)
-async def test_options_flow_connection_error(mock_request, hass: HomeAssistant) -> None:
-    """Test options flow with connection error."""
+async def test_options_flow_saves_even_when_a_probe_would_fail(
+    mock_request, hass: HomeAssistant
+) -> None:
+    """Finding 1: the options flow used to open a second TCP connection to
+    validate, which always failed while the engine holds the device's one
+    client slot — making the options flow permanently unsaveable. A probe
+    that would time out must no longer block the save."""
     mock_request.side_effect = LinkTimeout("no response")
 
     entry = _make_entry()
@@ -280,19 +287,20 @@ async def test_options_flow_connection_error(mock_request, hass: HomeAssistant) 
     result = await hass.config_entries.options.async_init(entry.entry_id)
     assert result["type"] == FlowResultType.FORM
 
-    result2 = await hass.config_entries.options.async_configure(
-        result["flow_id"],
-        user_input={
-            CONF_HOST: "192.168.1.101",
-            CONF_PORT: 12345,
-            CONF_ADDRESS: 1,
-            CONF_DEVICE_NAME: "Test Inverter",
-            CONF_UPDATE_INTERVAL: 30,
-        },
-    )
+    with patch.object(hass.config_entries, "async_reload", return_value=True):
+        result2 = await hass.config_entries.options.async_configure(
+            result["flow_id"],
+            user_input={
+                CONF_HOST: "192.168.1.101",
+                CONF_PORT: 12345,
+                CONF_ADDRESS: 1,
+                CONF_DEVICE_NAME: "Test Inverter",
+                CONF_UPDATE_INTERVAL: 30,
+            },
+        )
 
-    assert result2["type"] == FlowResultType.FORM
-    assert result2["errors"] == {"base": "cannot_connect"}
+    assert result2["type"] == FlowResultType.CREATE_ENTRY
+    mock_request.assert_not_awaited()
 
 
 async def test_night_keep_values_defaults_to_disabled(hass):

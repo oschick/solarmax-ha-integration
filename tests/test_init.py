@@ -196,3 +196,47 @@ async def test_setup_while_dark_creates_entities(hass, emulator):
         status = hass.states.get("sensor.e2e_inverter_sys")
         assert status is not None
         assert status.state == "offline_expected"
+
+
+async def test_device_registry_updates_when_statics_arrive_later(hass, emulator):
+    """Finding 9: setup while the device withholds TYP/SWV/DIN/BDN bakes the
+    "Inverter" placeholder into the device registry at construction time.
+    Once a later poll's statics arrive, the registry entry must be
+    refreshed to the real model/firmware/serial rather than keeping the
+    placeholder for the device's whole life.
+    """
+    from homeassistant.helpers import device_registry as dr
+
+    emulator.respond_only(["PAC", "PDC", "SYS", "SAL", "KDY"])  # withhold device info
+    entry = MockConfigEntry(
+        domain=DOMAIN,
+        data={
+            "host": "127.0.0.1",
+            "port": emulator.addr[1],
+            "device_name": "E2E Inverter",
+            "update_interval": 30,
+        },
+        unique_id="e2e-device-info",
+    )
+    entry.add_to_hass(hass)
+    assert await hass.config_entries.async_setup(entry.entry_id)
+    await hass.async_block_till_done()
+
+    registry = dr.async_get(hass)
+    device = registry.async_get_device(identifiers={(DOMAIN, entry.entry_id)})
+    assert device is not None
+    assert device.model == "Inverter"  # placeholder: statics never arrived
+
+    emulator.respond_only(None)  # statics now available
+    coordinator: SolarmaxCoordinator = entry.runtime_data
+    await coordinator.async_refresh()
+    await hass.async_block_till_done()
+
+    device = registry.async_get_device(identifiers={(DOMAIN, entry.entry_id)})
+    assert device is not None
+    assert device.model == "SolarMax 7TP2"
+
+    # Unload before the emulator fixture tears down: an unclosed connection
+    # would leave the emulator's client-handling thread alive past teardown.
+    assert await hass.config_entries.async_unload(entry.entry_id)
+    await hass.async_block_till_done()

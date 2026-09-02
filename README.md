@@ -171,6 +171,8 @@ Any sensor not listed above is not affected by this option.
 
 Sensors reporting a synthesized value expose a `night_value_source` attribute set to `"hold"` or `"zero"`. This attribute is only present while the value is synthetic — it is **absent entirely** during normal (daytime, or option-disabled) operation. Automations should check for the attribute's presence rather than compare it to `false`.
 
+**Anomalous disconnects are not treated as a normal dusk.** If the disconnect that produced `offline_expected` was armed (announced shutdown, or low DC power) but happened *before* the sun actually reached the twilight threshold (`expected_outside_twilight` — see [Connection States & Offline Detection](#connection-states--offline-detection)), that's an anomaly worth investigating, not routine nightfall. Zeroed sensors go honestly `unavailable` instead of reporting a fabricated `0` (`night_value_source: "unavailable"`); held sensors are unaffected and keep holding their last-known value as usual. A normal dusk (sun below the threshold) is unchanged — zeroed sensors still report `0` exactly as before.
+
 > **Note:** Home Assistant restarts overnight now create entities immediately — the coordinator's first refresh can no longer fail (a dark inverter simply produces a connection-state snapshot instead of raising), so there is no `ConfigEntryNotReady` and no missing-entities window. With this option enabled, zeroed sensors (`PAC`, `PDC`, etc.) report `0` from the moment Home Assistant starts, even on a fresh restart; held sensors (`KMT`, `KYR`, `SAL`, etc.) stay `unavailable` until the first successful poll actually captures a value to hold, since there is nothing from a previous restart to carry over.
 
 ### Reconfiguration
@@ -190,7 +192,8 @@ The integration uses **local polling** via the **MaxComm protocol** to retrieve 
 - **Protocol**: MaxComm (proprietary SolarMax TCP protocol, documented August 2022)
 - **Update Method**: One persistent TCP connection (default port 12345), reused across polls rather than reconnecting every cycle
 - **Update Frequency**: Configurable during the day (default: 30 seconds); adaptive while offline — see [Connection States & Offline Detection](#connection-states--offline-detection)
-- **Retry Logic**: One retry per poll for a corrupted/truncated response (line noise); a peer-closed connection is transparently reconnected and the request resent once; a timeout is never retried
+- **Retry Logic**: One retry per poll for a corrupted/truncated response (line noise) or a single lost/timed-out response — never both stacked on the same request; a peer-closed connection is transparently reconnected and the request resent once
+- **Timeouts**: 3.5 seconds to wait for a response (the MaxComm spec's own documented maximum is 3000 ms) and a 15-second overall budget per poll cycle
 - **Checksum Verification**: Validates response CRC to detect corrupt data
 
 ### Connection States & Offline Detection
@@ -212,9 +215,11 @@ Either signal arms the connection: the *next* disconnect is then classified `off
 
 Some firmware versions never announce the shutdown or dip below the `PDC` threshold before dropping off the network. For those, a disconnect while the sun is below the configured [twilight elevation threshold](#twilight-elevation-threshold) is also classified `offline_expected`, armed or not.
 
+**Escalation for a stuck "armed" flag:** an `offline_expected` disconnect that was armed but stays outside the twilight window (the sun never comes down to explain it — see `expected_outside_twilight` below) reclassifies to `offline_fault` once the anomaly has lasted over an hour with at least 10 failed probes and zero successful ones in between. Arming clears at that point and the fault gets a fresh `fault_since`. A disconnect classified `offline_expected` purely by the sun fallback never needs this — it self-corrects the moment the sun crosses the threshold.
+
 **Polling cadence:** the configured update interval applies whenever the connection is `online` or `offline_fault`. Once `offline_expected`, polling slows down: every 15 minutes (900 s) while the sun is below the twilight threshold, or every 60 seconds once the sun is back above it — fast enough to notice the inverter waking up at dawn without polling a sleeping device all night.
 
-**Daytime faults:** a poll failure that is neither armed nor below the twilight threshold is an honest `offline_fault` starting with the very first failed poll — all sensors except Status Code go `unavailable` immediately (there is no multi-failure grace window). If the fault persists for 5 minutes, a **repair issue** appears under **Settings → Repairs** with the host, port, and elapsed minutes, refreshing every minute and clearing automatically once the connection recovers.
+**Daytime faults:** a poll failure that is neither armed nor below the twilight threshold is an honest `offline_fault` starting with the very first failed poll — all sensors except Status Code go `unavailable` immediately (there is no multi-failure grace window). If the fault persists for 5 minutes, a **repair issue** appears under **Settings → Repairs** with the host, port, and elapsed minutes, refreshing every minute and clearing automatically once the connection recovers. Completing the repair's fix flow while the fault is still ongoing suppresses re-creating the issue for 24 hours; a new fault episode (recovery, or reclassification to `offline_expected`) raises immediately regardless.
 
 **Diagnostic attributes** on the Status Code sensor while not `online`:
 
