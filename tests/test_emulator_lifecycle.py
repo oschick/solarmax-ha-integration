@@ -41,7 +41,7 @@ def test_stop_waits_for_every_client_handler(socket_enabled) -> None:
         for expected_handlers in (1, 2):
             with socket.create_connection(address, timeout=1):
                 pass
-            _wait_until(lambda: len(handlers) == expected_handlers)
+            _wait_until(lambda expected=expected_handlers: len(handlers) == expected)
 
         emulator.stop()
 

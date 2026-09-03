@@ -6,6 +6,7 @@ single-client lockout, and the dusk sequence 20008 -> 20002 -> dark.
 """
 
 import socket
+import threading
 import time
 
 from tests.emulator import EmulatorHandle, build_request, parse_values
@@ -30,13 +31,19 @@ def test_stop_joins_blocked_client_handler(socket_enabled):
     client = socket.create_connection(emulator.addr, timeout=2)
     try:
         deadline = time.monotonic() + 2
-        while emulator._emulator._client_thread is None:
+        handlers = []
+        while not handlers:
+            handlers = [
+                thread
+                for thread in threading.enumerate()
+                if thread.name == "solarmax-emulator-client"
+            ]
             if time.monotonic() >= deadline:
                 raise AssertionError("emulator did not start a client handler")
             time.sleep(0.01)
 
         emulator.stop()
-        assert emulator._emulator._client_thread.is_alive() is False
+        assert all(not thread.is_alive() for thread in handlers)
     finally:
         client.close()
         emulator.stop()
