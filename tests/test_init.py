@@ -193,13 +193,10 @@ async def test_setup_while_dark_creates_entities(hass, emulator):
         assert status.state == "offline_expected"
 
 
-async def test_device_registry_updates_when_statics_arrive_later(hass, emulator):
-    """Finding 9: setup while the device withholds TYP/SWV/DIN/BDN bakes the
-    "Inverter" placeholder into the device registry at construction time.
-    Once a later poll's statics arrive, the registry entry must be
-    refreshed to the real model/firmware/serial rather than keeping the
-    placeholder for the device's whole life.
-    """
+async def test_device_registry_updates_when_statics_arrive_later(
+    hass, emulator, monkeypatch
+):
+    """Static device data should replace the setup-time placeholder."""
     from homeassistant.helpers import device_registry as dr
 
     emulator.respond_only(["PAC", "PDC", "SYS", "SAL", "KDY"])  # withhold device info
@@ -218,16 +215,34 @@ async def test_device_registry_updates_when_statics_arrive_later(hass, emulator)
     await hass.async_block_till_done()
 
     registry = dr.async_get(hass)
-    device = registry.async_get_device(identifiers={(DOMAIN, entry.entry_id)})
+    get_by_identifier = getattr(registry, "async_get_device_by_identifier", None)
+
+    def get_device():
+        if get_by_identifier is not None:
+            return get_by_identifier((DOMAIN, entry.entry_id), entry.entry_id)
+        return registry.async_get_device(identifiers={(DOMAIN, entry.entry_id)})
+
+    device = get_device()
     assert device is not None
     assert device.model == "Inverter"  # placeholder: statics never arrived
+
+    if get_by_identifier is not None:
+
+        def fail_deprecated_lookup(*_args, **_kwargs):
+            raise AssertionError("deprecated device lookup used")
+
+        monkeypatch.setattr(
+            registry,
+            "async_get_device",
+            fail_deprecated_lookup,
+        )
 
     emulator.respond_only(None)  # statics now available
     coordinator: SolarmaxCoordinator = entry.runtime_data
     await coordinator.async_refresh()
     await hass.async_block_till_done()
 
-    device = registry.async_get_device(identifiers={(DOMAIN, entry.entry_id)})
+    device = get_device()
     assert device is not None
     assert device.model == "SolarMax 7TP2"
 

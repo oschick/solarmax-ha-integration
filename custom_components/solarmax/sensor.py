@@ -72,15 +72,7 @@ async def async_setup_entry(
 def _make_device_registry_updater(
     hass: HomeAssistant, entry: SolarmaxConfigEntry, coordinator: SolarmaxCoordinator
 ) -> Callable[[], None]:
-    """Build a coordinator listener that refreshes the device registry entry
-    once static device info (TYP/SWV/DIN) lands in a snapshot.
-
-    `_attr_device_info` is baked into each sensor at construction time with
-    the "Inverter" placeholder when setup happens dark; this keeps the
-    registry entry from carrying that placeholder for the device's whole
-    life once real statics arrive. `async_update_device` early-returns when
-    nothing actually changed, so firing on every coordinator update is cheap.
-    """
+    """Refresh device metadata when static inverter data becomes available."""
 
     @callback
     def _update_device_registry() -> None:
@@ -88,9 +80,14 @@ def _make_device_registry_updater(
         if model is None:
             return
         device_registry = dr.async_get(hass)
-        device = device_registry.async_get_device(
-            identifiers={(DOMAIN, entry.entry_id)}
+        identifier = (DOMAIN, entry.entry_id)
+        get_by_identifier = getattr(
+            device_registry, "async_get_device_by_identifier", None
         )
+        if get_by_identifier is not None:
+            device = get_by_identifier(identifier, entry.entry_id)
+        else:
+            device = device_registry.async_get_device(identifiers={identifier})
         if device is None:
             return
         device_registry.async_update_device(
