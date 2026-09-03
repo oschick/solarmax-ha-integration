@@ -90,14 +90,8 @@ class SolarmaxCoordinator(DataUpdateCoordinator[EngineSnapshot]):
         )
 
         self._repair_issue_id = f"connection_issues_{entry.entry_id}"
-        # Q28b: repair-issue episode tracking. `_issue_raised` is True once
-        # this fault episode has actually created the issue; `_dismissed_at`
-        # is set when the user completes the fix flow (issue deleted) while
-        # the fault is still ongoing, and suppresses re-creation for
-        # REPAIR_DISMISS_SUPPRESS_SECONDS. In-memory only — an HA restart
-        # mid-fault forgets the dismissal (accepted by the ruling). Both
-        # reset on a new episode (recovery to ONLINE or reclassification to
-        # OFFLINE_EXPECTED).
+        # A dismissed issue stays suppressed for the rest interval unless a
+        # new connection-state episode resets this in-memory bookkeeping.
         self._issue_raised = False
         self._dismissed_at: datetime | None = None
 
@@ -191,7 +185,7 @@ class SolarmaxCoordinator(DataUpdateCoordinator[EngineSnapshot]):
         """Poll the engine and hand back a snapshot. Never raises."""
         try:
             snapshot = await self._engine.poll()
-        except Exception:  # noqa: BLE001 - belt-and-braces, see class docstring
+        except Exception:  # noqa: BLE001 - the coordinator contract never raises
             _LOGGER.exception(
                 "Unexpected error polling the inverter; treating as a fault"
             )
@@ -241,81 +235,83 @@ class SolarmaxCoordinator(DataUpdateCoordinator[EngineSnapshot]):
         return self._configured_interval
 
     async def _async_handle_snapshot(self, snapshot: EngineSnapshot) -> None:
-        """Log state transitions and create/clear the connection repair issue.
+        """Log transitions and synchronize the connection repair issue."""
+        self._log_state_transition(snapshot)
+        fault_seconds = self._repairable_fault_seconds(snapshot)
+        if fault_seconds is None:
+            self._clear_repair_issue()
+            return
+        if self._repair_creation_suppressed():
+            return
+        self._create_repair_issue(fault_seconds)
 
-        `self.data` is still the *previous* snapshot here — the base class
-        only assigns `self.data = await self._async_update_data()` after
-        this whole method has returned — so comparing against it gives the
-        actual state transition, not a comparison against itself.
-        """
+    def _log_state_transition(self, snapshot: EngineSnapshot) -> None:
+        """Log when the incoming snapshot changes connection state."""
+        # The base coordinator assigns self.data after _async_update_data returns.
         previous_state = self.data.state if self.data else None
-        if snapshot.state is not previous_state:
-            if snapshot.state is EngineState.OFFLINE_FAULT:
-                _LOGGER.warning(
-                    "Inverter %s:%s unreachable (fault)",
-                    self._entry.data[CONF_HOST],
-                    self._entry.data[CONF_PORT],
-                )
-            else:
-                _LOGGER.info(
-                    "Connection state %s -> %s", previous_state, snapshot.state
-                )
+        if snapshot.state is previous_state:
+            return
+        if snapshot.state is EngineState.OFFLINE_FAULT:
+            _LOGGER.warning(
+                "Inverter %s:%s unreachable (fault)",
+                self._entry.data[CONF_HOST],
+                self._entry.data[CONF_PORT],
+            )
+            return
+        _LOGGER.info("Connection state %s -> %s", previous_state, snapshot.state)
 
-        if snapshot.state is EngineState.OFFLINE_FAULT and snapshot.fault_since:
-            fault_seconds = (dt_util.utcnow() - snapshot.fault_since).total_seconds()
-            if fault_seconds >= FAULT_REPAIR_SECONDS:
-                if self._issue_raised and (
-                    async_get_issue_registry(self.hass).async_get_issue(
-                        DOMAIN, self._repair_issue_id
-                    )
-                    is None
-                ):
-                    # The user completed the fix flow (issue deleted) while
-                    # the fault is still ongoing — do not immediately
-                    # re-raise it under them.
-                    self._issue_raised = False
-                    self._dismissed_at = dt_util.utcnow()
+    @staticmethod
+    def _repairable_fault_seconds(snapshot: EngineSnapshot) -> float | None:
+        """Return the age of a sustained fault that warrants a repair issue."""
+        if (
+            snapshot.state is not EngineState.OFFLINE_FAULT
+            or snapshot.fault_since is None
+        ):
+            return None
+        fault_seconds = (dt_util.utcnow() - snapshot.fault_since).total_seconds()
+        return fault_seconds if fault_seconds >= FAULT_REPAIR_SECONDS else None
 
-                if self._dismissed_at is not None:
-                    dismissed_seconds = (
-                        dt_util.utcnow() - self._dismissed_at
-                    ).total_seconds()
-                    if dismissed_seconds < REPAIR_DISMISS_SUPPRESS_SECONDS:
-                        return
-                    self._dismissed_at = None
+    def _repair_creation_suppressed(self) -> bool:
+        """Track user dismissal and decide whether issue creation is suppressed."""
+        if self._issue_raised:
+            issue = async_get_issue_registry(self.hass).async_get_issue(
+                DOMAIN, self._repair_issue_id
+            )
+            if issue is None:
+                self._issue_raised = False
+                self._dismissed_at = dt_util.utcnow()
 
-                # No "already raised" guard beyond the above: `minutes` must
-                # keep refreshing for the life of the fault. async_create_issue
-                # no-ops (no new update event) when the replacement issue is
-                # identical to the one already registered, so recomputing
-                # every poll is cheap and only actually updates the dialog
-                # when the minute count ticks over.
-                issue_context: dict[str, str] = {
-                    "host": self._entry.data[CONF_HOST],
-                    "port": str(self._entry.data[CONF_PORT]),
-                    "minutes": str(int(fault_seconds // 60)),
-                }
-                async_create_issue(
-                    self.hass,
-                    DOMAIN,
-                    self._repair_issue_id,
-                    is_fixable=True,
-                    is_persistent=False,
-                    severity=IssueSeverity.ERROR,
-                    translation_key="connection_issues",
-                    translation_placeholders=issue_context,
-                    # async_create_issue's `data` param is typed broader
-                    # (dict[str, str | int | float | None]) than
-                    # translation_placeholders' dict[str, str]; mypy
-                    # treats dict as invariant, so a plain dict[str, str]
-                    # isn't accepted for `data` without this cast even
-                    # though every value here is already a str.
-                    data=cast("dict[str, str | int | float | None]", issue_context),
-                )
-                self._issue_raised = True
-                return
+        if self._dismissed_at is None:
+            return False
+        dismissed_seconds = (dt_util.utcnow() - self._dismissed_at).total_seconds()
+        if dismissed_seconds < REPAIR_DISMISS_SUPPRESS_SECONDS:
+            return True
+        self._dismissed_at = None
+        return False
 
-        # Any state that is not a sustained fault ends the current episode.
+    def _create_repair_issue(self, fault_seconds: float) -> None:
+        """Create or refresh the repair issue for the current fault."""
+        issue_context: dict[str, str] = {
+            "host": self._entry.data[CONF_HOST],
+            "port": str(self._entry.data[CONF_PORT]),
+            "minutes": str(int(fault_seconds // 60)),
+        }
+        async_create_issue(
+            self.hass,
+            DOMAIN,
+            self._repair_issue_id,
+            is_fixable=True,
+            is_persistent=False,
+            severity=IssueSeverity.ERROR,
+            translation_key="connection_issues",
+            translation_placeholders=issue_context,
+            # The repair API's mutable data mapping has a broader value type.
+            data=cast("dict[str, str | int | float | None]", issue_context),
+        )
+        self._issue_raised = True
+
+    def _clear_repair_issue(self) -> None:
+        """End repair bookkeeping for a recovered or reclassified episode."""
         self._issue_raised = False
         self._dismissed_at = None
         async_delete_issue(self.hass, DOMAIN, self._repair_issue_id)

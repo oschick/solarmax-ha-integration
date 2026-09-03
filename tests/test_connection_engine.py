@@ -163,7 +163,7 @@ async def test_sun_fallback_for_non_announcing_inverter(emulator):
 
 
 async def test_online_drop_is_fault_immediately_with_reconnecting_flag(emulator):
-    """Q19(b): honest FAULT on first failed poll; grace only softens attributes."""
+    """Reconnect grace softens attributes without hiding a daytime fault."""
     engine = _engine(emulator, grace=60.0)
     try:
         await engine.poll()
@@ -189,7 +189,7 @@ async def test_startup_grace_keeps_unknown(emulator):
 
 
 async def test_partial_frame_is_online_and_can_arm(emulator):
-    """Q15(c): a device that answers is online; SYS in a dying frame arms."""
+    """A partial response proves reachability and may announce shutdown."""
     emulator.begin_dusk(announce_seconds=None)  # announce-only, no dark timer
     emulator.respond_only(["SYS"])
     engine = _engine(emulator)
@@ -202,19 +202,7 @@ async def test_partial_frame_is_online_and_can_arm(emulator):
 
 
 async def test_expected_outside_twilight_flag(emulator):
-    """Q22: noon DC-trip -> EXPECTED but flagged anomalous.
-
-    NOTE: the brief's version of this test called `begin_dusk(announce_seconds=0)`
-    with no intervening poll before the device went dark, which cannot arm the
-    tracker (armed is only set by ArmingTracker.observe() on a *successful* poll,
-    and a LinkTimeout carries no protocol data by construction — see Task 3).
-    That is inconsistent with `EngineState`'s own "derived from poll evidence
-    only" invariant and with `test_unannounced_drop_at_noon_is_fault`, which
-    requires the identical (armed=False, sun_below=False) case to be FAULT.
-    Fixed here, matching the shape of `test_dusk_sequence_classifies_expected`,
-    by giving the tracker the one arming poll it needs. Confirmed with advisor
-    review; the engine's `_on_failure` algorithm is unchanged from the brief.
-    """
+    """An announced daytime shutdown is expected but marked anomalous."""
     engine = _engine(emulator, sun_below=lambda: False)
     try:
         await engine.poll()
@@ -283,14 +271,7 @@ async def test_recovery_clears_everything(emulator):
 
 
 async def test_statics_retried_within_the_poll(emulator):
-    """The statics frame gets the same one-shot retry as the hot frame.
-
-    Review fix: `_poll_inner` used to fetch statics via a bare
-    `self._link.request(...)`, bypassing `_request_with_retry` entirely —
-    a single CRC glitch on the statics frame failed the whole poll. Since
-    `_statics_loaded` resets on every OFFLINE_EXPECTED entry, that
-    unretried request is exactly the dawn poll after every dusk.
-    """
+    """Static and hot requests share the same one-shot retry policy."""
     engine = _engine(emulator)
     try:
         emulator.inject("corrupt_crc")  # poisons the *statics* frame (first request)
@@ -302,13 +283,7 @@ async def test_statics_retried_within_the_poll(emulator):
 
 
 async def test_sun_below_callback_exception_does_not_escape_poll(emulator):
-    """A broken sun_below callback must not cross poll()'s "never raises" boundary.
-
-    Review fix: `_on_failure` called `self._sun_below()` unguarded; an
-    exception from a HA sun-integration callback raised straight out of
-    poll(). Falls back to sun_below=False — the conservative reading, so
-    an unknown sun position never suppresses a real fault.
-    """
+    """A broken sun callback conservatively becomes a daytime fault."""
 
     def _raising_sun_below() -> bool:
         raise RuntimeError("boom")
@@ -324,13 +299,7 @@ async def test_sun_below_callback_exception_does_not_escape_poll(emulator):
 
 
 async def test_dawn_recovery_after_on_failure_closed_link(emulator):
-    """Final-review finding #1 regression guard.
-
-    `ConnectionEngine._on_failure` uses the reopenable `disconnect()` on
-    every OFFLINE_EXPECTED entry so statics get re-fetched on the next
-    connection. Terminal `close()` is reserved for integration teardown;
-    using it here would prevent dawn recovery after the first night.
-    """
+    """Expected outages disconnect without terminally closing the link."""
     engine = _engine(emulator, sun_below=lambda: True)
     try:
         snapshot = await engine.poll()
@@ -348,16 +317,7 @@ async def test_dawn_recovery_after_on_failure_closed_link(emulator):
 
 
 async def test_empty_first_statics_frame_is_refetched(emulator):
-    """Final-review finding #4: an empty statics frame must not latch
-    `_statics_loaded`.
-
-    `inject("empty_data")` poisons exactly the next response, which is the
-    very first request a fresh engine sends (statics + device fields). That
-    parses cleanly to `{}` — no exception — so before the fix
-    `_statics_loaded` was set True unconditionally and TYP/PIN never
-    arrived for the life of the entry. The fix gates on the device-info
-    keys actually landing, so the next poll must re-fetch and succeed.
-    """
+    """An empty static response is retried on the next poll."""
     emulator.inject("empty_data")
     engine = _engine(emulator)
     try:
@@ -404,14 +364,11 @@ async def test_permanently_partial_statics_stop_after_one_backfill():
     assert len(static_requests) == 2
 
 
-# --- Review-fix-wave: fault_since / armed escalation / closed / retry / lock ---
+# --- Fault timing, escalation, shutdown, retries, and serialization ----------
 
 
 async def test_fault_since_is_not_backdated_across_a_night(emulator):
-    """G16: fault_since must not survive an OFFLINE_EXPECTED window — a fault
-    reclassified back to FAULT at dawn must get a fresh timestamp, not the
-    one from before dusk (which would make the repair issue fire instantly,
-    counting the whole night as part of the fault)."""
+    """A nighttime reclassification starts a fresh fault clock at dawn."""
     sun_below = False  # noon
     engine = _engine(emulator, sun_below=lambda: sun_below, grace=0.0)
     try:
@@ -424,7 +381,7 @@ async def test_fault_since_is_not_backdated_across_a_night(emulator):
         sun_below = True  # dusk falls; the same unresolved outage now reads EXPECTED
         expected_snapshot = await engine.poll()
         assert expected_snapshot.state is EngineState.OFFLINE_EXPECTED
-        assert expected_snapshot.fault_since is None  # G16: cleared on entry
+        assert expected_snapshot.fault_since is None
 
         sun_below = False  # dawn: sun is back up, device still not responding
         dawn_snapshot = await engine.poll()
@@ -436,15 +393,10 @@ async def test_fault_since_is_not_backdated_across_a_night(emulator):
 
 
 async def test_armed_escalates_to_fault_after_sustained_anomaly(emulator):
-    """Q24: armed OFFLINE_EXPECTED with the sun staying up for >=1h and
-    >=10 failed probes (zero successes) escalates to OFFLINE_FAULT; arming
-    clears and fault_since stamps fresh at escalation.
+    """A sustained armed daytime outage eventually becomes a fault.
 
-    Drives `_on_failure()` directly for the repeated-failure steps (rather
-    than `poll()` against a dark emulator) to avoid ~20 real connect/timeout
-    cycles for what is purely internal counting/threshold logic; the wiring
-    from `poll()` into `_on_failure()` on every failure path is already
-    covered by every other test in this module.
+    Repeated failures call the policy directly to avoid slow network timeouts;
+    separate tests cover every poll-to-failure path.
     """
     clock = _FakeClock()
     engine = _engine(emulator, sun_below=lambda: False, clock=clock)
@@ -471,8 +423,7 @@ async def test_armed_escalates_to_fault_after_sustained_anomaly(emulator):
 
 
 async def test_armed_anomaly_below_window_stays_expected(emulator):
-    """Q24: >=10 failures with the elapsed window still short must not
-    escalate — both thresholds are required together."""
+    """Escalation requires both the failure count and elapsed-time limits."""
     clock = _FakeClock()
     engine = _engine(emulator, sun_below=lambda: False, clock=clock)
     try:
@@ -491,8 +442,7 @@ async def test_armed_anomaly_below_window_stays_expected(emulator):
 
 
 async def test_armed_with_sun_below_needs_no_escalation(emulator):
-    """Q24: a sun-classified (non-anomalous) EXPECTED never escalates, no
-    matter how long it persists or how many probes fail."""
+    """An outage explained by darkness never escalates."""
     clock = _FakeClock()
     engine = _engine(emulator, sun_below=lambda: True, clock=clock)
     try:
@@ -511,13 +461,7 @@ async def test_armed_with_sun_below_needs_no_escalation(emulator):
 
 
 async def test_poll_after_close_never_touches_link(emulator):
-    """Engine-level closed flag: once close() has run, poll() must return
-    without ever calling into the link again — no reconnect, no request.
-
-    This is what closes the reload leak: a scheduled refresh racing HA
-    unload must not reach a later network request and resurrect the
-    connection behind terminal close.
-    """
+    """A poll after terminal close returns cached state without network I/O."""
     link = SolarmaxLink(*emulator.addr, response_timeout=0.5)
     engine = ConnectionEngine(
         link, address=1, sun_below=lambda: False, grace_seconds=0.0
@@ -534,8 +478,7 @@ async def test_poll_after_close_never_touches_link(emulator):
 
 
 async def test_timeout_is_retried_once_within_the_poll(emulator):
-    """Q26: a single dropped response is retried once in-poll, same as line
-    noise — the poll still comes back ONLINE rather than failing."""
+    """One dropped response is retried within the same poll."""
     engine = _engine(emulator, timeout=1.0)
     try:
         await engine.poll()  # baseline: statics loaded
@@ -566,9 +509,7 @@ async def test_close_during_poll_prevents_the_next_request():
 
 
 async def test_concurrent_polls_are_serialized(emulator):
-    """Poll lock: HA's debouncer can run a refresh concurrently with a
-    scheduled one; without serialising, two `poll()`s racing the same
-    `SolarmaxLink` corrupt each other's connect/request sequencing."""
+    """Scheduled and debounced refreshes serialize access to the link."""
     link = SolarmaxLink(*emulator.addr)
     engine = ConnectionEngine(
         link, address=1, sun_below=lambda: False, grace_seconds=0.0
@@ -581,8 +522,7 @@ async def test_concurrent_polls_are_serialized(emulator):
         await engine.close()
 
 
-def test_timeouts_widened_per_q27():
-    """Q27: response timeout 2.0 -> 3.5s, POLL_BUDGET 10 -> 15s."""
+def test_default_response_timeout_and_poll_budget():
     link = SolarmaxLink("127.0.0.1", 1)
     assert link.response_timeout == 3.5
     assert POLL_BUDGET_SECONDS == 15.0

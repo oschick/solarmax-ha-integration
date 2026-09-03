@@ -307,42 +307,77 @@ def scale_value(field: str, raw: int) -> float | int:
 
 
 def _extract_data_from_frames(frames: list[str]) -> str:
-    """Extract and merge data sections from multiple response frames.
+    """Merge frame payloads, preserving fields split across frame boundaries."""
+    return "".join(
+        _extract_frame_data(frame, first=index == 0)
+        for index, frame in enumerate(frames)
+    )
 
-    Frame 1 format: {Src;Dest;Len|Port:Data|CRC}  or  {Src;Dest;Len|Port:Data|CRC)
-    Continuation frames: {Src;Dest;Len|Data|CRC}
 
-    The inverter may split a field name at the frame boundary, e.g.:
-    Frame 1 ends with "...;U" and Frame 2 starts with "D01=D38;..."
-    Concatenation reconstructs the full field: "...;UD01=D38;..."
-    """
-    data_parts = []
-    for i, frame in enumerate(frames):
-        # Strip STX and (CRC + ETX), leaving "Header|Payload|", then strip
-        # the trailing FRS (the '|' before the CRC).
-        inner = _frame_payload(frame)
-        if inner.endswith(PROTO_FRS):
-            inner = inner[:-1]
+def _extract_frame_data(frame: str, *, first: bool) -> str:
+    """Return the data section from one response frame."""
+    inner = _frame_payload(frame).removesuffix(PROTO_FRS)
+    _, separator, payload = inner.partition(PROTO_FRS)
+    if not separator:
+        return ""
 
-        # Split on first | to separate header from payload
-        pipe_pos = inner.find(PROTO_FRS)
-        if pipe_pos < 0:
-            continue
-        payload = inner[pipe_pos + 1 :]
+    # Only the first frame prefixes its data with the response port.
+    if first and PROTO_US in payload:
+        return payload.partition(PROTO_US)[2]
+    return payload
 
-        if i == 0:
-            # First frame has "Port:Data" — extract after the colon
-            colon_pos = payload.find(PROTO_US)
-            if colon_pos >= 0:
-                data_parts.append(payload[colon_pos + 1 :])
-            else:
-                data_parts.append(payload)
-        else:
-            # Continuation frames have just data (no port prefix)
-            data_parts.append(payload)
 
-    # Direct concatenation reconstructs split field names at boundaries
-    return "".join(data_parts)
+def _validated_frames(data: str, verify_checksum: bool) -> list[str]:
+    """Return complete frames or raise a retryable parse error."""
+    frames = split_frames(data)
+    if not frames:
+        raise RetryableProtocolError("No valid MaxComm frames found in response")
+    if verify_checksum and not all(verify_frame_checksum(frame) for frame in frames):
+        raise RetryableProtocolError(
+            "MaxComm response checksum verification failed: data may be corrupted"
+        )
+    return frames
+
+
+def _raise_for_interface_error(frame: str) -> None:
+    """Raise for deterministic errors returned on the interface-message port."""
+    port_markers = (
+        f"{PROTO_FRS}{PROTO_PORT_MESSAGE:X}{PROTO_US}",
+        f"{PROTO_FRS}{PROTO_PORT_MESSAGE:04X}{PROTO_US}",
+    )
+    if not any(marker in frame for marker in port_markers):
+        return
+
+    error_data = frame.split(PROTO_US)[1].split(PROTO_FRS)[0]
+    if PROTO_ERROR_INVALID_PROTOCOL in error_data:
+        raise ProtocolError(
+            "Inverter reported invalid protocol (IPR): "
+            "checksum or length error in our request"
+        )
+    if PROTO_ERROR_INVALID_PORT in error_data:
+        raise ProtocolError("Inverter reported invalid port number (IPN)")
+
+
+def _parse_field(item: str) -> tuple[str, dict[str, float | int]] | None:
+    """Parse one response field, skipping unavailable or malformed values."""
+    if "=" not in item:
+        if item.strip():
+            _LOGGER.debug("MaxComm: key '%s' returned as not applicable", item)
+        return None
+
+    field, value_str = item.split("=", 1)
+    raw_value = value_str.split(",", 1)[0] if field == "SYS" else value_str
+    try:
+        value = int(raw_value, 16)
+    except ValueError:
+        _LOGGER.debug(
+            "MaxComm: field '%s' has a malformed value %r; skipping",
+            field,
+            value_str,
+        )
+        return None
+
+    return field, {"value": scale_value(field, value), "raw_value": value}
 
 
 def parse_response(
@@ -365,74 +400,13 @@ def parse_response(
     retry), ProtocolError on deterministic inverter-reported errors (IPR/IPN).
     """
     try:
-        # Split into individual frames
-        frames = split_frames(data)
-        if not frames:
-            # Corrupted/truncated response — may succeed on retry
-            raise RetryableProtocolError("No valid MaxComm frames found in response")
-
-        # Verify checksum on each frame (unless disabled)
-        if verify_checksum:
-            for frame in frames:
-                if not verify_frame_checksum(frame):
-                    # Likely line noise — may succeed on retry
-                    raise RetryableProtocolError(
-                        "MaxComm response checksum verification failed: "
-                        "data may be corrupted"
-                    )
-
-        # Check for interface error messages (port 0x3E8 = 1000)
-        # Only need to check the first frame (error responses are single-frame)
-        port_hex = format(PROTO_PORT_MESSAGE, "X")
-        port_hex_padded = format(PROTO_PORT_MESSAGE, "04X")
-        if (
-            f"{PROTO_FRS}{port_hex}{PROTO_US}" in frames[0]
-            or f"{PROTO_FRS}{port_hex_padded}{PROTO_US}" in frames[0]
-        ):
-            error_data = frames[0].split(PROTO_US)[1].split(PROTO_FRS)[0]
-            if PROTO_ERROR_INVALID_PROTOCOL in error_data:
-                raise ProtocolError(
-                    "Inverter reported invalid protocol (IPR): "
-                    "checksum or length error in our request"
-                )
-            if PROTO_ERROR_INVALID_PORT in error_data:
-                raise ProtocolError("Inverter reported invalid port number (IPN)")
-
-        # Extract and merge data from all frames
-        data_section = _extract_data_from_frames(frames)
-        data_split = data_section.split(PROTO_FS)
+        frames = _validated_frames(data, verify_checksum)
+        _raise_for_interface_error(frames[0])
         result_dict: dict[str, dict[str, float | int]] = {}
-
-        for item in data_split:
-            if "=" not in item:
-                # Per Section 1.6.4: key without value means "not applicable"
-                # (key is known but not available in current device state)
-                if item.strip():
-                    _LOGGER.debug("MaxComm: key '%s' returned as not applicable", item)
-                continue
-
-            field, value_str = item.split("=", 1)
-
-            try:
-                if field == "SYS":
-                    # SYS uses format "VALUE,0" (status value with sub-state)
-                    value = int(value_str.split(",")[0], 16)
-                else:
-                    value = int(value_str, 16)
-            except ValueError:
-                # A single malformed field (non-hex, or empty after '=')
-                # must not fail the whole frame — skip it, keep the rest.
-                _LOGGER.debug(
-                    "MaxComm: field '%s' has a malformed value %r; skipping",
-                    field,
-                    value_str,
-                )
-                continue
-
-            result_dict[field] = {
-                "value": scale_value(field, value),
-                "raw_value": value,
-            }
+        for item in _extract_data_from_frames(frames).split(PROTO_FS):
+            if parsed := _parse_field(item):
+                field, reading = parsed
+                result_dict[field] = reading
 
         _LOGGER.debug("Parsed %d values from inverter response", len(result_dict))
         return result_dict

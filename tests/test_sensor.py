@@ -110,12 +110,7 @@ def test_sys_sensor_available_when_offline_fault(mock_coordinator, mock_config_e
 def test_other_sensor_unavailable_when_offline_fault(
     mock_coordinator, mock_config_entry
 ):
-    """A daytime OFFLINE_FAULT makes a normal sensor unavailable immediately.
-
-    DAYTIME_FAILURE_GRACE is gone: the spec mandates unavailable on the
-    first failed daytime poll (Q19(b)), and a sensor-level grace on top
-    would have directly contradicted that.
-    """
+    """A daytime fault makes normal sensors unavailable immediately."""
     _set_fault(mock_coordinator)
 
     sensor = _make_sensor(mock_coordinator, mock_config_entry, "PAC")
@@ -261,12 +256,7 @@ def test_enum_sensor_description(mock_coordinator, mock_config_entry):
 
 
 def test_no_invalid_device_state_class_combinations():
-    """Guard against device_class/state_class combos HA rejects.
-
-    Energy sensors must not use MEASUREMENT (only TOTAL/TOTAL_INCREASING or
-    None); enum sensors must have no state_class and no unit. This catches the
-    KLD/KLM/KLY regression where energy + measurement was invalid.
-    """
+    """Guard against device and state class combinations HA rejects."""
     valid_energy_state_classes = {
         None,
         SensorStateClass.TOTAL,
@@ -502,7 +492,7 @@ def test_kdy_after_midnight_reports_zero_source_and_raw(mock_coordinator, night_
     assert attributes["raw_value"] == 0
 
 
-# --- Q25a: anomalous-expected gating (armed outside twilight) ---------------
+# --- Anomalous expected outage outside twilight -----------------------------
 
 
 def test_zero_policy_sensor_unavailable_when_anomalous_expected(

@@ -99,8 +99,7 @@ async def test_config_entry_diagnostics(hass: HomeAssistant, mock_config_entry):
     assert coordinator_data["reconnecting"] is False
     assert coordinator_data["fault_since"] is None
 
-    # Verify the engine's own counters/transitions are exposed (Task 7: the
-    # dead `hasattr` counters this replaced were never real; these are)
+    # Engine counters and transitions are exposed unchanged.
     connection_data = diagnostics["connection"]
     assert connection_data["connection_attempts"] == 5
     assert connection_data["reconnects"] == 1

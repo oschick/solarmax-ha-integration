@@ -41,9 +41,7 @@ SHUTDOWN_ANNOUNCE_SYS = 20002
 STARTUP_GRACE_SECONDS = 150.0
 POLL_BUDGET_SECONDS = 15.0
 STATIC_FETCH_MAX_ATTEMPTS = 2
-# Q24: an armed OFFLINE_EXPECTED that stays outside the twilight window this
-# long, with this many failed probes and zero successes, is reclassified
-# OFFLINE_FAULT — a stuck "armed" flag must not mask a real fault forever.
+# Prevent stale shutdown evidence from masking a sustained daytime fault.
 ARMED_ESCALATION_SECONDS = 3600.0
 ARMED_ESCALATION_MIN_FAILURES = 10
 
@@ -58,30 +56,23 @@ class EngineState(StrEnum):
 
 
 class ArmingTracker:
-    """Single-poll arming from the two observational indicators (spec)."""
+    """Track shutdown evidence from the latest poll that contains it."""
 
     def __init__(self, low_pdc_watts: float = LOW_PDC_WATTS) -> None:
         self.low_pdc_watts = low_pdc_watts
         self.armed = False
 
     def observe(self, values: dict[str, dict[str, float | int]]) -> None:
-        evidence = False
-        armed = False
-        if "SYS" in values:
-            evidence = True
-            armed = armed or values["SYS"]["raw_value"] == SHUTDOWN_ANNOUNCE_SYS
-        if "PDC" in values:
-            evidence = True
-            armed = armed or values["PDC"]["value"] < self.low_pdc_watts
-        if evidence:
-            self.armed = armed
-
-
-def classify_disconnect(armed: bool, sun_below: bool) -> EngineState:
-    """Classify a disconnect as expected (announced, or after dark) or a fault."""
-    if armed or sun_below:
-        return EngineState.OFFLINE_EXPECTED
-    return EngineState.OFFLINE_FAULT
+        status = values.get("SYS")
+        dc_power = values.get("PDC")
+        if status is None and dc_power is None:
+            return
+        self.armed = bool(
+            status is not None
+            and status["raw_value"] == SHUTDOWN_ANNOUNCE_SYS
+            or dc_power is not None
+            and dc_power["value"] < self.low_pdc_watts
+        )
 
 
 @dataclass
@@ -207,10 +198,33 @@ class SolarmaxLink:
     async def _connect(self) -> None:
         if self._closed:
             raise LinkClosed(f"{self.host}:{self.port}: link is closed")
+
+        reader, writer = await self._open_connection()
+        if self._closed:
+            # close() can land while open_connection() is awaiting.
+            writer.transport.abort()
+            raise LinkClosed(f"{self.host}:{self.port}: closed during connect")
+
+        # Publish the writer before socket setup so failures can always abort it.
+        self._reader = reader
+        self._writer = writer
+        self.connected = True
+        try:
+            self._configure_socket(writer)
+        except OSError as err:
+            self._abort_transport()
+            raise LinkClosed(
+                f"connect to {self.host}:{self.port} failed: {err}"
+            ) from err
+
+    async def _open_connection(
+        self,
+    ) -> tuple[asyncio.StreamReader, asyncio.StreamWriter]:
+        """Open a TCP connection and translate transport failures."""
         self.attempts += 1
         try:
             async with asyncio.timeout(self.connect_timeout):
-                reader, writer = await asyncio.open_connection(self.host, self.port)
+                return await asyncio.open_connection(self.host, self.port)
         except TimeoutError as err:
             self.timeouts += 1
             self._abort_transport()
@@ -221,44 +235,18 @@ class SolarmaxLink:
                 f"connect to {self.host}:{self.port} failed: {err}"
             ) from err
 
-        if self._closed:
-            # close() can land while open_connection() is awaiting. The writer
-            # is not published yet, so tear it down directly before returning.
-            writer.transport.abort()
-            raise LinkClosed(f"{self.host}:{self.port}: closed during connect")
-
-        # Assign before setsockopt so a failure below leaves a live writer
-        # reachable by `_abort_transport` — never an orphaned open socket.
-        self._reader = reader
-        self._writer = writer
-        self.connected = True
-
-        try:
-            sock = writer.get_extra_info("socket")
-            if sock is not None:
-                sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
-                sock.setsockopt(socket.SOL_SOCKET, socket.SO_KEEPALIVE, 1)
-        except OSError as err:
-            self._abort_transport()
-            raise LinkClosed(
-                f"connect to {self.host}:{self.port} failed: {err}"
-            ) from err
+    @staticmethod
+    def _configure_socket(writer: asyncio.StreamWriter) -> None:
+        """Enable low-latency writes and dead-peer detection when available."""
+        sock = writer.get_extra_info("socket")
+        if sock is None:
+            return
+        sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
+        sock.setsockopt(socket.SOL_SOCKET, socket.SO_KEEPALIVE, 1)
 
     async def _send_receive(self, payload: str) -> str:
-        reader, writer = self._reader, self._writer
-        if reader is None or writer is None:
-            raise LinkClosed(f"{self.host}:{self.port}: transport is not connected")
         try:
-            async with asyncio.timeout(self.response_timeout):
-                writer.write(payload.encode())
-                await writer.drain()
-                buf = b""
-                while not buf.endswith(b"}"):
-                    chunk = await reader.read(4096)
-                    if not chunk:
-                        raise _PeerClosed("peer closed the connection (EOF)")
-                    buf += chunk
-                return buf.decode(errors="ignore")
+            return await self._exchange(payload)
         except TimeoutError as err:
             self.timeouts += 1
             self._abort_transport()
@@ -279,6 +267,31 @@ class SolarmaxLink:
             # request() to read as a stale frame.
             self._abort_transport()
             raise
+
+    async def _exchange(self, payload: str) -> str:
+        """Perform one timed exchange on the published transport."""
+        reader, writer = self._transport()
+        async with asyncio.timeout(self.response_timeout):
+            writer.write(payload.encode())
+            await writer.drain()
+            return (await self._read_response(reader)).decode(errors="ignore")
+
+    def _transport(self) -> tuple[asyncio.StreamReader, asyncio.StreamWriter]:
+        reader, writer = self._reader, self._writer
+        if reader is None or writer is None:
+            raise LinkClosed(f"{self.host}:{self.port}: transport is not connected")
+        return reader, writer
+
+    @staticmethod
+    async def _read_response(reader: asyncio.StreamReader) -> bytes:
+        """Read through the final MaxComm frame terminator."""
+        response = b""
+        while not response.endswith(b"}"):
+            chunk = await reader.read(4096)
+            if not chunk:
+                raise _PeerClosed("peer closed the connection (EOF)")
+            response += chunk
+        return response
 
     def _abort_transport(self) -> None:
         """Synchronous, non-blocking transport teardown.
@@ -343,25 +356,13 @@ class ConnectionEngine:
         self._static_fetch_attempts = 0
         self._state = EngineState.UNKNOWN
         self._fault_since: datetime | None = None
-        # Anchors "how long have we been unable to reach a good state":
-        # set at construction (covers the startup grace below), cleared on
-        # every successful poll, and re-anchored to "now" on the FIRST
-        # failure after a success (covers the post-ONLINE reconnecting
-        # grace). Both grace windows share this one anchor.
+        # One anchor covers both startup and post-online reconnect grace.
         self._disconnected_since: float | None = self._clock()
-        # Q24 armed-escalation window: anchors "how long has this armed
-        # OFFLINE_EXPECTED stayed anomalous (sun up)" and how many failed
-        # probes it has seen since. Reset on any success or once the sun
-        # itself explains the disconnect (self-correcting, no escalation).
+        # An armed, daytime disconnect becomes a fault only after both limits.
         self._escalation_since: float | None = None
         self._escalation_failures = 0
-        # Set by close(); once True, poll() is inert for the engine's
-        # remaining lifetime — see close()'s docstring for the leak this
-        # closes.
         self._closed = False
-        # Serialises poll() end-to-end: HA's debouncer can run a refresh
-        # concurrently with a scheduled one, and two polls racing the same
-        # SolarmaxLink would interleave connect()/request() against it.
+        # Scheduled and debounced refreshes may overlap; the link may not.
         self._poll_lock = asyncio.Lock()
 
     async def poll(self) -> EngineSnapshot:
@@ -371,9 +372,7 @@ class ConnectionEngine:
                     reconnecting=False, expected_outside_twilight=False
                 )
             try:
-                async with asyncio.timeout(
-                    POLL_BUDGET_SECONDS
-                ):  # spec: poll budget < 15s
+                async with asyncio.timeout(POLL_BUDGET_SECONDS):
                     return await self._poll_inner()
             except TimeoutError:
                 return await self._on_failure()
@@ -392,17 +391,7 @@ class ConnectionEngine:
     async def _poll_inner(self) -> EngineSnapshot:
         try:
             if not self._statics_loaded:
-                static_raw = await self._request_with_retry(
-                    build_request(self._address, STATIC_FIELDS + DEVICE_FIELDS)
-                )
-                static = parse_response(static_raw, self._verify_checksum)
-                self._values.update(static)
-                self._static_fetch_attempts += 1
-                requested_static = STATIC_FIELDS + DEVICE_FIELDS
-                self._statics_loaded = (
-                    all(key in static for key in requested_static)
-                    or self._static_fetch_attempts >= STATIC_FETCH_MAX_ATTEMPTS
-                )
+                await self._load_static_values()
                 if self._closed:
                     return self._snapshot(
                         reconnecting=False, expected_outside_twilight=False
@@ -411,21 +400,22 @@ class ConnectionEngine:
                 build_request(self._address, HOT_FIELDS)
             )
             values = parse_response(raw, self._verify_checksum)
-        except (LinkTimeout, LinkClosed, RetryableProtocolError):
+        except (LinkTimeout, LinkClosed, ProtocolError):
             return await self._on_failure()
-        except ProtocolError:
-            return await self._on_failure()  # IPR/IPN: no data either way
         return self._on_success(values)
 
-    async def _request_with_retry(self, payload: str) -> str:
-        """Fetch `payload`, retrying once on a timeout or a parse failure.
+    async def _load_static_values(self) -> None:
+        fields = STATIC_FIELDS + DEVICE_FIELDS
+        raw = await self._request_with_retry(build_request(self._address, fields))
+        values = parse_response(raw, self._verify_checksum)
+        self._values.update(values)
+        self._static_fetch_attempts += 1
+        self._statics_loaded = all(field in values for field in fields) or (
+            self._static_fetch_attempts >= STATIC_FETCH_MAX_ATTEMPTS
+        )
 
-        Q26: a `LinkTimeout` (no answer within the response-timeout window)
-        gets exactly one retry, same as `RetryableProtocolError`
-        (checksum/frame corruption — line noise) — either way the total
-        stays one retry per request, never both stacked on the same call.
-        `LinkClosed` is already retried transparently inside `SolarmaxLink`.
-        """
+    async def _request_with_retry(self, payload: str) -> str:
+        """Fetch a payload, retrying once for timeout or corrupt data."""
         try:
             raw = await self._link.request(payload)
         except LinkTimeout:
@@ -437,8 +427,7 @@ class ConnectionEngine:
         return raw
 
     def _on_success(self, values: dict[str, dict[str, float | int]]) -> EngineSnapshot:
-        # Absent keys keep their last reading (Q15) — never drop a value
-        # just because this poll's frame didn't repeat it.
+        # Partial frames update present readings without discarding cached ones.
         self._values.update(values)
 
         was_armed = self._tracker.armed
@@ -447,108 +436,102 @@ class ConnectionEngine:
             self._diagnostics.last_shutdown_announcement = datetime.now(UTC)
 
         previous_state = self._state
-        self._state = EngineState.ONLINE
-        if previous_state is not self._state:
-            self._diagnostics.record_transition(previous_state, self._state)
+        self._set_state(EngineState.ONLINE, previous_state)
         self._diagnostics.polls_ok += 1
         self._diagnostics.last_successful_poll = datetime.now(UTC)
 
         self._fault_since = None
         self._disconnected_since = None
-        self._escalation_since = None
-        self._escalation_failures = 0
+        self._reset_escalation()
 
         return self._snapshot(reconnecting=False, expected_outside_twilight=False)
 
     async def _on_failure(self) -> EngineSnapshot:
         previous_state = self._state
         armed = self._tracker.armed
-        try:
-            sun_below = self._sun_below()
-        except Exception:
-            # An unknown sun position must never suppress a real fault, so
-            # a broken callback falls back to "not below the threshold"
-            # (the conservative reading) rather than crossing poll()'s
-            # "never raises" boundary.
-            _LOGGER.warning(
-                "sun_below callback raised; assuming sun is up", exc_info=True
-            )
-            sun_below = False
-
+        sun_below = self._sun_is_below()
         if armed or sun_below:
-            new_state = EngineState.OFFLINE_EXPECTED
-            expected_outside_twilight = not sun_below and armed
+            new_state, expected_outside_twilight = await self._expected_failure(
+                armed, sun_below
+            )
             reconnecting = False
-            # G16: a fault from before this EXPECTED window must not
-            # survive it — otherwise a fault reclassified back to FAULT
-            # later (e.g. at dawn) keeps the pre-window timestamp and the
-            # repair issue fires instantly, counting the whole window.
-            self._fault_since = None
-            # Deliberate deviation: re-fetch statics on OFFLINE_EXPECTED
-            # entry rather than on every transparent Link reconnect. The
-            # spec's "once per connection establishment" is read loosely
-            # here — statics cannot change mid-day, so paying for a
-            # re-fetch only at dusk/dawn is enough.
-            await self._link.disconnect()
-            self._statics_loaded = False
-            self._static_fetch_attempts = 0
-
-            if expected_outside_twilight:
-                # Q24: armed but the sun never explained it — track how
-                # long and how many failed probes this anomaly has lasted.
-                if self._escalation_since is None:
-                    self._escalation_since = self._clock()
-                self._escalation_failures += 1
-                escalate = (
-                    self._clock() - self._escalation_since >= ARMED_ESCALATION_SECONDS
-                    and self._escalation_failures >= ARMED_ESCALATION_MIN_FAILURES
-                )
-                if escalate:
-                    new_state = EngineState.OFFLINE_FAULT
-                    expected_outside_twilight = False
-                    self._tracker.armed = False
-                    self._fault_since = datetime.now(UTC)
-                    self._escalation_since = None
-                    self._escalation_failures = 0
-            else:
-                # Sun-classified (or now sun-explained) EXPECTED
-                # self-corrects — no escalation tracking needed.
-                self._escalation_since = None
-                self._escalation_failures = 0
         else:
+            new_state, reconnecting = self._daytime_failure(previous_state)
             expected_outside_twilight = False
-            self._escalation_since = None
-            self._escalation_failures = 0
-            if self._disconnected_since is None:
-                self._disconnected_since = self._clock()
-            reconnecting = (
-                self._clock() - self._disconnected_since
-            ) < self._grace_seconds
-            if previous_state is EngineState.UNKNOWN and reconnecting:
-                # Startup grace covers UNKNOWN only (spec).
-                new_state = EngineState.UNKNOWN
-            else:
-                # Honest FAULT on the first failed poll; grace only
-                # softens `reconnecting`/logging, never `state`, and never
-                # delays `fault_since` (spec Q19(b)).
-                new_state = EngineState.OFFLINE_FAULT
-                if self._fault_since is None:
-                    self._fault_since = datetime.now(UTC)
 
-        self._state = new_state
-        if previous_state is not new_state:
-            self._diagnostics.record_transition(previous_state, new_state)
-
+        self._set_state(new_state, previous_state)
         return self._snapshot(
             reconnecting=reconnecting,
             expected_outside_twilight=expected_outside_twilight,
         )
 
+    def _sun_is_below(self) -> bool:
+        """Read the sun fallback without crossing poll's no-error boundary."""
+        try:
+            return self._sun_below()
+        except Exception:
+            _LOGGER.warning(
+                "sun_below callback raised; assuming sun is up", exc_info=True
+            )
+            return False
+
+    async def _expected_failure(
+        self, armed: bool, sun_below: bool
+    ) -> tuple[EngineState, bool]:
+        """Handle a disconnect explained by shutdown evidence or darkness."""
+        # An expected window starts a fresh repair clock if it later becomes a fault.
+        self._fault_since = None
+        await self._link.disconnect()
+        self._statics_loaded = False
+        self._static_fetch_attempts = 0
+
+        anomalous = armed and not sun_below
+        if not anomalous:
+            self._reset_escalation()
+            return EngineState.OFFLINE_EXPECTED, False
+        if not self._should_escalate():
+            return EngineState.OFFLINE_EXPECTED, True
+
+        self._tracker.armed = False
+        self._fault_since = datetime.now(UTC)
+        self._reset_escalation()
+        return EngineState.OFFLINE_FAULT, False
+
+    def _should_escalate(self) -> bool:
+        """Advance and evaluate the armed daytime-disconnect limits."""
+        if self._escalation_since is None:
+            self._escalation_since = self._clock()
+        self._escalation_failures += 1
+        return (
+            self._clock() - self._escalation_since >= ARMED_ESCALATION_SECONDS
+            and self._escalation_failures >= ARMED_ESCALATION_MIN_FAILURES
+        )
+
+    def _daytime_failure(self, previous_state: EngineState) -> tuple[EngineState, bool]:
+        """Classify an unexplained daytime disconnect."""
+        self._reset_escalation()
+        if self._disconnected_since is None:
+            self._disconnected_since = self._clock()
+        reconnecting = (self._clock() - self._disconnected_since) < self._grace_seconds
+        if previous_state is EngineState.UNKNOWN and reconnecting:
+            return EngineState.UNKNOWN, True
+        if self._fault_since is None:
+            self._fault_since = datetime.now(UTC)
+        return EngineState.OFFLINE_FAULT, reconnecting
+
+    def _reset_escalation(self) -> None:
+        self._escalation_since = None
+        self._escalation_failures = 0
+
+    def _set_state(self, state: EngineState, previous_state: EngineState) -> None:
+        self._state = state
+        if previous_state is not state:
+            self._diagnostics.record_transition(previous_state, state)
+
     def _snapshot(
         self, *, reconnecting: bool, expected_outside_twilight: bool
     ) -> EngineSnapshot:
-        # Every snapshot rebuilds diagnostics from the link's live
-        # counters so they never go stale/zero (Task 7 serialises these).
+        # Link counters are live and must not lag behind the returned snapshot.
         self._diagnostics.connection_attempts = self._link.attempts
         self._diagnostics.reconnects = self._link.reconnects
         self._diagnostics.timeouts = self._link.timeouts

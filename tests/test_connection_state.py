@@ -1,10 +1,6 @@
 """Pure state-machine tests — no sockets, no HA."""
 
-from custom_components.solarmax.connection import (
-    ArmingTracker,
-    EngineState,
-    classify_disconnect,
-)
+from custom_components.solarmax.connection import ArmingTracker
 
 
 def _reading(value, raw=None):
@@ -46,18 +42,3 @@ def test_partial_frame_without_evidence_keeps_arming():
     tracker.observe({"SYS": _reading(20002)})
     tracker.observe({"KDY": _reading(19)})
     assert tracker.armed is True
-
-
-def test_classify_armed_is_expected_even_at_noon():
-    assert (
-        classify_disconnect(armed=True, sun_below=False) is EngineState.OFFLINE_EXPECTED
-    )
-
-
-def test_classify_unarmed_uses_sun_fallback():
-    assert (
-        classify_disconnect(armed=False, sun_below=True) is EngineState.OFFLINE_EXPECTED
-    )
-    assert (
-        classify_disconnect(armed=False, sun_below=False) is EngineState.OFFLINE_FAULT
-    )

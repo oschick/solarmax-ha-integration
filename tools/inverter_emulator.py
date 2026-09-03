@@ -681,6 +681,10 @@ class SolarmaxEmulator:
             sock = getattr(self, sock_attr, None)
             if sock is not None:
                 try:
+                    sock.shutdown(socket.SHUT_RDWR)
+                except OSError:
+                    pass
+                try:
                     sock.close()
                 except OSError:
                     pass

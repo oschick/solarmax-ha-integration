@@ -1,4 +1,4 @@
-"""Tests for the emulator pytest fixture — the step-0 safety net itself.
+"""Tests for the MaxComm emulator fixture.
 
 These validate that the emulator reproduces the behaviour measured on the
 live 7TP2 (2026-09-01 probe): persistent connections, ~100s idle FIN,
@@ -8,7 +8,7 @@ single-client lockout, and the dusk sequence 20008 -> 20002 -> dark.
 import socket
 import time
 
-from tests.emulator import build_request, parse_values
+from tests.emulator import EmulatorHandle, build_request, parse_values
 
 
 def _poll(sock, fields=("PAC", "SYS"), timeout=2.0):
@@ -21,6 +21,25 @@ def _poll(sock, fields=("PAC", "SYS"), timeout=2.0):
             raise ConnectionError("peer closed")
         buf += chunk
     return parse_values(buf.decode(errors="ignore"))
+
+
+def test_stop_joins_blocked_client_handler(socket_enabled):
+    """Stopping the emulator must unblock and join an idle client handler."""
+    emulator = EmulatorHandle()
+    emulator.start()
+    client = socket.create_connection(emulator.addr, timeout=2)
+    try:
+        deadline = time.monotonic() + 2
+        while emulator._emulator._client_thread is None:
+            if time.monotonic() >= deadline:
+                raise AssertionError("emulator did not start a client handler")
+            time.sleep(0.01)
+
+        emulator.stop()
+        assert emulator._emulator._client_thread.is_alive() is False
+    finally:
+        client.close()
+        emulator.stop()
 
 
 def test_persistent_connection_multiple_polls(emulator):

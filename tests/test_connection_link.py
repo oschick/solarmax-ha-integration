@@ -129,16 +129,7 @@ async def test_close_is_idempotent_and_deterministic(emulator):
 
 
 async def test_close_during_in_flight_request_does_not_reopen(emulator):
-    """Final-review finding #1: close() racing an in-flight request().
-
-    HA unload calls `SolarmaxLink.close()` while a poll's `request()` may
-    still be awaiting a response. Before the fix, the pending read saw the
-    close as an ordinary peer-EOF and `request()`'s `_PeerClosed` recovery
-    path reconnected unconditionally — leaving a live socket after close()
-    returned. That live socket outlives HA unload and occupies the
-    inverter's single-client slot, so the next reload hits the ~128s
-    lockout. `close()` must be the last word: no reconnect once it has run.
-    """
+    """A terminal close must prevent in-flight peer recovery from reconnecting."""
     link = SolarmaxLink(*emulator.addr, response_timeout=30.0)
 
     # A payload with no ':' makes emulator.parse_request() return [], so the

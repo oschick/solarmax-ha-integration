@@ -103,7 +103,7 @@ class _StubEngine:
         """No-op close, matching ConnectionEngine.close()'s signature."""
 
 
-# --- Task-5 brief: verbatim skeleton tests ----------------------------------
+# --- Coordinator snapshot contract ------------------------------------------
 
 
 async def test_update_returns_snapshot_and_never_raises(hass, mock_config_entry):
@@ -235,9 +235,7 @@ async def test_state_transition_logging(coordinator, caplog):
     def records() -> list[logging.LogRecord]:
         return [r for r in caplog.records if r.name == logger_name]
 
-    # No previous data (fresh coordinator) -> OFFLINE_FAULT: one WARNING,
-    # naming the host:port (final-review #7) so a fault is triage-able
-    # without opening diagnostics first.
+    # A startup fault log identifies the unreachable inverter directly.
     assert coordinator.data is None
     await coordinator._async_handle_snapshot(_snap(EngineState.OFFLINE_FAULT))
     assert len(records()) == 1
@@ -262,11 +260,7 @@ async def test_state_transition_logging(coordinator, caplog):
 
 
 async def test_last_successful_update_returns_local_time(coordinator, hass):
-    """Ruling: last_successful_update must convert the engine's UTC
-    diagnostics timestamp to local time, since sensor._is_new_day() compares
-    against dt_util.now().date(). Pin a non-UTC zone so this actually fails
-    if `as_local()` is dropped — under the default test TZ (UTC), local and
-    UTC are indistinguishable and the assertion would pass either way."""
+    """Convert engine timestamps to local time for midnight policies."""
     await hass.config.async_set_time_zone("Europe/Berlin")
     utc_now = dt_util.utcnow()
     coordinator.data = _snap(
@@ -286,7 +280,7 @@ async def test_last_successful_update_none_when_unavailable(coordinator):
     assert coordinator.last_successful_update is None
 
 
-# --- _async_update_data belt-and-braces: provably never raises -------------
+# --- Unexpected engine errors -----------------------------------------------
 
 
 async def test_engine_exception_restates_previous_snapshot_as_fault(coordinator):
@@ -448,7 +442,7 @@ async def test_async_handle_midnight_notifies_listeners(hass, mock_config_entry)
     notify.assert_called_once()
 
 
-# --- Q28b: repair-issue episodes and the 24h dismissal window --------------
+# --- Repair-issue episodes and the dismissal window -------------------------
 
 
 async def test_repair_dismissal_suppresses_recreation_within_24h(coordinator, hass):
