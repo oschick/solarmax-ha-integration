@@ -10,6 +10,13 @@ from custom_components.solarmax.connection import (
     EngineState,
     SolarmaxLink,
 )
+from custom_components.solarmax.protocol import calculate_checksum
+
+
+def _response(data: str) -> str:
+    """Build a checksummed single-frame response for link doubles."""
+    inner = f"01;FB;18|64:{data}|"
+    return "{" + inner + calculate_checksum(inner) + "}"
 
 
 class _FakeClock:
@@ -24,6 +31,56 @@ class _FakeClock:
 
     def advance(self, seconds: float) -> None:
         self.now += seconds
+
+
+class _BlockingStaticLink:
+    """Link double that lets close land after the static request starts."""
+
+    def __init__(self) -> None:
+        self.static_started = asyncio.Event()
+        self.release_static = asyncio.Event()
+        self.request_count = 0
+        self.connected = False
+        self.attempts = 0
+        self.reconnects = 0
+        self.timeouts = 0
+
+    async def request(self, payload: str) -> str:
+        self.request_count += 1
+        if self.request_count == 1:
+            self.static_started.set()
+            await self.release_static.wait()
+            data = "TYP=50AA"
+        else:
+            data = "PAC=BB8"
+        return _response(data)
+
+    async def disconnect(self) -> None:
+        self.connected = False
+
+    async def close(self) -> None:
+        self.connected = False
+
+
+class _PartialStaticLink:
+    """Always omits most static fields and records the requested payloads."""
+
+    def __init__(self) -> None:
+        self.payloads: list[str] = []
+        self.connected = False
+        self.attempts = 0
+        self.reconnects = 0
+        self.timeouts = 0
+
+    async def request(self, payload: str) -> str:
+        self.payloads.append(payload)
+        return _response("TYP=50AA" if "PIN" in payload else "PAC=BB8")
+
+    async def disconnect(self) -> None:
+        self.connected = False
+
+    async def close(self) -> None:
+        self.connected = False
 
 
 def _engine(emulator, *, sun_below=lambda: False, grace=0.0, timeout=0.5, clock=None):
@@ -269,14 +326,10 @@ async def test_sun_below_callback_exception_does_not_escape_poll(emulator):
 async def test_dawn_recovery_after_on_failure_closed_link(emulator):
     """Final-review finding #1 regression guard.
 
-    `ConnectionEngine._on_failure` calls `self._link.close()` on every
-    OFFLINE_EXPECTED entry (so statics get re-fetched on the next connect,
-    see the comment in `_on_failure`). The close()-vs-in-flight-poll race
-    fix must NOT make `SolarmaxLink._closing` sticky: if it were never
-    cleared, this routine close() at dusk would permanently refuse to
-    reconnect and the integration would stay dark forever after the first
-    night. `request()` clearing `_closing` on its own next entry is what
-    keeps this dusk -> dawn recovery working.
+    `ConnectionEngine._on_failure` uses the reopenable `disconnect()` on
+    every OFFLINE_EXPECTED entry so statics get re-fetched on the next
+    connection. Terminal `close()` is reserved for integration teardown;
+    using it here would prevent dawn recovery after the first night.
     """
     engine = _engine(emulator, sun_below=lambda: True)
     try:
@@ -318,6 +371,37 @@ async def test_empty_first_statics_frame_is_refetched(emulator):
         assert "PIN" in snapshot.values
     finally:
         await engine.close()
+
+
+async def test_partial_first_statics_frame_gets_one_backfill(emulator):
+    """One device key must not suppress a later fetch of missing statics."""
+    emulator.respond_only(["TYP"])
+    engine = _engine(emulator)
+    try:
+        first = await engine.poll()
+        assert "TYP" in first.values
+        assert "PIN" not in first.values
+
+        emulator.respond_only(None)
+        second = await engine.poll()
+        assert "PIN" in second.values
+    finally:
+        await engine.close()
+
+
+async def test_permanently_partial_statics_stop_after_one_backfill():
+    """Unsupported static fields must not trigger a request on every poll."""
+    link = _PartialStaticLink()
+    engine = ConnectionEngine(
+        link, address=1, sun_below=lambda: False, grace_seconds=0.0
+    )
+
+    for _ in range(3):
+        await engine.poll()
+    await engine.close()
+
+    static_requests = [payload for payload in link.payloads if "PIN" in payload]
+    assert len(static_requests) == 2
 
 
 # --- Review-fix-wave: fault_since / armed escalation / closed / retry / lock ---
@@ -431,9 +515,8 @@ async def test_poll_after_close_never_touches_link(emulator):
     without ever calling into the link again — no reconnect, no request.
 
     This is what closes the reload leak: a scheduled refresh racing HA
-    unload used to reach `SolarmaxLink.request()`, whose first line clears
-    `_closing` (a fresh request IS the intentional re-open) and resurrects
-    the connection behind close()'s back.
+    unload must not reach a later network request and resurrect the
+    connection behind terminal close.
     """
     link = SolarmaxLink(*emulator.addr, response_timeout=0.5)
     engine = ConnectionEngine(
@@ -461,6 +544,25 @@ async def test_timeout_is_retried_once_within_the_poll(emulator):
         assert snapshot.state is EngineState.ONLINE
     finally:
         await engine.close()
+
+
+async def test_close_during_poll_prevents_the_next_request():
+    """Close drains the active poll and prevents its next network request."""
+    link = _BlockingStaticLink()
+    engine = ConnectionEngine(
+        link, address=1, sun_below=lambda: False, grace_seconds=0.0
+    )
+    poll_task = asyncio.create_task(engine.poll())
+    await asyncio.wait_for(link.static_started.wait(), timeout=1)
+
+    close_task = asyncio.create_task(engine.close())
+    await asyncio.sleep(0)
+    close_returned_before_poll = close_task.done()
+    link.release_static.set()
+    await asyncio.gather(poll_task, close_task)
+
+    assert close_returned_before_poll is False
+    assert link.request_count == 1
 
 
 async def test_concurrent_polls_are_serialized(emulator):

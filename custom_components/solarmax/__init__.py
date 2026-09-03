@@ -104,9 +104,11 @@ async def async_update_listener(
 async def async_unload_entry(hass: HomeAssistant, entry: SolarmaxConfigEntry) -> bool:
     """Unload a config entry (runtime_data is cleaned up automatically).
 
-    Closes the connection engine BEFORE platform teardown: close precedes
-    task cancellation, so no in-flight poll can be left holding the
-    single-client inverter's one TCP slot once entities go away.
+    Keep the engine usable if platform teardown fails and Home Assistant
+    leaves the config entry loaded. A successful teardown is followed by
+    terminal engine close, which drains any poll still in flight.
     """
-    await entry.runtime_data.engine.close()
-    return await hass.config_entries.async_unload_platforms(entry, PLATFORMS)
+    unload_ok = await hass.config_entries.async_unload_platforms(entry, PLATFORMS)
+    if unload_ok:
+        await entry.runtime_data.engine.close()
+    return unload_ok

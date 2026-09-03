@@ -123,7 +123,7 @@ async def test_unload_entry_success(hass: HomeAssistant, mock_config_entry):
 
 
 async def test_unload_entry_failed(hass: HomeAssistant, mock_config_entry):
-    """Test failed unload of config entry: engine still closes first."""
+    """A failed platform unload leaves the still-loaded engine usable."""
     mock_coordinator = MagicMock()
     mock_coordinator.engine.close = AsyncMock()
     mock_config_entry.runtime_data = mock_coordinator
@@ -134,19 +134,14 @@ async def test_unload_entry_failed(hass: HomeAssistant, mock_config_entry):
         result = await async_unload_entry(hass, mock_config_entry)
 
         assert result is False
-        mock_coordinator.engine.close.assert_awaited_once()
+        mock_coordinator.engine.close.assert_not_awaited()
         mock_unload.assert_called_once_with(mock_config_entry, [Platform.SENSOR])
 
 
-async def test_unload_closes_engine_before_platform_teardown(
+async def test_unload_closes_engine_after_platform_teardown(
     hass: HomeAssistant, mock_config_entry
 ):
-    """Spec: engine.close() must complete before platform teardown begins.
-
-    Close precedes task cancellation — otherwise an in-flight poll can
-    survive entity teardown and hold the single-client inverter's one TCP
-    slot open after the integration is gone.
-    """
+    """Terminal close happens only after platform teardown succeeds."""
     call_order: list[str] = []
 
     mock_coordinator = MagicMock()
@@ -168,7 +163,7 @@ async def test_unload_closes_engine_before_platform_teardown(
     ):
         await async_unload_entry(hass, mock_config_entry)
 
-    assert call_order == ["engine_close", "platform_teardown"]
+    assert call_order == ["platform_teardown", "engine_close"]
 
 
 async def test_setup_while_dark_creates_entities(hass, emulator):

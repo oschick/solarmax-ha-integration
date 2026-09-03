@@ -30,7 +30,7 @@ from .const import (
     DEFAULT_VERIFY_CHECKSUM,
     DOMAIN,
 )
-from .protocol import build_request
+from .protocol import ProtocolError, build_request, parse_response
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -88,8 +88,12 @@ async def validate_input(hass: HomeAssistant, data: dict[str, Any]) -> dict[str,
     link = SolarmaxLink(data[CONF_HOST], data[CONF_PORT])
     try:
         address = data.get(CONF_ADDRESS, DEFAULT_ADDRESS)
-        await link.request(build_request(address, ["PAC"]))
-    except (LinkTimeout, LinkClosed, OSError) as err:
+        raw = await link.request(build_request(address, ["PAC"]))
+        parse_response(
+            raw,
+            data.get(CONF_VERIFY_CHECKSUM, DEFAULT_VERIFY_CHECKSUM),
+        )
+    except (LinkTimeout, LinkClosed, ProtocolError, OSError) as err:
         raise CannotConnect from err
     finally:
         await link.close()

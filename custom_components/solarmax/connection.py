@@ -40,6 +40,7 @@ LOW_PDC_WATTS = 25
 SHUTDOWN_ANNOUNCE_SYS = 20002
 STARTUP_GRACE_SECONDS = 150.0
 POLL_BUDGET_SECONDS = 15.0
+STATIC_FETCH_MAX_ATTEMPTS = 2
 # Q24: an armed OFFLINE_EXPECTED that stays outside the twilight window this
 # long, with this many failed probes and zero successes, is reclassified
 # OFFLINE_FAULT — a stuck "armed" flag must not mask a real fault forever.
@@ -157,18 +158,25 @@ class SolarmaxLink:
         self.timeouts = 0
         self._reader: asyncio.StreamReader | None = None
         self._writer: asyncio.StreamWriter | None = None
-        self._closing = False
+        self._closed = False
+        self._request_lock = asyncio.Lock()
 
     async def request(self, payload: str) -> str:
         """Send `payload` and return the response, reusing the connection."""
-        self._closing = False  # a fresh request IS the re-open
+        async with self._request_lock:
+            if self._closed:
+                raise LinkClosed(f"{self.host}:{self.port}: link is closed")
+            return await self._request(payload)
+
+    async def _request(self, payload: str) -> str:
+        """Perform one serialized request on a link that is still open."""
         if not self.connected:
             await self._connect()
         try:
             return await self._send_receive(payload)
         except _PeerClosed as err:
             await self._close_transport()
-            if self._closing:  # closed underneath us — do NOT reopen
+            if self._closed:  # terminally closed underneath us — do NOT reopen
                 raise LinkClosed(
                     f"{self.host}:{self.port}: closed during poll"
                 ) from err
@@ -182,22 +190,23 @@ class SolarmaxLink:
                     f"peer at {self.host}:{self.port} closed the connection"
                 ) from err2
 
-    async def close(self) -> None:
-        """Idempotent, deterministic close; always leaves `connected` False.
+    async def disconnect(self) -> None:
+        """Drop the current transport while allowing a later reconnect."""
+        self._abort_transport()
 
-        Sets `_closing` before the transport actually tears down, so a
-        `request()` racing this close() on another task (e.g. an in-flight
-        poll during HA unload) sees it in its `_PeerClosed` handler and does
-        not resurrect the connection. Never cleared here: `request()` clears
-        it on its own next entry instead, since a fresh request IS the
-        intentional re-open — including the one `ConnectionEngine._on_failure`
-        makes on every OFFLINE_EXPECTED entry, which closes the link on
-        purpose and must still be able to reconnect at dawn.
-        """
-        self._closing = True
-        await self._close_transport()
+    async def close(self) -> None:
+        """Terminally close the link and drain any request already in flight."""
+        self._closed = True
+        self._abort_transport()
+        async with self._request_lock:
+            # A pending open_connection() may have completed while close()
+            # waited for the request lock. Its unpublished writer is rejected
+            # in _connect(); this second abort is the final state assertion.
+            self._abort_transport()
 
     async def _connect(self) -> None:
+        if self._closed:
+            raise LinkClosed(f"{self.host}:{self.port}: link is closed")
         self.attempts += 1
         try:
             async with asyncio.timeout(self.connect_timeout):
@@ -211,6 +220,12 @@ class SolarmaxLink:
             raise LinkClosed(
                 f"connect to {self.host}:{self.port} failed: {err}"
             ) from err
+
+        if self._closed:
+            # close() can land while open_connection() is awaiting. The writer
+            # is not published yet, so tear it down directly before returning.
+            writer.transport.abort()
+            raise LinkClosed(f"{self.host}:{self.port}: closed during connect")
 
         # Assign before setsockopt so a failure below leaves a live writer
         # reachable by `_abort_transport` — never an orphaned open socket.
@@ -325,6 +340,7 @@ class ConnectionEngine:
         self._diagnostics = EngineDiagnostics()
         self._values: dict[str, dict[str, float | int]] = {}
         self._statics_loaded = False
+        self._static_fetch_attempts = 0
         self._state = EngineState.UNKNOWN
         self._fault_since: datetime | None = None
         # Anchors "how long have we been unable to reach a good state":
@@ -365,15 +381,13 @@ class ConnectionEngine:
     async def close(self) -> None:
         """Idempotent; the last word — no poll() may touch the link again.
 
-        Sets `_closed` before tearing down the link, so a poll() racing
-        this close() (e.g. a scheduled refresh during HA unload) sees it
-        and returns without ever reaching `SolarmaxLink.request()` — whose
-        first line clears `_closing` (a fresh request IS the intentional
-        re-open) and would otherwise resurrect the connection behind
-        close()'s back.
+        Sets `_closed` before tearing down the link, then waits for the poll
+        lock so no active poll can issue another request after close returns.
         """
         self._closed = True
         await self._link.close()
+        async with self._poll_lock:
+            pass
 
     async def _poll_inner(self) -> EngineSnapshot:
         try:
@@ -383,16 +397,16 @@ class ConnectionEngine:
                 )
                 static = parse_response(static_raw, self._verify_checksum)
                 self._values.update(static)
-                # An empty/short frame (e.g. inject("empty_data")) parses to
-                # {} with no exception; `bool(static)` would latch "loaded"
-                # on that (or on any non-empty-but-still-fieldless reply)
-                # and lose TYP/PIN/etc. for the life of the entry. Gate on
-                # the device-info keys actually landing instead. The
-                # tradeoff: an inverter that never reports them re-fetches
-                # statics on every poll forever (doubled traffic) rather
-                # than once — accepted deliberately, since silently losing
-                # device info is worse than the extra request.
-                self._statics_loaded = any(k in static for k in DEVICE_FIELDS)
+                self._static_fetch_attempts += 1
+                requested_static = STATIC_FIELDS + DEVICE_FIELDS
+                self._statics_loaded = (
+                    all(key in static for key in requested_static)
+                    or self._static_fetch_attempts >= STATIC_FETCH_MAX_ATTEMPTS
+                )
+                if self._closed:
+                    return self._snapshot(
+                        reconnecting=False, expected_outside_twilight=False
+                    )
             raw = await self._request_with_retry(
                 build_request(self._address, HOT_FIELDS)
             )
@@ -475,8 +489,9 @@ class ConnectionEngine:
             # spec's "once per connection establishment" is read loosely
             # here — statics cannot change mid-day, so paying for a
             # re-fetch only at dusk/dawn is enough.
-            await self._link.close()
+            await self._link.disconnect()
             self._statics_loaded = False
+            self._static_fetch_attempts = 0
 
             if expected_outside_twilight:
                 # Q24: armed but the sun never explained it — track how

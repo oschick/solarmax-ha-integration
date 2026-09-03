@@ -58,13 +58,14 @@ def _snap(
     fault_since: datetime | None = None,
     values: dict[str, dict[str, float | int]] | None = None,
     diagnostics: dict[str, object] | None = None,
+    reconnecting: bool = False,
 ) -> EngineSnapshot:
     """Build a minimal EngineSnapshot for coordinator-level tests."""
     return EngineSnapshot(
         state=state,
         values=values or {},
         shutdown_announced=False,
-        reconnecting=False,
+        reconnecting=reconnecting,
         expected_outside_twilight=False,
         fault_since=fault_since,
         diagnostics=diagnostics or {},
@@ -126,11 +127,28 @@ async def test_interval_follows_state(hass, mock_config_entry):
         assert coordinator._interval_for(
             _snap(EngineState.OFFLINE_EXPECTED)
         ) == timedelta(seconds=DAWN_POLL_SECONDS)
-    # OFFLINE_FAULT keeps normal cadence regardless of the (unmocked) sun —
-    # a genuine daytime fault should not be polled any slower than usual.
+    # A configured cadence faster than the fault cap remains unchanged.
     assert coordinator._interval_for(_snap(EngineState.OFFLINE_FAULT)) == timedelta(
         seconds=30
     )
+
+
+def test_fault_interval_is_capped_at_one_minute(coordinator):
+    """A long configured interval must not delay fault recovery detection."""
+    coordinator._configured_interval = timedelta(hours=1)
+
+    assert coordinator._interval_for(_snap(EngineState.OFFLINE_FAULT)) == timedelta(
+        seconds=60
+    )
+
+
+def test_reconnecting_unknown_interval_is_capped_at_one_minute(coordinator):
+    """Daytime startup failures need the same recovery cadence during grace."""
+    coordinator._configured_interval = timedelta(hours=1)
+
+    assert coordinator._interval_for(
+        _snap(EngineState.UNKNOWN, reconnecting=True)
+    ) == timedelta(seconds=60)
 
 
 async def test_repair_raised_after_sustained_fault_and_cleared(hass, mock_config_entry):

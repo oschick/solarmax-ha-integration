@@ -23,10 +23,18 @@ from custom_components.solarmax.const import (
     DEFAULT_TWILIGHT_ELEVATION_THRESHOLD,
     DOMAIN,
 )
-from custom_components.solarmax.protocol import build_request
+from custom_components.solarmax.protocol import build_request, calculate_checksum
 
 _LINK_REQUEST = "custom_components.solarmax.config_flow.SolarmaxLink.request"
 _LINK_CLOSE = "custom_components.solarmax.config_flow.SolarmaxLink.close"
+
+
+def _response(data: str, *, checksum: str | None = None) -> str:
+    """Build one structurally valid MaxComm response frame."""
+    response = "{01;FB;!!|64:" + data + "|$$$$}"
+    response = response.replace("!!", format(len(response), "02X"))
+    checksum_data = response[1:-5]
+    return response.replace("$$$$", checksum or calculate_checksum(checksum_data))
 
 
 async def test_form(hass: HomeAssistant) -> None:
@@ -41,7 +49,7 @@ async def test_form(hass: HomeAssistant) -> None:
 @patch(_LINK_REQUEST, new_callable=AsyncMock)
 async def test_form_successful_connection(mock_request, hass: HomeAssistant) -> None:
     """Test successful config flow."""
-    mock_request.return_value = "{FB;01;10|64:PAC=03E8,0|1234}"
+    mock_request.return_value = _response("PAC=03E8")
 
     result = await hass.config_entries.flow.async_init(
         DOMAIN, context={"source": config_entries.SOURCE_USER}
@@ -82,7 +90,7 @@ async def test_validate_input_closes_probe_link_on_success(
     fail the very next setup attempt) — must run even when the probe
     succeeds. Also pins that the configured address reaches the PAC probe.
     """
-    mock_request.return_value = "{FB;01;10|64:PAC=03E8,0|1234}"
+    mock_request.return_value = _response("PAC=03E8")
 
     await validate_input(
         hass,
@@ -122,9 +130,80 @@ async def test_validate_input_closes_probe_link_on_failure(
 
 
 @patch(_LINK_REQUEST, new_callable=AsyncMock)
+async def test_validate_input_rejects_non_maxcomm_response(
+    mock_request, hass: HomeAssistant
+) -> None:
+    """A TCP service that merely terminates with `}` is not an inverter."""
+    mock_request.return_value = "not-a-maxcomm-frame}"
+
+    with pytest.raises(CannotConnect):
+        await validate_input(
+            hass,
+            {
+                CONF_HOST: "192.168.1.100",
+                CONF_PORT: 12345,
+                CONF_DEVICE_NAME: "Test Inverter",
+            },
+        )
+
+
+@patch(_LINK_REQUEST, new_callable=AsyncMock)
+async def test_validate_input_rejects_invalid_checksum_by_default(
+    mock_request, hass: HomeAssistant
+) -> None:
+    """Default setup validation rejects corrupted MaxComm frames."""
+    mock_request.return_value = _response("PAC=03E8", checksum="0000")
+
+    with pytest.raises(CannotConnect):
+        await validate_input(
+            hass,
+            {
+                CONF_HOST: "192.168.1.100",
+                CONF_PORT: 12345,
+                CONF_DEVICE_NAME: "Test Inverter",
+            },
+        )
+
+
+@patch(_LINK_REQUEST, new_callable=AsyncMock)
+async def test_validate_input_honors_disabled_checksum(
+    mock_request, hass: HomeAssistant
+) -> None:
+    """The user's ignore-checksum choice also applies to the setup probe."""
+    mock_request.return_value = _response("PAC=03E8", checksum="0000")
+
+    await validate_input(
+        hass,
+        {
+            CONF_HOST: "192.168.1.100",
+            CONF_PORT: 12345,
+            CONF_DEVICE_NAME: "Test Inverter",
+            CONF_VERIFY_CHECKSUM: False,
+        },
+    )
+
+
+@patch(_LINK_REQUEST, new_callable=AsyncMock)
+async def test_validate_input_accepts_not_applicable_pac(
+    mock_request, hass: HomeAssistant
+) -> None:
+    """A valid inverter may report PAC as unavailable while not producing."""
+    mock_request.return_value = _response("PAC")
+
+    await validate_input(
+        hass,
+        {
+            CONF_HOST: "192.168.1.100",
+            CONF_PORT: 12345,
+            CONF_DEVICE_NAME: "Test Inverter",
+        },
+    )
+
+
+@patch(_LINK_REQUEST, new_callable=AsyncMock)
 async def test_update_interval_out_of_range(mock_request, hass: HomeAssistant) -> None:
     """Test that an out-of-range update interval is rejected by the schema."""
-    mock_request.return_value = "{FB;01;10|64:PAC=03E8,0|1234}"
+    mock_request.return_value = _response("PAC=03E8")
 
     result = await hass.config_entries.flow.async_init(
         DOMAIN, context={"source": config_entries.SOURCE_USER}
@@ -186,7 +265,7 @@ async def test_form_unexpected_exception(mock_request, hass: HomeAssistant) -> N
 @patch(_LINK_REQUEST, new_callable=AsyncMock)
 async def test_duplicate_entry_prevention(mock_request, hass: HomeAssistant) -> None:
     """Test that duplicate entries are prevented."""
-    mock_request.return_value = "{FB;01;10|64:PAC=03E8,0|1234}"
+    mock_request.return_value = _response("PAC=03E8")
 
     # Create first entry
     result = await hass.config_entries.flow.async_init(

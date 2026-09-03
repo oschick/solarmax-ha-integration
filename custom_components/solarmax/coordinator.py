@@ -39,6 +39,7 @@ from .const import (
     DEVICE_KEY_TYPE,
     DEVICE_TYPE_MAP,
     DOMAIN,
+    FAULT_POLL_SECONDS,
     FAULT_REPAIR_SECONDS,
     NIGHT_POLL_SECONDS,
     REPAIR_DISMISS_SUPPRESS_SECONDS,
@@ -225,11 +226,18 @@ class SolarmaxCoordinator(DataUpdateCoordinator[EngineSnapshot]):
         )
 
     def _interval_for(self, snapshot: EngineSnapshot) -> timedelta:
-        """Slow down polling while expectedly offline; keep cadence otherwise."""
+        """Adapt cadence for expected outages and active daytime failures."""
         if snapshot.state is EngineState.OFFLINE_EXPECTED:
             if self.sun_below_threshold():
                 return timedelta(seconds=NIGHT_POLL_SECONDS)
             return timedelta(seconds=DAWN_POLL_SECONDS)
+        if snapshot.state is EngineState.OFFLINE_FAULT or (
+            snapshot.state is EngineState.UNKNOWN and snapshot.reconnecting
+        ):
+            return min(
+                self._configured_interval,
+                timedelta(seconds=FAULT_POLL_SECONDS),
+            )
         return self._configured_interval
 
     async def _async_handle_snapshot(self, snapshot: EngineSnapshot) -> None:

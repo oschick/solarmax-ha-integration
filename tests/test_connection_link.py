@@ -7,7 +7,7 @@ from unittest.mock import patch
 
 import pytest
 
-from custom_components.solarmax.connection import LinkTimeout, SolarmaxLink
+from custom_components.solarmax.connection import LinkClosed, LinkTimeout, SolarmaxLink
 from custom_components.solarmax.protocol import build_request
 
 
@@ -162,3 +162,46 @@ async def test_close_during_in_flight_request_does_not_reopen(emulator):
     task.cancel()
     await asyncio.gather(task, return_exceptions=True)
     await link.close()
+
+
+async def test_close_waits_for_pending_connect_and_rejects_publication(emulator):
+    """A connect that completes after close starts must not publish its socket."""
+    real_open_connection = asyncio.open_connection
+    connect_started = asyncio.Event()
+    release_connect = asyncio.Event()
+
+    async def delayed_open_connection(*args, **kwargs):
+        connect_started.set()
+        await release_connect.wait()
+        return await real_open_connection(*args, **kwargs)
+
+    link = SolarmaxLink(*emulator.addr)
+    with patch(
+        "custom_components.solarmax.connection.asyncio.open_connection",
+        side_effect=delayed_open_connection,
+    ):
+        request_task = asyncio.create_task(link.request(build_request(1, ["PAC"])))
+        await asyncio.wait_for(connect_started.wait(), timeout=1)
+        close_task = asyncio.create_task(link.close())
+        await asyncio.sleep(0)
+        close_returned_before_connect = close_task.done()
+
+        release_connect.set()
+        outcome = (await asyncio.gather(request_task, return_exceptions=True))[0]
+        await asyncio.wait_for(close_task, timeout=1)
+        await link.close()
+
+    assert close_returned_before_connect is False
+    assert isinstance(outcome, LinkClosed)
+    assert link.connected is False
+
+
+async def test_close_is_terminal(emulator):
+    """A deliberately closed link must reject every later request."""
+    link = SolarmaxLink(*emulator.addr)
+    try:
+        await link.close()
+        with pytest.raises(LinkClosed):
+            await link.request(build_request(1, ["PAC"]))
+    finally:
+        await link.close()

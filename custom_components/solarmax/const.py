@@ -38,6 +38,8 @@ DEFAULT_NIGHT_KEEP_VALUES = False
 # Coordinator poll cadence (seconds) when the engine reports OFFLINE_EXPECTED.
 NIGHT_POLL_SECONDS = 900
 DAWN_POLL_SECONDS = 60
+# Maximum cadence during a daytime connection failure or startup grace.
+FAULT_POLL_SECONDS = 60
 # How long an OFFLINE_FAULT must persist before a repair issue is raised.
 FAULT_REPAIR_SECONDS = 300
 # Q28b: once the user completes the repair's fix flow (deleting the issue)
