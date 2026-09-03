@@ -156,6 +156,15 @@
       "kt0": {
         "name": "Energie Gesamt"
       },
+      "kld": {
+        "name": "Energie gestern"
+      },
+      "klm": {
+        "name": "Energie Vormonat"
+      },
+      "kly": {
+        "name": "Energie Vorjahr"
+      },
       "tkk": {
         "name": "Wechselrichter-Temperatur"
       },
