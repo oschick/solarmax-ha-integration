@@ -1,4 +1,5 @@
-# Python 3.13 development environment. The pytest plugin pins the matching
-# Home Assistant and test stack.
+# Pinned development environment. The pytest plugin pins the matching Home
+# Assistant and test stack for each supported Python generation.
 -r requirements_quality.txt
-pytest-homeassistant-custom-component==0.13.316
+pytest-homeassistant-custom-component==0.13.316; python_version < "3.14"
+pytest-homeassistant-custom-component==0.13.363; python_version >= "3.14"
