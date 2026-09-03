@@ -604,22 +604,25 @@ class SolarmaxEmulator:
                     time.sleep(0.05)
                     continue
                 client_socket, client_addr = self._server_socket.accept()
-                self._active_client = True
-                self._client_socket = client_socket
-                thread = threading.Thread(
-                    target=self.handle_client,
-                    args=(client_socket, client_addr),
-                    name="solarmax-emulator-client",
-                    daemon=True,
-                )
                 with self._thread_lock:
+                    if not self.running:
+                        client_socket.close()
+                        break
+                    self._active_client = True
+                    self._client_socket = client_socket
+                    thread = threading.Thread(
+                        target=self.handle_client,
+                        args=(client_socket, client_addr),
+                        name="solarmax-emulator-client",
+                        daemon=True,
+                    )
                     self._client_threads = {
                         existing
                         for existing in self._client_threads
                         if existing.is_alive()
                     }
                     self._client_threads.add(thread)
-                thread.start()
+                    thread.start()
             except TimeoutError:
                 continue
             except OSError:
@@ -683,10 +686,12 @@ class SolarmaxEmulator:
         raise immediately — a client handler can otherwise sit in recv() for
         the full idle window, which leaks the thread into the next test.
         """
-        self.running = False
+        with self._thread_lock:
+            self.running = False
+            sockets = (self._client_socket, self._server_socket)
+            client_threads = tuple(self._client_threads)
         self._stop_event.set()
-        for sock_attr in ("_client_socket", "_server_socket"):
-            sock = getattr(self, sock_attr, None)
+        for sock in sockets:
             if sock is not None:
                 try:
                     sock.shutdown(socket.SHUT_RDWR)
@@ -696,8 +701,6 @@ class SolarmaxEmulator:
                     sock.close()
                 except OSError:
                     pass
-        with self._thread_lock:
-            client_threads = tuple(self._client_threads)
         threads = (*client_threads, self._timer_thread)
         for thread in threads:
             if thread is not None and thread.is_alive():

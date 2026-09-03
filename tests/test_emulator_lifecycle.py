@@ -53,6 +53,55 @@ def test_stop_waits_for_every_client_handler(socket_enabled) -> None:
             thread.join(timeout=2)
 
 
+def test_stop_cannot_race_client_thread_start(socket_enabled, monkeypatch) -> None:
+    """Shutdown must wait while an accepted client's handler is starting."""
+    emulator = SolarmaxEmulator(host="127.0.0.1", port=0)
+    server_thread = threading.Thread(target=emulator.start, daemon=True)
+    original_start = threading.Thread.start
+    client_starting = threading.Event()
+    allow_client_start = threading.Event()
+    stop_finished = threading.Event()
+    stop_thread: threading.Thread | None = None
+    client: socket.socket | None = None
+
+    server_thread.start()
+    try:
+        _wait_until(lambda: emulator.bound_port is not None)
+
+        def controlled_start(thread: threading.Thread) -> None:
+            if thread.name == "solarmax-emulator-client":
+                client_starting.set()
+                if not allow_client_start.wait(2):
+                    raise AssertionError("client handler start remained blocked")
+            original_start(thread)
+
+        monkeypatch.setattr(threading.Thread, "start", controlled_start)
+        client = socket.create_connection(("127.0.0.1", emulator.bound_port), timeout=1)
+        assert client_starting.wait(2)
+
+        def stop_emulator() -> None:
+            emulator.stop()
+            stop_finished.set()
+
+        stop_thread = threading.Thread(target=stop_emulator)
+        stop_thread.start()
+
+        assert not stop_finished.wait(0.1)
+        allow_client_start.set()
+        stop_thread.join(timeout=2)
+
+        assert stop_finished.is_set()
+        assert all(not thread.is_alive() for thread in emulator._client_threads)
+    finally:
+        allow_client_start.set()
+        if client is not None:
+            client.close()
+        if stop_thread is not None:
+            stop_thread.join(timeout=2)
+        emulator.stop()
+        server_thread.join(timeout=2)
+
+
 def test_interactive_set_command_updates_state(capsys) -> None:
     """The interactive set command must update a known emulator field."""
     emulator = SolarmaxEmulator()
