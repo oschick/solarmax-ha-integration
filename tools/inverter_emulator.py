@@ -381,7 +381,8 @@ class SolarmaxEmulator:
         self._respond_only: list[str] | None = None  # answer only these fields
         self._pre_dusk: InverterState | None = None
         self._client_socket: socket.socket | None = None
-        self._client_thread: threading.Thread | None = None
+        self._thread_lock = threading.Lock()
+        self._client_threads: set[threading.Thread] = set()
         self._timer_thread: threading.Thread | None = None
         self._stop_event = threading.Event()  # interrupts a pending dark timer
 
@@ -608,9 +609,16 @@ class SolarmaxEmulator:
                 thread = threading.Thread(
                     target=self.handle_client,
                     args=(client_socket, client_addr),
+                    name="solarmax-emulator-client",
                     daemon=True,
                 )
-                self._client_thread = thread
+                with self._thread_lock:
+                    self._client_threads = {
+                        existing
+                        for existing in self._client_threads
+                        if existing.is_alive()
+                    }
+                    self._client_threads.add(thread)
                 thread.start()
             except TimeoutError:
                 continue
@@ -688,8 +696,10 @@ class SolarmaxEmulator:
                     sock.close()
                 except OSError:
                     pass
-        for thread_attr in ("_client_thread", "_timer_thread"):
-            thread = getattr(self, thread_attr, None)
+        with self._thread_lock:
+            client_threads = tuple(self._client_threads)
+        threads = (*client_threads, self._timer_thread)
+        for thread in threads:
             if thread is not None and thread.is_alive():
                 thread.join(timeout=5)
         _LOGGER.info("Emulator stopped.")
@@ -702,86 +712,82 @@ class SolarmaxEmulator:
                     setattr(self.state, key, value)
 
 
-def interactive_loop(emulator: SolarmaxEmulator):
-    """Run an interactive command loop for changing emulator state."""
-    print("\nInteractive mode. Commands:")
-    print("  set <field> <value>   - Set a field value (e.g., 'set pac 5000')")
-    print("  scenario <name>       - Load a scenario (day/night/starting/alarm/...)")
-    print("  status                - Show current state")
-    print("  help                  - Show this help")
-    print("  quit                  - Stop emulator")
-    print("")
+def _set_interactive_value(emulator: SolarmaxEmulator, field: str, raw: str) -> None:
+    """Apply one value entered in the interactive console."""
+    if not hasattr(emulator.state, field):
+        print(f"  Unknown field: {field}")
+        return
 
+    try:
+        value: int | bool = int(raw)
+    except ValueError:
+        if raw.lower() not in ("true", "false"):
+            print(f"  Invalid value: {raw}")
+            return
+        value = raw.lower() == "true"
+
+    emulator.update_state(**{field: value})
+    print(f"  {field} = {value}")
+
+
+def _load_interactive_scenario(emulator: SolarmaxEmulator, name: str) -> None:
+    """Replace the emulator state with a named scenario."""
+    with emulator._lock:
+        emulator.state = get_scenario_state(name)
+    print(f"  Loaded scenario: {name}")
+
+
+def execute_interactive_command(emulator: SolarmaxEmulator, command_line: str) -> bool:
+    """Execute one console command and return whether the loop should continue."""
+    parts = command_line.split()
+    if not parts:
+        return True
+
+    command = parts[0].lower()
+    if command in ("quit", "exit"):
+        return False
+    if command == "help":
+        print("Commands:")
+        print("  set <field> <value>   - Set a field (pac, pdc, sys, sal, etc.)")
+        print("  scenario <name>       - Load a predefined scenario")
+        print("  status                - Show current state")
+        print("  noise                 - Toggle measurement noise")
+        print("  quit                  - Stop emulator")
+    elif command == "status":
+        state = emulator.state
+        print(f"\n  SYS (status):    {state.sys}")
+        print(f"  SAL (alarm):     {state.sal}")
+        print(f"  PAC (AC power):  {state.pac} raw -> {state.pac / 2}W")
+        print(f"  PDC (DC power):  {state.pdc} raw -> {state.pdc / 2}W")
+        print(f"  UL1 (voltage):   {state.ul1} raw -> {state.ul1 / 10}V")
+        print(f"  TKK (temp):      {state.tkk}°C")
+        print(f"  TNF (freq):      {state.tnf} raw -> {state.tnf / 100} Hz")
+        print(f"  PIN (installed): {state.pin} raw -> {state.pin / 2}W")
+        print(f"  KDY (day):       {state.kdy} raw -> {state.kdy / 10} kWh")
+        print(f"  KT0 (total):     {state.kt0} kWh")
+        print(f"  Noise: {'on' if state.add_noise else 'off'}\n")
+    elif command == "set" and len(parts) >= 3:
+        _set_interactive_value(emulator, parts[1].lower(), parts[2])
+    elif command == "scenario" and len(parts) >= 2:
+        _load_interactive_scenario(emulator, parts[1].lower())
+    elif command == "noise":
+        emulator.update_state(add_noise=not emulator.state.add_noise)
+        print(f"  Noise: {'on' if emulator.state.add_noise else 'off'}")
+    else:
+        print(f"  Unknown command: {command_line}")
+    return True
+
+
+def interactive_loop(emulator: SolarmaxEmulator) -> None:
+    """Run an interactive command loop for changing emulator state."""
+    execute_interactive_command(emulator, "help")
     while emulator.running:
         try:
-            cmd = input("emulator> ").strip()
+            command = input("emulator> ").strip()
         except (EOFError, KeyboardInterrupt):
             break
-
-        if not cmd:
-            continue
-
-        parts = cmd.split()
-        command = parts[0].lower()
-
-        if command == "quit" or command == "exit":
+        if command and not execute_interactive_command(emulator, command):
             break
-        elif command == "help":
-            print("Commands:")
-            print("  set <field> <value>   - Set a field (pac, pdc, sys, sal, etc.)")
-            print(
-                "  scenario <name>       - day, night, starting, alarm, multi_alarm, max_power, low_irradiation"
-            )
-            print("  status                - Show current state")
-            print("  quit                  - Stop emulator")
-        elif command == "status":
-            s = emulator.state
-            print(f"\n  SYS (status):    {s.sys}")
-            print(f"  SAL (alarm):     {s.sal}")
-            print(f"  PAC (AC power):  {s.pac} raw -> {s.pac / 2}W")
-            print(f"  PDC (DC power):  {s.pdc} raw -> {s.pdc / 2}W")
-            print(f"  UL1 (voltage):   {s.ul1} raw -> {s.ul1 / 10}V")
-            print(f"  TKK (temp):      {s.tkk}°C")
-            print(f"  TK2 (temp 2):    {s.tk2}°C")
-            print(f"  TK3 (temp 3):    {s.tk3}°C")
-            print(f"  TNF (freq):      {s.tnf} raw -> {s.tnf / 100} Hz")
-            print(f"  PRL (rel power): {s.prl}%")
-            print(f"  PIN (installed): {s.pin} raw -> {s.pin / 2}W")
-            print(f"  KDY (day):       {s.kdy} raw -> {s.kdy / 10} kWh")
-            print(f"  kld (yesterday): {s.kld} raw -> {s.kld / 10} kWh")
-            print(f"  KT0 (total):     {s.kt0} kWh")
-            print(f"  Noise: {'on' if s.add_noise else 'off'}")
-            print("")
-        elif command == "set" and len(parts) >= 3:
-            field_name = parts[1].lower()
-            try:
-                value = int(parts[2])
-                if hasattr(emulator.state, field_name):
-                    emulator.update_state(**{field_name: value})
-                    print(f"  {field_name} = {value}")
-                else:
-                    print(f"  Unknown field: {field_name}")
-            except ValueError:
-                if parts[2].lower() in ("true", "false"):
-                    emulator.update_state(**{field_name: parts[2].lower() == "true"})
-                    print(f"  {field_name} = {parts[2].lower() == 'true'}")
-                else:
-                    print(f"  Invalid value: {parts[2]}")
-        elif command == "scenario" and len(parts) >= 2:
-            scenario_name = parts[1].lower()
-            try:
-                new_state = get_scenario_state(scenario_name)
-                with emulator._lock:
-                    emulator.state = new_state
-                print(f"  Loaded scenario: {scenario_name}")
-            except Exception as e:
-                print(f"  Error loading scenario: {e}")
-        elif command == "noise":
-            emulator.state.add_noise = not emulator.state.add_noise
-            print(f"  Noise: {'on' if emulator.state.add_noise else 'off'}")
-        else:
-            print(f"  Unknown command: {cmd}")
-
     emulator.stop()
 
 
