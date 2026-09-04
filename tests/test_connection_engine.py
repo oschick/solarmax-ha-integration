@@ -460,6 +460,61 @@ async def test_armed_with_sun_below_needs_no_escalation(emulator):
         await engine.close()
 
 
+async def test_armed_daytime_outage_becomes_expected_at_dusk(emulator):
+    """Twilight cancels escalation for an inverter that remains offline."""
+    sun_below = False
+    clock = _FakeClock()
+    engine = _engine(emulator, sun_below=lambda: sun_below, clock=clock)
+    try:
+        await engine.poll()
+        emulator.begin_dusk(announce_seconds=0.4)
+        await engine.poll()
+
+        for _ in range(9):
+            snapshot = await engine._on_failure()
+        assert snapshot.state is EngineState.OFFLINE_EXPECTED
+        assert snapshot.expected_outside_twilight is True
+
+        clock.advance(ARMED_ESCALATION_SECONDS + 1)
+        sun_below = True
+        snapshot = await engine._on_failure()
+
+        assert snapshot.state is EngineState.OFFLINE_EXPECTED
+        assert snapshot.shutdown_announced is True
+        assert snapshot.expected_outside_twilight is False
+        assert snapshot.fault_since is None
+    finally:
+        await engine.close()
+
+
+async def test_armed_night_outage_escalates_if_still_offline_after_dawn(emulator):
+    """A normal night becomes a fault if the inverter misses its dawn window."""
+    sun_below = True
+    clock = _FakeClock()
+    engine = _engine(emulator, sun_below=lambda: sun_below, clock=clock)
+    try:
+        await engine.poll()
+        emulator.begin_dusk(announce_seconds=0.4)
+        await engine.poll()
+        night_snapshot = await engine._on_failure()
+        assert night_snapshot.state is EngineState.OFFLINE_EXPECTED
+        assert night_snapshot.expected_outside_twilight is False
+
+        sun_below = False
+        for _ in range(9):
+            dawn_snapshot = await engine._on_failure()
+        assert dawn_snapshot.state is EngineState.OFFLINE_EXPECTED
+        assert dawn_snapshot.expected_outside_twilight is True
+
+        clock.advance(ARMED_ESCALATION_SECONDS + 1)
+        fault_snapshot = await engine._on_failure()
+        assert fault_snapshot.state is EngineState.OFFLINE_FAULT
+        assert fault_snapshot.shutdown_announced is False
+        assert fault_snapshot.fault_since is not None
+    finally:
+        await engine.close()
+
+
 async def test_poll_after_close_never_touches_link(emulator):
     """A poll after terminal close returns cached state without network I/O."""
     link = SolarmaxLink(*emulator.addr, response_timeout=0.5)
