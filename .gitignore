@@ -14,6 +14,7 @@ htmlcov/
 .pytest_cache/
 .mypy_cache/
 .ruff_cache/
+.ci-reports/
 
 # Home Assistant development state
 .HA_VERSION

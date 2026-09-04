@@ -1,18 +1,105 @@
 #!/usr/bin/env python3
-"""Validate a release tag against tracked version metadata."""
+"""Validate release metadata, notes, and an optional archive."""
 
 from __future__ import annotations
 
+import argparse
 import json
+import re
 import sys
 import tomllib
-from pathlib import Path
+import zipfile
+from pathlib import Path, PurePosixPath
+
+_REQUIRED_ARCHIVE_FILES = {
+    "solarmax/__init__.py",
+    "solarmax/manifest.json",
+    "solarmax/strings.json",
+}
+_FORBIDDEN_ARCHIVE_PARTS = {"__pycache__", "tests"}
+
+
+def _parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(
+        description="Validate a Solarmax integration release"
+    )
+    parser.add_argument("tag", help="release tag in v<version> form")
+    parser.add_argument("--archive", type=Path, help="release ZIP to inspect")
+    parser.add_argument(
+        "--notes-output",
+        type=Path,
+        help="write the matching changelog section to this file",
+    )
+    return parser.parse_args()
+
+
+def _release_notes(root: Path, version: str) -> str:
+    changelog = (root / "CHANGELOG.md").read_text(encoding="utf-8")
+    section = re.search(
+        rf"^## \[{re.escape(version)}\](?: - [^\n]+)?\n(?P<body>.*?)(?=^## \[|\Z)",
+        changelog,
+        flags=re.MULTILINE | re.DOTALL,
+    )
+    if section is None:
+        raise ValueError(f"changelog has no section for {version}")
+
+    notes = section.group("body").strip()
+    if not notes:
+        raise ValueError(f"changelog section for {version} is empty")
+    return f"{notes}\n"
+
+
+def _is_forbidden_archive_path(name: str) -> bool:
+    path = PurePosixPath(name)
+    if name.startswith("/") or "\\" in name:
+        return True
+    if not path.parts or path.parts[0] != "solarmax" or ".." in path.parts:
+        return True
+    if any(part.startswith(".") for part in path.parts):
+        return True
+    return bool(
+        _FORBIDDEN_ARCHIVE_PARTS.intersection(path.parts)
+        or path.suffix in {".pyc", ".pyo"}
+    )
+
+
+def _validate_archive(path: Path, version: str) -> None:
+    try:
+        with zipfile.ZipFile(path) as archive:
+            files = {
+                entry.filename for entry in archive.infolist() if not entry.is_dir()
+            }
+            for entry in archive.infolist():
+                if _is_forbidden_archive_path(entry.filename):
+                    raise ValueError(
+                        f"archive contains forbidden path: {entry.filename}"
+                    )
+
+            missing = sorted(_REQUIRED_ARCHIVE_FILES - files)
+            if missing:
+                raise ValueError(
+                    f"archive is missing required files: {', '.join(missing)}"
+                )
+
+            for name in sorted(file for file in files if file.endswith(".json")):
+                try:
+                    json.loads(archive.read(name))
+                except (UnicodeDecodeError, json.JSONDecodeError) as err:
+                    raise ValueError(f"archive contains invalid JSON: {name}") from err
+
+            manifest = json.loads(archive.read("solarmax/manifest.json"))
+    except (FileNotFoundError, zipfile.BadZipFile) as err:
+        raise ValueError(f"cannot read release archive: {path}") from err
+
+    archive_version = manifest.get("version")
+    if archive_version != version:
+        raise ValueError(
+            f"archive version {archive_version} does not match source version {version}"
+        )
 
 
 def main() -> int:
-    if len(sys.argv) != 2:
-        print("usage: script/check-release v<version>", file=sys.stderr)
-        return 2
+    args = _parse_args()
 
     root = Path(__file__).resolve().parent.parent
     with (root / "pyproject.toml").open("rb") as handle:
@@ -30,15 +117,25 @@ def main() -> int:
         )
         return 1
 
-    tag = sys.argv[1]
-    if tag != f"v{project_version}":
+    if args.tag != f"v{project_version}":
         print(
-            f"release tag {tag} does not match source version {project_version}",
+            f"release tag {args.tag} does not match source version {project_version}",
             file=sys.stderr,
         )
         return 1
 
-    print(f"release metadata matches {tag}")
+    try:
+        notes = _release_notes(root, project_version)
+        if args.archive is not None:
+            _validate_archive(args.archive, project_version)
+    except (OSError, ValueError) as err:
+        print(err, file=sys.stderr)
+        return 1
+
+    if args.notes_output is not None:
+        args.notes_output.write_text(notes, encoding="utf-8")
+
+    print(f"release metadata matches {args.tag}")
     return 0
 
 
