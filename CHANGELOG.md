@@ -55,9 +55,12 @@ inverter sleeps.
 
 ### Maintenance
 
-- `script/check` runs the local quality gate. CI pins actions and quality tools,
-  validates releases, tests the minimum Home Assistant version, and checks the
-  latest version on a schedule.
+- CI uses one required merge gate, tests Python 3.12 through 3.14, checks changed
+  lines for coverage, and validates workflows with actionlint and zizmor.
+- CodeQL scans pull requests, while a weekly canary checks the newest compatible
+  Home Assistant test stack.
+- Releases now start manually from `main`, validate the packaged integration,
+  attest the ZIP, and create a draft for review before publication.
 - Guided issue forms and separate contributor, architecture, and
   troubleshooting guides make reports and maintenance easier to follow.
 

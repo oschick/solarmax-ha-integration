@@ -16,3 +16,8 @@ repos:
         - id: ruff-check
           args: [--fix]
         - id: ruff-format
+
+    - repo: https://github.com/rhysd/actionlint
+      rev: v1.7.12
+      hooks:
+        - id: actionlint

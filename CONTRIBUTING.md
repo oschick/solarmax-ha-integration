@@ -12,7 +12,9 @@ python3.14 -m venv .venv
 script/check
 ```
 
-`script/check` runs Ruff, the format check, mypy, pytest, and coverage. Coverage must remain at or above 90 percent.
+`script/check` runs every pre-commit hook, mypy, pytest, and coverage. Some
+pre-commit hooks apply safe formatting fixes; review those changes and rerun the
+command. Coverage must remain at or above 90 percent.
 
 Run one test while iterating:
 
@@ -49,7 +51,20 @@ The inverter accepts one TCP client. Tests and probes must close sockets, includ
 
 Keep each pull request focused. Include the problem, the chosen behavior, and the commands you ran. Attach diagnostics or logs for device-specific work after removing private network data.
 
-CI runs repository checks against the current pinned Home Assistant release, tests the minimum supported release, and performs a scheduled test against the latest available test stack. HACS and Hassfest validate integration metadata.
+CI runs one validation workflow for each pull request and for `main`. The
+`CI / Merge gate` result covers HACS, Hassfest, workflow linting, and these
+Python environments:
+
+| Python | Purpose | Dependencies |
+| --- | --- | --- |
+| 3.12 | Minimum compatibility with Home Assistant 2024.12 | `requirements_min.txt` |
+| 3.13 | Supported-version compatibility | `requirements_test.txt` |
+| 3.14 | Formatting, typing, tests, and coverage | `requirements_dev.txt` |
+
+Pull requests must maintain 90 percent coverage both overall and across changed
+integration lines. CodeQL reports security findings separately. A weekly canary
+tests the newest compatible Home Assistant stack on Python 3.14; maintainers can
+also start that workflow manually.
 
 ## Translations
 
@@ -59,11 +74,17 @@ Copy `custom_components/solarmax/translations/en.json` to the target BCP 47 lang
 
 ## Releases
 
-Maintainers publish a release with these steps:
+Maintainers prepare and publish a release with these steps:
 
 1. Update the version in `pyproject.toml` and `custom_components/solarmax/manifest.json`.
 2. Move the relevant `CHANGELOG.md` entries from Unreleased into the new version.
 3. Run `script/check` and `script/check-release vX.Y.Z`.
-4. Commit the release, create tag `vX.Y.Z`, and push the tag.
+4. Merge those changes to `main` through a normal pull request.
+5. From the Actions page, run **Release** on `main` with `vX.Y.Z`.
+6. Inspect the draft release, its `solarmax.zip` asset, and its changelog notes.
+7. Publish the draft.
 
-The tag workflow validates the tagged source before it builds `solarmax.zip` and creates the GitHub release.
+The workflow validates the source and archive before creating a tag. It also
+attests the archive and leaves the GitHub release as a draft. Rerunning the
+workflow updates an existing draft only when its tag still points to the same
+commit.
