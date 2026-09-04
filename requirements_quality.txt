@@ -1,6 +1,6 @@
 # Independent development tools. Keep these aligned with pre-commit and CI.
 # diff-cover accepts newer chardet releases that Requests rejects at import.
-chardet==5.2.0
+chardet==7.6.0
 diff-cover==10.5.1
 ruff==0.16.6
 mypy==2.3.1
