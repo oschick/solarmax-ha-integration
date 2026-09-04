@@ -17,9 +17,10 @@ inverter sleeps.
 - The new connection engine replaces the previous request-per-poll transport.
   Hardware testing covers one SolarMax 7TP2; other inverter models and firmware
   versions may behave differently.
-- The Status Code entity now reports `offline_expected` instead of
-  `offline_night`, and `offline_fault` instead of `connection_failed`. Update
-  automations and dashboards that match the old values.
+- The Status Code entity now shows **Offline (expected)** (`offline_expected`)
+  instead of **Offline (Night)** (`offline_night`), and **Offline (fault)**
+  (`offline_fault`) instead of **Connection failed** (`connection_failed`).
+  Update automations and dashboards that match the old raw values.
 - The integration now requires Home Assistant 2024.12.0 or newer and Python
   3.12 or newer.
 
@@ -32,8 +33,8 @@ inverter sleeps.
 - The connection engine reuses one TCP connection, limits each poll to 15
   seconds, and changes its polling interval based on inverter state. Home
   Assistant can create entities while the inverter sleeps.
-- An armed daytime `offline_expected` state becomes `offline_fault` after one
-  hour and ten failed probes.
+- An armed daytime **Offline (expected)** (`offline_expected`) state becomes
+  **Offline (fault)** (`offline_fault`) after one hour and ten failed probes.
 - Users can dismiss a connection repair for 24 hours during the same fault
   episode.
 

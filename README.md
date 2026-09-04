@@ -135,11 +135,11 @@ The **Status Code** entity shows the inverter's translated `SYS` state while it
 is online. If the inverter cannot be reached, it reports one of these
 integration states:
 
-| State | Meaning |
-| --- | --- |
-| `unknown` | No successful connection yet; daytime startup is still within its reconnect window |
-| `offline_expected` | Darkness or inverter shutdown evidence explains the disconnect |
-| `offline_fault` | The inverter failed during daytime without shutdown evidence |
+| Home Assistant state | Raw state | Meaning |
+| --- | --- | --- |
+| **Unknown** | `unknown` | No successful connection yet; daytime startup is still within its reconnect window |
+| **Offline (expected)** | `offline_expected` | Darkness or inverter shutdown evidence explains the disconnect |
+| **Offline (fault)** | `offline_fault` | The inverter failed during daytime without shutdown evidence |
 
 The normal online condition is represented by the live inverter status rather
 than a synthetic `online` value.
@@ -150,15 +150,17 @@ The integration combines inverter data with Home Assistant's sun position:
 
 1. A successful poll arms an expected shutdown when `SYS` reports `20002` or
    DC power (`PDC`) falls below 25 W.
-2. The next disconnect is classified as `offline_expected` when that evidence
-   exists or the sun is below the configured twilight threshold.
-3. An unexplained daytime disconnect is classified as `offline_fault`.
+2. The next disconnect is classified as **Offline (expected)**
+   (`offline_expected`) when that evidence exists or the sun is below the
+   configured twilight threshold.
+3. An unexplained daytime disconnect is classified as **Offline (fault)**
+   (`offline_fault`).
 4. A shutdown that starts unusually early is allowed one hour and at least ten
    failed probes before it escalates to a fault.
 
-At daytime startup, the integration keeps the state `unknown` during a
-150-second reconnect window. This avoids raising a fault while the inverter or
-network is still becoming available.
+At daytime startup, the integration keeps the state **Unknown** (`unknown`)
+during a 150-second reconnect window. This avoids raising a fault while the
+inverter or network is still becoming available.
 
 ### Polling cadence and retries
 
@@ -190,8 +192,10 @@ When relevant, the Status Code entity exposes:
 | `expected_outside_twilight` | Whether shutdown evidence occurred above the twilight threshold |
 | `code` and `raw_value` | Raw status or offline details for diagnostics |
 
-Automations created with an older release must replace `offline_night` with
-`offline_expected` and `connection_failed` with `offline_fault`.
+Automations created with an older release must replace **Offline (Night)**
+(`offline_night`) with **Offline (expected)** (`offline_expected`), and
+**Connection failed** (`connection_failed`) with **Offline (fault)**
+(`offline_fault`). Automations match the raw values shown in parentheses.
 
 ## Night-time sensor behavior
 
@@ -281,8 +285,8 @@ retains its raw code for diagnostics while displaying a translated state.
 | --- | --- |
 | Setup cannot connect | Confirm the IP and port, then stop every other MaxComm client |
 | Repeated checksum errors | Verify the inverter response, then try the checksum checkbox for known non-standard firmware |
-| `offline_fault` during daylight | Check power, Ethernet, IP address, and whether another client took the connection |
-| `offline_expected` at the wrong time | Check Home Assistant's location, time zone, sun entity, and twilight threshold |
+| **Offline (fault)** (`offline_fault`) during daylight | Check power, Ethernet, IP address, and whether another client took the connection |
+| **Offline (expected)** (`offline_expected`) at the wrong time | Check Home Assistant's location, time zone, sun entity, and twilight threshold |
 | Only some entities are unavailable | The inverter may not implement those MaxComm registers |
 | Held values are missing after a night restart | Wait for the first successful daytime poll |
 
