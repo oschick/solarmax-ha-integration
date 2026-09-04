@@ -11,6 +11,7 @@
           "update_interval": "Intervalle de mise à jour (secondes)",
           "device_name": "Nom de l'appareil",
           "verify_checksum": "Vérifier le checksum de la réponse",
+          "night_keep_values": "Conserver les valeurs des capteurs la nuit",
           "twilight_elevation_threshold": "Seuil d'élévation crépusculaire (degrés)"
         }
       }
@@ -37,7 +38,8 @@
           "update_interval": "Intervalle de mise à jour (secondes)",
           "device_name": "Nom de l'appareil",
           "twilight_elevation_threshold": "Seuil d'élévation crépusculaire (degrés)",
-          "verify_checksum": "Vérifier la somme de contrôle de la réponse"
+          "verify_checksum": "Vérifier la somme de contrôle de la réponse",
+          "night_keep_values": "Conserver les valeurs des capteurs la nuit"
         }
       }
     },

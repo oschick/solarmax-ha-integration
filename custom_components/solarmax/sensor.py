@@ -11,10 +11,14 @@ from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity import generate_entity_id
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
+from homeassistant.util import dt as dt_util
 
 from .const import (
     CONF_DEVICE_NAME,
+    CONF_NIGHT_KEEP_VALUES,
+    DEFAULT_NIGHT_KEEP_VALUES,
     DOMAIN,
+    NIGHT_POLICY,
     SAL_ALARM_MAP,
     SAL_STATE_MULTIPLE,
     SAL_STATE_UNKNOWN,
@@ -25,6 +29,7 @@ from .const import (
     SYS_STATE_OFFLINE_NIGHT,
     SYS_STATE_UNKNOWN,
     SYS_STATUS_MAP,
+    NightPolicy,
 )
 from .coordinator import SolarmaxCoordinator
 
@@ -66,6 +71,12 @@ class SolarmaxSensor(CoordinatorEntity[SolarmaxCoordinator], SensorEntity):
         self.entity_description = description
         self.sensor_key = description.key
 
+        # Snapshot the option: an options-flow change reloads the entry, so a
+        # value read at construction time can never go stale.
+        self._night_keep_values: bool = entry.data.get(
+            CONF_NIGHT_KEEP_VALUES, DEFAULT_NIGHT_KEEP_VALUES
+        )
+
         # No hardware identifier is available, so the unique_id falls back to the
         # config entry id per HA guidance: {entry_id}-{key}.
         sensor_type = description.key.lower()
@@ -100,6 +111,57 @@ class SolarmaxSensor(CoordinatorEntity[SolarmaxCoordinator], SensorEntity):
         ]
 
     @property
+    def _night_policy(self) -> NightPolicy | None:
+        """Return the night policy in force right now, else None.
+
+        None means "fall through to the original behaviour" — the coordinator
+        is healthy, the option is off, it is not night, or this sensor has no
+        honest night-time value.
+        """
+        if self.coordinator.last_update_success:
+            return None
+        if not self._night_keep_values:
+            return None
+        if not (self.coordinator.is_expected_offline or self.coordinator.is_night_time):
+            return None
+        policy = NIGHT_POLICY.get(self.sensor_key, NightPolicy.UNAVAILABLE)
+        return None if policy is NightPolicy.UNAVAILABLE else policy
+
+    def _night_value_source(self, policy: NightPolicy) -> str:
+        """Resolve a policy in force to the value it produces right now."""
+        if policy is NightPolicy.ZERO:
+            return "zero"
+        if policy is NightPolicy.HOLD_UNTIL_MIDNIGHT and self._is_new_day():
+            return "zero"
+        return "hold"
+
+    def _is_new_day(self) -> bool:
+        """True when the last successful poll fell on an earlier local day.
+
+        Stateless and restart-safe: derived from the timestamp rather than a
+        latch, so it cannot drift out of sync with the wall clock.
+        """
+        last = self.coordinator.last_successful_update
+        if last is None:
+            return False
+        return last.date() != dt_util.now().date()
+
+    def _held_value(self) -> Any:
+        """Return the value retained from the last successful poll, if any.
+
+        The coordinator keeps its last successful payload across failed polls,
+        but a key the inverter never reported is simply absent — there is then
+        nothing to hold and the sensor must go unavailable rather than sit
+        available reporting `unknown`.
+        """
+        if not self.coordinator.data:
+            return None
+        sensor_data = self.coordinator.data.get(self.sensor_key)
+        if sensor_data is None:
+            return None
+        return sensor_data.get("value")
+
+    @property
     def native_value(self) -> str | int | float | None:
         """Return the state of the sensor."""
         is_status = self.sensor_key == SENSOR_TYPE_STATUS
@@ -109,6 +171,12 @@ class SolarmaxSensor(CoordinatorEntity[SolarmaxCoordinator], SensorEntity):
             if self.coordinator.is_expected_offline:
                 return SYS_STATE_OFFLINE_NIGHT
             return SYS_STATE_CONNECTION_FAILED
+
+        # A resolved "zero" is synthetic and needs no history; "hold" falls
+        # through to coordinator.data, which retains the last successful poll.
+        policy = self._night_policy
+        if policy is not None and self._night_value_source(policy) == "zero":
+            return 0
 
         if not self.coordinator.data:
             return None
@@ -159,6 +227,15 @@ class SolarmaxSensor(CoordinatorEntity[SolarmaxCoordinator], SensorEntity):
         if is_status and not self.coordinator.last_update_success:
             return self._offline_attributes()
 
+        # A synthesised zero has no underlying poll data, so it must be built
+        # here — the empty-data guards below would otherwise return None.
+        night_source = None
+        if (policy := self._night_policy) is not None:
+            night_source = self._night_value_source(policy)
+            if night_source == "zero":
+                # Do not advertise the stale raw_value behind a synthetic 0.
+                return {"raw_value": 0, "night_value_source": "zero"}
+
         if not self.coordinator.data:
             return None
 
@@ -189,6 +266,10 @@ class SolarmaxSensor(CoordinatorEntity[SolarmaxCoordinator], SensorEntity):
                     self.coordinator.last_successful_update.isoformat()
                 )
 
+        # Flag held values so automations can tell them from live readings.
+        if night_source is not None:
+            attributes["night_value_source"] = night_source
+
         return attributes
 
     @property
@@ -200,6 +281,14 @@ class SolarmaxSensor(CoordinatorEntity[SolarmaxCoordinator], SensorEntity):
         # The status sensor stays available so it can report the offline state.
         if self.sensor_key == SENSOR_TYPE_STATUS:
             return True
+
+        # A sensor with a night policy stays available to report it — except a
+        # HOLD sensor with nothing held, which has no value to offer.
+        policy = self._night_policy
+        if policy is not None:
+            if self._night_value_source(policy) == "zero":
+                return True
+            return self._held_value() is not None
 
         # Other sensors go unavailable when the inverter is expectedly offline
         # (night) or after a sustained run of day-time failures.

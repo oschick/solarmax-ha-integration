@@ -1,11 +1,14 @@
 """Test the Solarmax sensor functionality."""
 
+from datetime import timedelta
 from unittest.mock import Mock
 
 import pytest
+from freezegun import freeze_time
 from homeassistant.components.sensor import SensorDeviceClass, SensorStateClass
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.helpers.entity import EntityCategory
+from homeassistant.util import dt as dt_util
 
 from custom_components.solarmax.const import SENSOR_TYPES
 from custom_components.solarmax.coordinator import SolarmaxCoordinator
@@ -232,3 +235,229 @@ def test_no_invalid_device_state_class_combinations():
             assert description.native_unit_of_measurement is None, (
                 f"{description.key}: enum sensors must not have a unit"
             )
+
+
+@pytest.fixture
+def night_entry(mock_config_entry):
+    """A config entry with the night-keep-values option enabled."""
+    mock_config_entry.data = {**mock_config_entry.data, "night_keep_values": True}
+    return mock_config_entry
+
+
+def _set_night(coordinator):
+    coordinator.last_update_success = False
+    coordinator.is_night_time = True
+    coordinator.is_expected_offline = True
+
+
+def test_zero_policy_sensor_reads_zero_at_night(mock_coordinator, night_entry):
+    """PAC is available and reads 0 at night when the option is on."""
+    _set_night(mock_coordinator)
+
+    sensor = _make_sensor(mock_coordinator, night_entry, "PAC")
+
+    assert sensor.available is True
+    assert sensor.native_value == 0
+
+
+def test_zero_policy_sensor_reads_zero_without_prior_data(
+    mock_coordinator, night_entry
+):
+    """A zero needs no history — it is true whether or not we ever polled."""
+    mock_coordinator.data = {}
+    _set_night(mock_coordinator)
+
+    sensor = _make_sensor(mock_coordinator, night_entry, "PAC")
+
+    assert sensor.available is True
+    assert sensor.native_value == 0
+
+
+def test_hold_policy_sensor_keeps_last_value_at_night(mock_coordinator, night_entry):
+    """KT0 holds the last successful reading rather than going unavailable."""
+    mock_coordinator.data["KT0"] = {"value": 12345, "raw_value": 12345}
+    _set_night(mock_coordinator)
+
+    sensor = _make_sensor(mock_coordinator, night_entry, "KT0")
+
+    assert sensor.available is True
+    assert sensor.native_value == 12345
+
+
+def test_hold_policy_sensor_survives_midnight(mock_coordinator, night_entry):
+    """Only KDY resets at midnight; lifetime totals keep holding."""
+    mock_coordinator.data["KT0"] = {"value": 12345, "raw_value": 12345}
+    mock_coordinator.last_successful_update = dt_util.now() - timedelta(days=1)
+    _set_night(mock_coordinator)
+
+    sensor = _make_sensor(mock_coordinator, night_entry, "KT0")
+
+    assert sensor.native_value == 12345
+
+
+def test_hold_policy_sensor_unavailable_with_nothing_to_hold(
+    mock_coordinator, night_entry
+):
+    """An available sensor reporting `unknown` is worse than an absent one.
+
+    Happens for real when the inverter model does not support the key, so its
+    value never appears in coordinator.data.
+    """
+    _set_night(mock_coordinator)
+
+    sensor = _make_sensor(mock_coordinator, night_entry, "KLM")
+
+    assert sensor.available is False
+
+
+def test_unavailable_policy_sensor_still_unavailable_at_night(
+    mock_coordinator, night_entry
+):
+    """AC grid voltage has no honest night value, so it stays unavailable."""
+    _set_night(mock_coordinator)
+
+    sensor = _make_sensor(mock_coordinator, night_entry, "UL1")
+
+    assert sensor.available is False
+
+
+def test_night_policy_ignored_during_daytime_outage(mock_coordinator, night_entry):
+    """A daytime failure is a real fault and must not be smoothed over."""
+    mock_coordinator.last_update_success = False
+    mock_coordinator.is_night_time = False
+    mock_coordinator.is_expected_offline = False
+    mock_coordinator.consecutive_failures = 9
+
+    sensor = _make_sensor(mock_coordinator, night_entry, "PAC")
+
+    assert sensor.available is False
+
+
+def test_night_policy_ignored_when_option_disabled(mock_coordinator, mock_config_entry):
+    """Default-off installs keep the original behaviour exactly."""
+    _set_night(mock_coordinator)
+
+    sensor = _make_sensor(mock_coordinator, mock_config_entry, "PAC")
+
+    assert sensor.available is False
+
+
+def test_kdy_holds_before_midnight(mock_coordinator, night_entry):
+    """Same local day as the last poll: the day's total still stands."""
+    with freeze_time("2026-01-01 12:00:00"):
+        mock_coordinator.data["KDY"] = {"value": 24.5, "raw_value": 245}
+        mock_coordinator.last_successful_update = dt_util.now()
+        _set_night(mock_coordinator)
+
+        sensor = _make_sensor(mock_coordinator, night_entry, "KDY")
+
+        assert sensor.available is True
+        assert sensor.native_value == 24.5
+
+
+def test_kdy_reads_zero_after_midnight(mock_coordinator, night_entry):
+    """Last poll was an earlier local day: today's total is 0."""
+    mock_coordinator.data["KDY"] = {"value": 24.5, "raw_value": 245}
+    mock_coordinator.last_successful_update = dt_util.now() - timedelta(days=1)
+    _set_night(mock_coordinator)
+
+    sensor = _make_sensor(mock_coordinator, night_entry, "KDY")
+
+    assert sensor.available is True
+    assert sensor.native_value == 0
+
+
+def test_kdy_after_midnight_needs_no_held_value(mock_coordinator, night_entry):
+    """Once the day has rolled over the 0 is synthetic, not derived."""
+    mock_coordinator.data = {}
+    mock_coordinator.last_successful_update = dt_util.now() - timedelta(days=1)
+    _set_night(mock_coordinator)
+
+    sensor = _make_sensor(mock_coordinator, night_entry, "KDY")
+
+    assert sensor.available is True
+    assert sensor.native_value == 0
+
+
+def test_kdy_unavailable_when_never_polled(mock_coordinator, night_entry):
+    """No successful poll ever: nothing to hold and no day boundary crossed."""
+    mock_coordinator.data = {}
+    mock_coordinator.last_successful_update = None
+    _set_night(mock_coordinator)
+
+    sensor = _make_sensor(mock_coordinator, night_entry, "KDY")
+
+    assert sensor.available is False
+
+
+def test_night_value_source_reports_zero(mock_coordinator, night_entry):
+    """A synthesised zero says so, and does not advertise a stale raw_value."""
+    _set_night(mock_coordinator)
+
+    sensor = _make_sensor(mock_coordinator, night_entry, "PAC")
+    attributes = sensor.extra_state_attributes
+
+    assert attributes["night_value_source"] == "zero"
+    assert attributes["raw_value"] == 0
+
+
+def test_night_value_source_present_without_coordinator_data(
+    mock_coordinator, night_entry
+):
+    """The attribute must survive the empty-data early return."""
+    mock_coordinator.data = {}
+    _set_night(mock_coordinator)
+
+    sensor = _make_sensor(mock_coordinator, night_entry, "PAC")
+
+    assert sensor.extra_state_attributes["night_value_source"] == "zero"
+
+
+def test_night_value_source_reports_hold(mock_coordinator, night_entry):
+    """A held value keeps its original raw_value."""
+    mock_coordinator.data["KT0"] = {"value": 12345, "raw_value": 12345}
+    _set_night(mock_coordinator)
+
+    sensor = _make_sensor(mock_coordinator, night_entry, "KT0")
+    attributes = sensor.extra_state_attributes
+
+    assert attributes["night_value_source"] == "hold"
+    assert attributes["raw_value"] == 12345
+
+
+def test_held_alarm_sensor_keeps_decoded_attributes(mock_coordinator, night_entry):
+    """SAL holds so a dusk alarm stays legible — decoding must survive."""
+    mock_coordinator.data["SAL"] = {"value": 6, "raw_value": 6}
+    _set_night(mock_coordinator)
+
+    sensor = _make_sensor(mock_coordinator, night_entry, "SAL")
+    attributes = sensor.extra_state_attributes
+
+    assert attributes["night_value_source"] == "hold"
+    assert attributes["code"] == 6
+    assert attributes["active_alarms"] == [
+        "insulation_fault_dc",
+        "earth_fault_current",
+    ]
+
+
+def test_night_value_source_absent_during_normal_operation(
+    mock_coordinator, night_entry
+):
+    """Absence means the reading is real — automations test for presence."""
+    sensor = _make_sensor(mock_coordinator, night_entry, "PAC")
+
+    assert "night_value_source" not in (sensor.extra_state_attributes or {})
+
+
+def test_kdy_after_midnight_reports_zero_source_and_raw(mock_coordinator, night_entry):
+    """KDY's midnight zero is synthetic too — it must not show a stale raw_value."""
+    mock_coordinator.data["KDY"] = {"value": 24.5, "raw_value": 245}
+    mock_coordinator.last_successful_update = dt_util.now() - timedelta(days=1)
+    _set_night(mock_coordinator)
+
+    sensor = _make_sensor(mock_coordinator, night_entry, "KDY")
+    attributes = sensor.extra_state_attributes
+
+    assert attributes["night_value_source"] == "zero"
+    assert attributes["raw_value"] == 0
