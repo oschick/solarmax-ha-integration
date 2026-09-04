@@ -45,8 +45,6 @@ jobs:
       - name: Validate integration metadata
         # The upstream action selects its current Hassfest container.
         uses: home-assistant/actions/hassfest@a7c616ce81ccda50150bf1595786c71b1883fabb # master
-        with:
-          path: ./custom_components/solarmax
 
   workflow-lint:
     name: Workflow security and syntax
