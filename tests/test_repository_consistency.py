@@ -14,6 +14,8 @@ from urllib.parse import unquote, urlsplit
 
 import yaml
 
+from script.release_common import parse_release_tag
+
 _ROOT = Path(__file__).resolve().parent.parent
 _INTEGRATION = _ROOT / "custom_components" / "solarmax"
 _MARKDOWN_LINK = re.compile(r"!?\[[^]]*\]\(([^)]+)\)")
@@ -41,6 +43,10 @@ def _project_version() -> str:
         return tomllib.load(handle)["project"]["version"]
 
 
+def _manifest_version() -> str:
+    return _load_json(_INTEGRATION / "manifest.json")["version"]
+
+
 def _copy_release_fixture(tmp_path: Path) -> Path:
     """Copy the files consumed by the release checker."""
     root = tmp_path / "repository"
@@ -53,6 +59,7 @@ def _copy_release_fixture(tmp_path: Path) -> Path:
     shutil.copy2(_ROOT / "CHANGELOG.md", root / "CHANGELOG.md")
     shutil.copy2(_INTEGRATION / "manifest.json", integration / "manifest.json")
     shutil.copy2(_ROOT / "script" / "check-release", scripts / "check-release")
+    shutil.copy2(_ROOT / "script" / "release_common.py", scripts / "release_common.py")
     return root
 
 
@@ -64,7 +71,7 @@ def _write_release_archive(
         archive.writestr("solarmax/__init__.py", "")
         archive.writestr(
             "solarmax/manifest.json",
-            json.dumps({"version": _project_version()}),
+            json.dumps({"version": _manifest_version()}),
         )
         if include_strings:
             archive.writestr("solarmax/strings.json", "{}")
@@ -84,6 +91,24 @@ def _run_release_checker(
     )
 
 
+def _write_source_versions(
+    root: Path, *, manifest_version: str, project_version: str
+) -> None:
+    manifest_path = root / "custom_components" / "solarmax" / "manifest.json"
+    manifest = _load_json(manifest_path)
+    manifest["version"] = manifest_version
+    manifest_path.write_text(f"{json.dumps(manifest, indent=2)}\n", encoding="utf-8")
+
+    project_path = root / "pyproject.toml"
+    project = project_path.read_text(encoding="utf-8")
+    project_path.write_text(
+        project.replace(
+            f'version = "{_project_version()}"', f'version = "{project_version}"'
+        ),
+        encoding="utf-8",
+    )
+
+
 def test_translation_files_have_the_same_keys() -> None:
     """Adding a UI string without every locale must fail validation."""
     expected = _leaf_paths(_load_json(_INTEGRATION / "strings.json"))
@@ -97,9 +122,8 @@ def test_translation_files_have_the_same_keys() -> None:
 
 
 def test_manifest_and_project_versions_match() -> None:
-    """A release tag must not package conflicting source versions."""
-    manifest_version = _load_json(_INTEGRATION / "manifest.json")["version"]
-    assert manifest_version == _project_version()
+    """Python metadata must represent the manifest's SemVer version."""
+    assert _project_version() == parse_release_tag(f"v{_manifest_version()}").project
 
 
 def test_hacs_zip_settings_are_coherent() -> None:
@@ -124,6 +148,29 @@ def test_hassfest_step_does_not_pass_unsupported_inputs() -> None:
     assert "with" not in hassfest_step
 
 
+def test_release_workflow_prepares_changes_through_a_pull_request() -> None:
+    """A release request must preserve review and protected-main checks."""
+    workflow = yaml.safe_load(
+        (_ROOT / ".github" / "workflows" / "release.yml").read_text()
+    )
+    triggers = workflow[True]
+    assert triggers["push"]["branches"] == ["main"]
+    assert triggers["push"]["paths"] == ["custom_components/solarmax/manifest.json"]
+
+    prepare = workflow["jobs"]["prepare"]
+    assert prepare["permissions"] == {"contents": "write"}
+    prepare_commands = "\n".join(
+        step["run"] for step in prepare["steps"] if "run" in step
+    )
+    assert "script/prepare-release" in prepare_commands
+    assert "git push" in prepare_commands
+    assert "compare/main..." in prepare_commands
+
+    release = workflow["jobs"]["release"]
+    assert release["needs"] == "prepare"
+    assert "needs.prepare.outputs.ready" in release["if"]
+
+
 def test_agent_guides_are_identical() -> None:
     """Codex and Claude must receive the same repository guidance."""
     assert (_ROOT / "AGENTS.md").read_bytes() == (_ROOT / "CLAUDE.md").read_bytes()
@@ -143,27 +190,32 @@ def test_local_documentation_links_exist() -> None:
 
 def test_release_version_checker_accepts_matching_tag() -> None:
     """A release tag matching both source versions must pass."""
-    result = _run_release_checker(_ROOT, f"v{_project_version()}")
+    result = _run_release_checker(_ROOT, f"v{_manifest_version()}")
 
     assert result.returncode == 0, result.stderr
 
 
 def test_release_version_checker_rejects_mismatching_tag() -> None:
     """Publishing a tag that disagrees with source metadata must fail."""
-    result = _run_release_checker(_ROOT, f"not-v{_project_version()}")
+    result = _run_release_checker(_ROOT, "v9.9.9")
 
     assert result.returncode != 0
-    assert f"does not match source version {_project_version()}" in result.stderr
+    assert f"does not match source version {_manifest_version()}" in result.stderr
 
 
 def test_release_checker_writes_matching_changelog_section(tmp_path: Path) -> None:
     """Release notes must come from the matching changelog section."""
     root = _copy_release_fixture(tmp_path)
+    _write_source_versions(
+        root,
+        manifest_version="1.4.0",
+        project_version="1.4.0",
+    )
     (root / "CHANGELOG.md").write_text(
-        f"""\
+        """\
 # Changelog
 
-## [{_project_version()}] - 2026-09-04
+## [1.4.0] - 2026-09-04
 
 ### Fixed
 
@@ -179,7 +231,7 @@ def test_release_checker_writes_matching_changelog_section(tmp_path: Path) -> No
 
     result = _run_release_checker(
         root,
-        f"v{_project_version()}",
+        "v1.4.0",
         "--notes-output",
         notes,
     )
@@ -190,18 +242,112 @@ def test_release_checker_writes_matching_changelog_section(tmp_path: Path) -> No
     assert "Older note" not in content
 
 
+def test_release_checker_uses_unreleased_notes_for_prerelease(
+    tmp_path: Path,
+) -> None:
+    """Prereleases use Unreleased notes without requiring a versioned section."""
+    root = _copy_release_fixture(tmp_path)
+    _write_source_versions(
+        root,
+        manifest_version="1.4.0-test",
+        project_version="1.4.0.dev0+test",
+    )
+    (root / "CHANGELOG.md").write_text(
+        """\
+# Changelog
+
+## [Unreleased]
+
+### Added
+
+- Preview release note.
+
+## [1.3.3] - 2026-08-11
+
+- Older note.
+""",
+        encoding="utf-8",
+    )
+    notes = tmp_path / "release-notes.md"
+
+    result = _run_release_checker(
+        root,
+        "v1.4.0-test",
+        "--notes-output",
+        notes,
+    )
+
+    assert result.returncode == 0, result.stderr
+    content = notes.read_text(encoding="utf-8")
+    assert "Preview release note" in content
+    assert "Older note" not in content
+
+
+def test_release_checker_reports_prerelease_to_github(tmp_path: Path) -> None:
+    """The workflow receives an explicit prerelease classification."""
+    root = _copy_release_fixture(tmp_path)
+    _write_source_versions(
+        root,
+        manifest_version="1.4.0-rc.1",
+        project_version="1.4.0.dev0+rc.1",
+    )
+    output = tmp_path / "github-output"
+
+    result = _run_release_checker(
+        root,
+        "v1.4.0-rc.1",
+        "--github-output",
+        output,
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert output.read_text(encoding="utf-8") == (
+        "version=1.4.0-rc.1\nprerelease=true\n"
+    )
+
+
+def test_release_checker_reports_stable_release_to_github(tmp_path: Path) -> None:
+    """A stable version must not be marked as a GitHub prerelease."""
+    root = _copy_release_fixture(tmp_path)
+    _write_source_versions(
+        root,
+        manifest_version="1.4.0",
+        project_version="1.4.0",
+    )
+    (root / "CHANGELOG.md").write_text(
+        "# Changelog\n\n## [1.4.0] - 2026-09-04\n\n- Release note.\n",
+        encoding="utf-8",
+    )
+    output = tmp_path / "github-output"
+
+    result = _run_release_checker(
+        root,
+        "v1.4.0",
+        "--github-output",
+        output,
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert output.read_text(encoding="utf-8") == ("version=1.4.0\nprerelease=false\n")
+
+
 def test_release_checker_rejects_missing_changelog_section(tmp_path: Path) -> None:
     """A release without user-facing notes must fail before publishing."""
     root = _copy_release_fixture(tmp_path)
+    _write_source_versions(
+        root,
+        manifest_version="1.4.0",
+        project_version="1.4.0",
+    )
     (root / "CHANGELOG.md").write_text(
         "# Changelog\n\n## [0.0.1] - 2020-01-01\n\n- Older note.\n",
         encoding="utf-8",
     )
 
-    result = _run_release_checker(root, f"v{_project_version()}")
+    result = _run_release_checker(root, "v1.4.0")
 
     assert result.returncode != 0
-    assert f"changelog has no section for {_project_version()}" in result.stderr
+    assert "changelog has no section for 1.4.0" in result.stderr
 
 
 def test_release_checker_accepts_expected_archive_layout(tmp_path: Path) -> None:
@@ -209,7 +355,9 @@ def test_release_checker_accepts_expected_archive_layout(tmp_path: Path) -> None
     archive = tmp_path / "solarmax.zip"
     _write_release_archive(archive)
 
-    result = _run_release_checker(_ROOT, f"v{_project_version()}", "--archive", archive)
+    result = _run_release_checker(
+        _ROOT, f"v{_manifest_version()}", "--archive", archive
+    )
 
     assert result.returncode == 0, result.stderr
 
@@ -219,7 +367,9 @@ def test_release_checker_rejects_forbidden_archive_path(tmp_path: Path) -> None:
     archive = tmp_path / "solarmax.zip"
     _write_release_archive(archive, "solarmax/__pycache__/const.cpython-314.pyc")
 
-    result = _run_release_checker(_ROOT, f"v{_project_version()}", "--archive", archive)
+    result = _run_release_checker(
+        _ROOT, f"v{_manifest_version()}", "--archive", archive
+    )
 
     assert result.returncode != 0
     assert "archive contains forbidden path" in result.stderr
@@ -230,7 +380,9 @@ def test_release_checker_requires_complete_archive_layout(tmp_path: Path) -> Non
     archive = tmp_path / "solarmax.zip"
     _write_release_archive(archive, include_strings=False)
 
-    result = _run_release_checker(_ROOT, f"v{_project_version()}", "--archive", archive)
+    result = _run_release_checker(
+        _ROOT, f"v{_manifest_version()}", "--archive", archive
+    )
 
     assert result.returncode != 0
     assert "archive is missing required files: solarmax/strings.json" in result.stderr
@@ -241,7 +393,9 @@ def test_release_checker_rejects_invalid_packaged_json(tmp_path: Path) -> None:
     archive = tmp_path / "solarmax.zip"
     _write_release_archive(archive, "solarmax/translations/en.json")
 
-    result = _run_release_checker(_ROOT, f"v{_project_version()}", "--archive", archive)
+    result = _run_release_checker(
+        _ROOT, f"v{_manifest_version()}", "--archive", archive
+    )
 
     assert result.returncode != 0
     assert (

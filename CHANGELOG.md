@@ -61,6 +61,9 @@ inverter sleeps.
   Home Assistant test stack.
 - Releases now start manually from `main`, validate the packaged integration,
   attest the ZIP, and create a draft for review before publication.
+- The release workflow now prepares a review branch when source versions need
+  updating. It supports SemVer prerelease suffixes such as alpha, beta, release
+  candidate, and test.
 - Guided issue forms and separate contributor, architecture, and
   troubleshooting guides make reports and maintenance easier to follow.
 

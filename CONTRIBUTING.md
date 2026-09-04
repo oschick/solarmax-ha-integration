@@ -76,13 +76,22 @@ Copy `custom_components/solarmax/translations/en.json` to the target BCP 47 lang
 
 Maintainers prepare and publish a release with these steps:
 
-1. Update the version in `pyproject.toml` and `custom_components/solarmax/manifest.json`.
-2. Move the relevant `CHANGELOG.md` entries from Unreleased into the new version.
-3. Run `script/check` and `script/check-release vX.Y.Z`.
-4. Merge those changes to `main` through a normal pull request.
-5. From the Actions page, run **Release** on `main` with `vX.Y.Z`.
-6. Inspect the draft release, its `solarmax.zip` asset, and its changelog notes.
-7. Publish the draft.
+1. From the Actions page, run **Release** on `main` and enter the new tag.
+2. If the source is not prepared, the workflow creates a release branch and
+   provides a link for opening its pull request. Open, review, and merge the
+   pull request after its checks pass.
+3. The merge creates the validated draft release. If the source already
+   matches the requested tag, the first workflow run creates the draft.
+4. Inspect the draft, its `solarmax.zip` asset, and its changelog notes.
+5. Publish the draft.
+
+The workflow accepts stable versions and SemVer prerelease suffixes, including
+`v1.4.0-alpha.1`, `v1.4.0-beta.2`, `v1.4.0-rc.1`, and
+`v1.4.0-test`. A stable release moves the Unreleased notes into a dated version
+section. A prerelease keeps those notes under Unreleased so later prereleases
+and the final stable release retain the complete change summary. The release
+workflow uses the Unreleased section for prerelease notes and marks the GitHub
+draft as a prerelease.
 
 The workflow validates the source and archive before creating a tag. It also
 attests the archive and leaves the GitHub release as a draft. Rerunning the
