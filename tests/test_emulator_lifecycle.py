@@ -102,6 +102,45 @@ def test_stop_cannot_race_client_thread_start(socket_enabled, monkeypatch) -> No
         server_thread.join(timeout=2)
 
 
+def test_client_handler_checks_shutdown_while_recv_is_blocked() -> None:
+    """A blocked receive must wake often enough to observe shutdown."""
+
+    class BlockingSocket:
+        def __init__(self) -> None:
+            self.timeout = 0.0
+            self.recv_started = threading.Event()
+            self.release = threading.Event()
+
+        def settimeout(self, timeout: float) -> None:
+            self.timeout = timeout
+
+        def recv(self, _size: int) -> bytes:
+            self.recv_started.set()
+            if self.release.wait(self.timeout):
+                return b""
+            raise TimeoutError
+
+        def close(self) -> None:
+            pass
+
+    emulator = SolarmaxEmulator()
+    client = BlockingSocket()
+    emulator.running = True
+    handler = threading.Thread(
+        target=emulator.handle_client,
+        args=(client, ("127.0.0.1", 12345)),
+    )
+    handler.start()
+    try:
+        assert client.recv_started.wait(1)
+        emulator.running = False
+        handler.join(timeout=0.5)
+        assert not handler.is_alive()
+    finally:
+        client.release.set()
+        handler.join(timeout=1)
+
+
 def test_interactive_set_command_updates_state(capsys) -> None:
     """The interactive set command must update a known emulator field."""
     emulator = SolarmaxEmulator()

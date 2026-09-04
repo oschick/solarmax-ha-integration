@@ -538,17 +538,19 @@ class SolarmaxEmulator:
         """Handle a single client connection."""
         _LOGGER.info(f"Client connected: {client_addr[0]}:{client_addr[1]}")
         try:
-            # Persistent connection, like the real device: serve requests until
-            # the client closes, the idle window elapses (clean FIN), or dark.
+            idle_deadline = time.monotonic() + self.idle_timeout
+            client_socket.settimeout(min(self.idle_timeout, 0.25))
             while self.running:
-                client_socket.settimeout(self.idle_timeout)
                 try:
                     data = client_socket.recv(1024).decode("utf-8", errors="ignore")
                 except TimeoutError:
+                    if time.monotonic() < idle_deadline:
+                        continue
                     _LOGGER.debug(f"Idle window elapsed for {client_addr} -> FIN")
                     break
                 if not data:
                     break  # client closed
+                idle_deadline = time.monotonic() + self.idle_timeout
                 if self.dark:
                     continue  # powered off: swallow silently, never answer
                 fields = self.parse_request(data)
@@ -682,9 +684,8 @@ class SolarmaxEmulator:
     def stop(self):
         """Stop the emulator and join every thread it started.
 
-        Closing the sockets first makes any thread blocked in accept()/recv()
-        raise immediately — a client handler can otherwise sit in recv() for
-        the full idle window, which leaks the thread into the next test.
+        Client handlers use a short receive tick because closing a socket from
+        another thread does not wake recv() reliably on every platform.
         """
         with self._thread_lock:
             self.running = False

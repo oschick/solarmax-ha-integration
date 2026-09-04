@@ -71,6 +71,8 @@ class EmulatorHandle:
         self._thread.join(timeout=5)
         if self._thread.is_alive():
             raise RuntimeError("emulator server thread did not stop within 5s")
+        if any(thread.is_alive() for thread in self._emulator._client_threads):
+            raise RuntimeError("emulator client thread did not stop within 5s")
 
     @property
     def addr(self) -> tuple[str, int]:
