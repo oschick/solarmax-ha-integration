@@ -1,655 +1,313 @@
-# Solarmax Inverter Integration for Home Assistant
+# Solarmax Inverter for Home Assistant
 
-[![hacs_badge](https://img.shields.io/badge/HACS-Custom-orange.svg)](https://github.com/custom-components/hacs)
+[![Validate](https://github.com/oschick/solarmax-ha-integration/actions/workflows/validate.yml/badge.svg)](https://github.com/oschick/solarmax-ha-integration/actions/workflows/validate.yml)
+[![HACS](https://img.shields.io/badge/HACS-Custom-orange.svg)](https://github.com/custom-components/hacs)
 [![GitHub release](https://img.shields.io/github/release/oschick/solarmax-ha-integration.svg)](https://github.com/oschick/solarmax-ha-integration/releases/)
-[![GitHub license](https://img.shields.io/github/license/oschick/solarmax-ha-integration.svg)](https://github.com/oschick/solarmax-ha-integration/blob/main/LICENSE)
+[![GitHub license](https://img.shields.io/github/license/oschick/solarmax-ha-integration.svg)](LICENSE)
 
-A Home Assistant custom integration for Solarmax solar inverters. This integration allows you to monitor your Solarmax inverter's performance directly within Home Assistant.
+Solarmax Inverter connects Home Assistant directly to a SolarMax inverter over
+the local MaxComm TCP protocol. It reads live production, energy counters,
+operating status, alarms, and diagnostic measurements without a cloud service.
 
-> **⚠️ Compatibility Notice:** This integration has been tested specifically on a **Solarmax 7TP2 Inverter** and should work with most Solarmax inverters built mainly before 2015. Compatibility with newer models is not guaranteed. Please test and report your results!
+## Highlights
 
-## Features
+- Local, read-only communication with no cloud account
+- One persistent connection instead of a new socket for every poll
+- Faster retries after daytime failures and slower polling while the inverter sleeps
+- Separate states for an expected shutdown and an unexpected connection fault
+- Optional synthetic night values for useful dashboards and energy statistics
+- English, German, and French entity, status, alarm, and repair translations
+- A built-in repair issue when an unexplained daytime outage persists
 
-- **Real-time monitoring** of solar inverter data
-- **Automatic discovery** via config flow
-- **Multiple sensor types** including:
-  - AC Power (PAC)
-  - DC Power (PDC)
-  - Energy production metrics
-  - Inverter status and diagnostics
-- **Configurable update intervals**
-- **Local polling** - no cloud dependency required
-- **UI reconfiguration support** - modify settings without removing the integration
-- **Advanced diagnostics** with comprehensive device information
-- **Smart sensor management** - important sensors enabled, diagnostic sensors optional
+## Contents
 
-## Supported Devices
+- [Requirements and compatibility](#requirements-and-compatibility)
+- [Installation](#installation)
+- [Configuration](#configuration)
+- [Connection and recovery](#connection-and-recovery)
+- [Night-time sensor behavior](#night-time-sensor-behavior)
+- [Sensor catalog](#sensor-catalog)
+- [Troubleshooting and support](#troubleshooting-and-support)
+- [Development](#development)
 
-### Tested Models
-- **Solarmax 7TP2 Inverter** ✅ Fully tested and confirmed working
-- **Solarmax 4200S Inverter** ✅ Confirmed working by user reports
-- **Solarmax 3000S Inverter** ✅ Confirmed working by user reports
+## Requirements and compatibility
 
-### Likely Compatible Models
-- Solarmax inverters manufactured **mainly before 2015**
-- Models using the **MaxComm protocol** over TCP/IP (port 12345)
-- Single-phase and three-phase models from the following series:
-  - TP series (e.g. 4TP, 5TP2, 6TP2, 7TP2)
-  - P series (e.g. 2000P, 3000P, 4000P, 5000P)
-  - MT series (e.g. 10MT, 13MT3, 15MT3)
-  - S series (e.g. 2000S, 3000S, 4200S, 6000S)
-  - SP series (e.g. 1000SP, 2000SP, 3000SP)
-  - SHT series (e.g. 20SHT, 30SHT, 50SHT, 60SHT)
-  - TS-SV series
-  - C/E series (older models: 2000C, 3000C, 4000C, 6000C)
+You need:
 
-### Known Incompatible Models
-- Newer Solarmax models (2015+) that use different communication protocols
-- Models that only support Modbus RTU/TCP
-- Cloud-only models without local network access
+- Home Assistant 2024.12.0 or newer
+- A SolarMax inverter that exposes the MaxComm protocol over TCP
+- Network access from Home Assistant to the inverter, normally on port `12345`
 
-> **Note:** If you're unsure about compatibility, try the integration. It will fail gracefully if your model isn't supported.
+### Inverter models
 
-## Supported Functions
+| Compatibility | Models or protocol |
+| --- | --- |
+| Confirmed by users | SolarMax 7TP2, 4200S, and 3000S |
+| Likely to work | Other pre-2015 SolarMax inverters with MaxComm TCP support |
+| Not supported | Models that provide only Modbus, serial, or cloud access |
 
-### Sensors
-The integration provides multiple sensor entities organized by importance:
+Support is determined by the protocol, not only by the model name. Some
+inverters omit individual MaxComm fields. The integration still works, but the
+entities for those fields remain unavailable.
 
-#### Core Monitoring (Enabled by Default)
-- **AC Power (PAC)** - Current AC power output in Watts
-- **DC Power (PDC)** - Current DC power input in Watts
-- **Energy Day (KDY)** - Daily energy production in kWh
-- **Energy Month (KMT)** - Monthly energy production in kWh
-- **Energy Year (KYR)** - Yearly energy production in kWh
-- **Energy Total (KT0)** - Total lifetime energy production in kWh
-- **Status Code (SYS)** - Current inverter operational status (enum, ~110 states)
-- **Alarm Codes (SAL)** - Current alarm/error codes (bitmask)
+> [!IMPORTANT]
+> A SolarMax inverter accepts only one TCP client at a time. Stop MaxTalk,
+> vendor software, test scripts, or another Home Assistant instance before
+> setting up the integration.
 
-#### Production History (Disabled by Default)
-- **Energy Yesterday (KLD)** - Previous day's energy production in kWh
-- **Energy Last Month (KLM)** - Previous month's energy production in kWh
-- **Energy Last Year (KLY)** - Previous year's energy production in kWh
-- **Relative Power (PRL)** - Current output as % of rated power
-
-#### Diagnostic Sensors (Disabled by Default)
-- **DC Power Strings (PD01, PD02, PD03)** - Individual string power outputs
-- **AC Voltage Phases (UL1, UL2, UL3)** - Voltage per phase
-- **DC Voltage (UDC)** - Total DC input voltage
-- **DC Voltage Strings (UD01, UD02, UD03)** - Individual string voltages
-- **AC Current Phases (IL1, IL2, IL3)** - Current per phase
-- **DC Current (IDC, ID01, ID02, ID03)** - Total and individual string currents
-- **Inverter Temperature (TKK, TK2, TK3)** - Internal operating temperatures (up to 3 sensors)
-- **Power On Hours (KHR)** - Total operational hours
-- **Startups (CAC)** - Number of startup cycles
-- **Installed Power (PIN)** - Rated peak power of the inverter in Watts
-- **Grid Frequency (TNF)** - Current AC grid frequency in Hz
-- **Grid Voltage Upper Limit (ULH)** - Configured maximum grid voltage in V
-- **Grid Voltage Lower Limit (ULL)** - Configured minimum grid voltage in V
-- **Grid Frequency Upper Limit (TNH)** - Configured maximum grid frequency in Hz
-- **Grid Frequency Lower Limit (TNL)** - Configured minimum grid frequency in Hz
-
-> **Note:** Not all inverter models support all sensors. Keys not recognised by the inverter are silently omitted from the response — unsupported sensors will show as unavailable.
-
-### Platforms
-- **Sensor Platform** - All monitoring data
-- **Diagnostics Platform** - System diagnostic information
-- **Config Flow** - Easy setup and reconfiguration
-- **Options Flow** - Modify settings without re-adding
+Giving the inverter a fixed DHCP lease is recommended so its address does not
+change after setup.
 
 ## Installation
 
-### HACS (Recommended)
+### HACS
 
-1. Open HACS in your Home Assistant instance
-2. Go to "Integrations"
-3. Click the three dots in the top right corner
-4. Select "Custom repositories"
-5. Add this repository URL: `https://github.com/oschick/solarmax-ha-integration`
-6. Select "Integration" as the category
-7. Click "Add"
-8. Search for "Solarmax Inverter" and install it
-9. Restart Home Assistant
+1. Open HACS and select **Integrations**.
+2. Open the menu and select **Custom repositories**.
+3. Add `https://github.com/oschick/solarmax-ha-integration` as an
+   **Integration** repository.
+4. Search for **Solarmax Inverter** and install it.
+5. Restart Home Assistant.
 
-### Manual Installation
+HACS handles updates after the custom repository has been added.
 
-1. Download the latest release from the [releases page](https://github.com/oschick/solarmax-ha-integration/releases)
-2. Extract the contents
-3. Copy the `custom_components/solarmax` folder to your Home Assistant `custom_components` directory
-4. Restart Home Assistant
+### Manual installation
+
+1. Download `solarmax.zip` from the latest
+   [GitHub release](https://github.com/oschick/solarmax-ha-integration/releases/).
+2. Extract it into Home Assistant's `custom_components` directory.
+3. Confirm that the final path is `custom_components/solarmax` and contains
+   `manifest.json`.
+4. Restart Home Assistant.
 
 ## Configuration
 
-The integration can be configured through the Home Assistant UI:
+After installation:
 
-1. Go to **Settings** → **Devices & Services**
-2. Click **Add Integration**
-3. Search for "Solarmax Inverter"
-4. Enter your inverter details:
-   - **Host**: IP address of your inverter
-   - **Port**: Communication port (default: 12345)
-   - **Update Interval**: How often to poll data (default: 30 seconds)
-   - **Device Name**: Friendly name for your inverter
-   - **Verify response checksum**: Validate CRC on inverter responses (default: enabled)
-   - **Keep sensor values overnight**: Give applicable sensors a meaningful value while the inverter sleeps, instead of going unavailable (default: disabled)
-   - **Twilight elevation threshold**: Sun elevation (degrees) below which the inverter is expected to be offline (default: 5)
+1. Open **Settings → Devices & services**.
+2. Select **Add integration**.
+3. Search for **Solarmax Inverter**.
+4. Enter the inverter connection and polling settings.
 
-### Twilight Elevation Threshold
+The initial setup opens a short connection and validates a `PAC` response. A
+successful probe creates one device and its sensor entities.
 
-During dusk and dawn, the sun may technically be above the horizon while irradiance is still too low for the inverter to operate. Whenever a disconnect isn't otherwise recognized as a normal shutdown (see [Connection States & Offline Detection](#connection-states--offline-detection)), the integration falls back to treating the inverter as expected to be offline while the sun's elevation is below this threshold. It also sets the boundary for adaptive polling: every 15 minutes below the threshold, every 60 seconds above it while still offline.
+### Settings
 
-If your inverter starts up later or shuts down earlier relative to sunrise/sunset than expected, adjust this value (0-90 degrees) via **Configure** on the integration.
+| Setting | Default | Description |
+| --- | ---: | --- |
+| Host | `192.168.1.100` | Inverter IP address or host name |
+| Port | `12345` | MaxComm TCP port |
+| Inverter address | `1` | MaxComm address from 1 to 249 |
+| Update interval | `30 s` | Normal online interval from 5 to 3600 seconds |
+| Device name | `Solarmax Inverter` | Device name shown in Home Assistant |
+| Verify response checksum | On | Reject responses with an invalid MaxComm checksum |
+| Keep sensor values overnight | Off | Apply the synthetic night policies described below |
+| Twilight elevation threshold | `5°` | Sun elevation below which an offline inverter is expected |
 
-### Checksum Verification
+### Checksum verification
 
-By default, the integration validates the CRC checksum on every response from the inverter to detect corrupted data. If you experience persistent "checksum verification failed" errors, your inverter may use a non-standard CRC implementation.
+Checksum verification protects against damaged or malformed responses and
+should normally remain enabled. Some firmware returns otherwise valid frames
+with a non-standard checksum. If logs repeatedly show checksum errors for such
+an inverter, clear **Verify response checksum**. The setting applies both to
+the setup probe and to normal polling, so the checkbox can explicitly tell the
+integration to ignore response checksums.
 
-To disable checksum verification:
-1. Go to **Settings** → **Devices & Services**
-2. Find your Solarmax Inverter integration
-3. Click **Configure**
-4. Uncheck **Verify response checksum**
-5. Click **Submit**
+### Changing settings
 
-> **Note:** Disabling checksum verification means corrupted responses will not be detected. Only disable this if you are experiencing checksum errors and have verified that the data values are otherwise correct.
+Select **Configure** on the integration entry to change any setting. Saving
+reloads the entry and closes the old connection before opening a new one.
+Unlike initial setup, the options form does not start an extra validation
+connection, which avoids competing for the inverter's single client slot. An
+invalid host or port is reported by the connection state after the reload.
 
-### Night-Time Sensor Behavior
+## Connection and recovery
 
-By default, all sensors go **unavailable** whenever the inverter itself is offline — including overnight, when the inverter powers down because there is no sunlight to convert. This is accurate but can be inconvenient: history graphs gap out every night, and automations that key off a sensor's state have nothing to read.
+The integration owns one persistent TCP connection and reuses it across polls.
+Static device information and live telemetry are requested separately. This
+keeps normal polls small and allows an inverter to omit unsupported registers
+without losing all sensor updates.
 
-The **Keep sensor values overnight** option (off by default) changes this for sensors where a meaningful overnight value actually exists. Enabling it does not affect daytime behavior at all — if the inverter drops offline during the day (a real fault), affected sensors still go unavailable exactly as before. The option only changes what happens once night has been detected (see [Twilight Elevation Threshold](#twilight-elevation-threshold)).
+### Connection states
 
-When enabled, each sensor is treated according to which of four groups it falls into:
-
-| Group | Sensors | Overnight value | Why |
-|---|---|---|---|
-| **Zeroed** | AC Power, DC Power, DC Power String 1-3, Relative Power (`PAC`, `PDC`, `PD01`-`PD03`, `PRL`); DC Current, DC Current String 1-3, AC Current Phase 1-3 (`IDC`, `ID01`-`ID03`, `IL1`-`IL3`); DC Voltage, DC Voltage String 1-3 (`UDC`, `UD01`-`UD03`) | `0` | There is no production at night: power and current are genuinely zero, and unlit DC strings sit at roughly 0 V. |
-| **Held** | Energy Month, Energy Year, Energy Total, Power On Hours, Startups (`KMT`, `KYR`, `KT0`, `KHR`, `CAC`); Energy Yesterday, Energy Last Month, Energy Last Year (`KLD`, `KLM`, `KLY`); Installed Power, Grid Voltage Upper/Lower Limit, Grid Frequency Upper/Lower Limit (`PIN`, `ULH`, `ULL`, `TNH`, `TNL`); Alarm Status (`SAL`) | Last known value | These are cumulative counters that must never regress, historical totals, or static configuration reads that don't change overnight. An alarm that was live at dusk also stays visible through the night rather than silently disappearing. |
-| **Held, then reset at midnight** | Energy Day (`KDY`) | Last known value, then `0` after local midnight | The inverter resets its own daily energy counter at midnight, so the integration mirrors that reset locally rather than holding yesterday's total into the new day. |
-| **Still unavailable** | AC Voltage Phase 1-3 (`UL1`-`UL3`); Grid Frequency (`TNF`); Inverter Temperature, Inverter Temperature 2-3 (`TKK`, `TK2`, `TK3`) | *(unchanged — unavailable)* | These have no honest overnight value: grid voltage isn't 0 V, the grid isn't at 0 Hz, and the inverter cools down overnight, so a held temperature would be a lie. |
-
-Any sensor not listed above is not affected by this option.
-
-Sensors reporting a synthesized value expose a `night_value_source` attribute set to `"hold"` or `"zero"`. This attribute is only present while the value is synthetic — it is **absent entirely** during normal (daytime, or option-disabled) operation. Automations should check for the attribute's presence rather than compare it to `false`.
-
-**Anomalous disconnects are not treated as a normal dusk.** If the disconnect that produced `offline_expected` was armed (announced shutdown, or low DC power) but happened *before* the sun actually reached the twilight threshold (`expected_outside_twilight` — see [Connection States & Offline Detection](#connection-states--offline-detection)), that's an anomaly worth investigating, not routine nightfall. Zeroed sensors go honestly `unavailable` instead of reporting a fabricated `0` (`night_value_source: "unavailable"`); held sensors are unaffected and keep holding their last-known value as usual. A normal dusk (sun below the threshold) is unchanged — zeroed sensors still report `0` exactly as before.
-
-> **Note:** Home Assistant restarts overnight now create entities immediately — the coordinator's first refresh can no longer fail (a dark inverter simply produces a connection-state snapshot instead of raising), so there is no `ConfigEntryNotReady` and no missing-entities window. With this option enabled, zeroed sensors (`PAC`, `PDC`, etc.) report `0` from the moment Home Assistant starts, even on a fresh restart; held sensors (`KMT`, `KYR`, `SAL`, etc.) stay `unavailable` until the first successful poll actually captures a value to hold, since there is nothing from a previous restart to carry over.
-
-### Reconfiguration
-
-You can modify the integration settings without removing and re-adding:
-
-1. Go to **Settings** → **Devices & Services**
-2. Find your Solarmax Inverter integration
-3. Click **Configure**
-4. Update any settings and click **Submit**
-5. The integration will automatically reload with new settings
-
-## Data Update Information
-
-The integration uses **local polling** via the **MaxComm protocol** to retrieve data from your inverter:
-
-- **Protocol**: MaxComm (proprietary SolarMax TCP protocol, documented August 2022)
-- **Update Method**: One persistent TCP connection (default port 12345), reused across polls rather than reconnecting every cycle
-- **Update Frequency**: Configurable during the day (default: 30 seconds); adaptive while offline — see [Connection States & Offline Detection](#connection-states--offline-detection)
-- **Retry Logic**: One retry per poll for a corrupted/truncated response (line noise) or a single lost/timed-out response — never both stacked on the same request; a peer-closed connection is transparently reconnected and the request resent once
-- **Timeouts**: 3.5 seconds to wait for a response (the MaxComm spec's own documented maximum is 3000 ms) and a 15-second overall budget per poll cycle
-- **Checksum Verification**: Validates response CRC to detect corrupt data
-
-### Connection States & Offline Detection
-
-The integration keeps one persistent connection open and classifies its state from what each poll actually observes — never from elapsed time or assumptions about why a request failed. The **Status Code** sensor always reflects the current connection state as one of four values:
+The **Status Code** entity shows the inverter's translated `SYS` state while it
+is online. If the inverter cannot be reached, it reports one of these
+integration states:
 
 | State | Meaning |
-|---|---|
-| `online` | The last poll succeeded. |
-| `offline_expected` | The inverter is offline for a reason the integration recognizes as normal (see "Arming" below). |
-| `offline_fault` | The inverter is offline for an unrecognized reason during the day — a real problem. |
-| `unknown` | No poll has completed yet, e.g. immediately after Home Assistant starts. |
+| --- | --- |
+| `unknown` | No successful connection yet; daytime startup is still within its reconnect window |
+| `offline_expected` | Darkness or inverter shutdown evidence explains the disconnect |
+| `offline_fault` | The inverter failed during daytime without shutdown evidence |
 
-**Arming — what counts as "expected":** the integration watches the last successful poll for two independent signals that the inverter is about to power down on its own:
-- it announces the shutdown via status code `SYS 20002` ("low irradiation"), or
-- DC power (`PDC`) reads below 25 W on that single poll (a strict `<`, not `<=`).
+The normal online condition is represented by the live inverter status rather
+than a synthetic `online` value.
 
-Either signal arms the connection: the *next* disconnect is then classified `offline_expected` regardless of its actual cause. Arming is cleared on every successful poll and re-evaluated from scratch each time.
+### How an offline state is classified
 
-Some firmware versions never announce the shutdown or dip below the `PDC` threshold before dropping off the network. For those, a disconnect while the sun is below the configured [twilight elevation threshold](#twilight-elevation-threshold) is also classified `offline_expected`, armed or not.
+The integration combines inverter data with Home Assistant's sun position:
 
-**Escalation for a stuck "armed" flag:** an `offline_expected` disconnect that was armed but stays outside the twilight window (the sun never comes down to explain it — see `expected_outside_twilight` below) reclassifies to `offline_fault` once the anomaly has lasted over an hour with at least 10 failed probes and zero successful ones in between. Arming clears at that point and the fault gets a fresh `fault_since`. A disconnect classified `offline_expected` purely by the sun fallback never needs this — it self-corrects the moment the sun crosses the threshold.
+1. A successful poll arms an expected shutdown when `SYS` reports `20002` or
+   DC power (`PDC`) falls below 25 W.
+2. The next disconnect is classified as `offline_expected` when that evidence
+   exists or the sun is below the configured twilight threshold.
+3. An unexplained daytime disconnect is classified as `offline_fault`.
+4. A shutdown that starts unusually early is allowed one hour and at least ten
+   failed probes before it escalates to a fault.
 
-**Polling cadence:** the configured update interval applies while the connection is `online`. During a daytime startup failure or `offline_fault`, polling accelerates to the configured interval or 60 seconds, whichever is faster, so recovery is detected promptly and repair timing stays current. Once `offline_expected`, polling slows down: every 15 minutes (900 s) while the sun is below the twilight threshold, or every 60 seconds once the sun is back above it — fast enough to notice the inverter waking up at dawn without polling a sleeping device all night.
+At daytime startup, the integration keeps the state `unknown` during a
+150-second reconnect window. This avoids raising a fault while the inverter or
+network is still becoming available.
 
-**Daytime faults:** a poll failure that is neither armed nor below the twilight threshold is an honest `offline_fault` starting with the very first failed poll — all sensors except Status Code go `unavailable` immediately (there is no multi-failure grace window). If the fault persists for 5 minutes, a **repair issue** appears under **Settings → Repairs** with the host, port, and elapsed minutes, refreshing every minute and clearing automatically once the connection recovers. Completing the repair's fix flow while the fault is still ongoing suppresses re-creating the issue for 24 hours; a new fault episode (recovery, or reclassification to `offline_expected`) raises immediately regardless.
+### Polling cadence and retries
 
-**Diagnostic attributes** on the Status Code sensor while not `online`:
+| Condition | Poll interval |
+| --- | --- |
+| Online | Configured update interval |
+| Startup reconnect | Configured interval or 60 seconds, whichever is shorter |
+| Daytime fault | Configured interval or 60 seconds, whichever is shorter |
+| Expected offline below twilight | 15 minutes |
+| Expected offline above twilight | 60 seconds |
 
-| Attribute | Meaning |
-|---|---|
-| `fault_since` | ISO timestamp of when the current fault began (only set for `offline_fault`). |
-| `reconnecting` | `true` for the first 150 seconds after any unclean disconnect (including right after Home Assistant starts), while the integration is still within its reconnect grace window. |
-| `expected_outside_twilight` | `true` when the inverter armed (announced shutdown or low `PDC`) *before* the sun actually reached the twilight threshold — an anomaly worth investigating (e.g. shading), rather than a normal dusk. |
+The faster daytime cadence detects the inverter's return promptly. Each poll
+has a 15-second budget. A lost response or corrupt frame gets one retry within
+that budget. Reloading or unloading the integration closes the socket so the
+inverter does not retain the client slot.
 
-> **Migrating from an older version:** the Status Code sensor's connection states were renamed — `offline_night` → `offline_expected`, `connection_failed` → `offline_fault`. Automations or dashboards matching the old strings need updating. Three status-sensor attributes were also removed: `expected_offline`, `consecutive_failures`, and `last_api_connection`; the attributes above (`fault_since`, `reconnecting`, `expected_outside_twilight`) replace them.
+If a daytime fault lasts five minutes, Home Assistant creates a repair issue.
+The issue clears automatically after communication recovers.
 
-### MaxComm Protocol Overview
+### Diagnostic state attributes
 
-The MaxComm protocol is a Master-Slave TCP protocol used by SolarMax inverters:
+When relevant, the Status Code entity exposes:
 
-- **Communication**: Master-Slave (integration polls, inverter responds)
-- **Data Encoding**: All values transmitted as ASCII hex characters
-- **Response Time**: Typical 300ms, maximum timeout 3000ms
-- **Addressing**: Device addresses 1–249 (configurable on the inverter)
-- **Error Detection**: 4-character hex CRC checksum on every packet
-- **Single client only**: the inverter accepts exactly one TCP connection at a time and FINs an idle connection after roughly 100 seconds. Running two pollers against the same inverter (this integration plus a vendor app, or two Home Assistant instances) will cause one of them to fail. If a connection is ever leaked without a clean close (a crash, a force-kill), the inverter can lock out new connections for up to ~128 seconds before accepting one again — the integration always closes its connection deterministically on unload for exactly this reason.
+| Attribute | Purpose |
+| --- | --- |
+| `last_successful_update` | Time of the last valid inverter response |
+| `fault_since` | Start of the current unexplained fault |
+| `reconnecting` | Whether startup recovery is still in progress |
+| `expected_outside_twilight` | Whether shutdown evidence occurred above the twilight threshold |
+| `code` and `raw_value` | Raw status or offline details for diagnostics |
 
-Request/response format:
+Automations created with an older release must replace `offline_night` with
+`offline_expected` and `connection_failed` with `offline_fault`.
+
+## Night-time sensor behavior
+
+Many SolarMax inverters turn off their network interface when production ends.
+That is normal, but it leaves Home Assistant without a live value until the
+next successful poll.
+
+With **Keep sensor values overnight** disabled, measurement entities become
+unavailable while the inverter is offline. Enable the option if dashboards or
+automations need predictable night values. The integration then applies a
+policy suited to each register:
+
+| Policy | Sensors | Value while expected offline |
+| --- | --- | --- |
+| Zero | `PAC`, `PDC`, `PD01`–`PD03`, `PRL`, `IDC`, `ID01`–`ID03`, `IL1`–`IL3`, `UDC`, `UD01`–`UD03` | `0` |
+| Hold | `KMT`, `KYR`, `KT0`, `KHR`, `CAC`, `KLD`, `KLM`, `KLY`, `PIN`, `ULH`, `ULL`, `TNH`, `TNL`, `SAL` | Last successful value |
+| Hold until midnight | `KDY` | Last value, then `0` after local midnight |
+| Unavailable | `UL1`–`UL3`, `TNF`, `TKK`, `TK2`, `TK3`, and unlisted sensors | Unavailable |
+
+Synthetic states include a `night_value_source` attribute such as `zero`,
+`hold`, or `unavailable`, so automations can distinguish them from live data.
+
+An early disconnect above the twilight threshold is treated cautiously. Zero
+policy sensors stay unavailable until darkness because the integration cannot
+yet assume production has stopped. Hold policy sensors may retain their last
+value.
+
+After a Home Assistant restart at night, zero-policy sensors can report `0`
+immediately. Hold-policy sensors need at least one successful poll after
+startup before the integration has a value to retain.
+
+## Sensor catalog
+
+Entity names are translated in Home Assistant. The MaxComm register is shown
+in parentheses to make protocol logs and diagnostics easier to interpret.
+
+### Enabled by default
+
+| Entity | Register | Unit or value |
+| --- | --- | --- |
+| AC power | `PAC` | W |
+| DC power | `PDC` | W |
+| Energy today | `KDY` | kWh |
+| Energy this month | `KMT` | kWh |
+| Energy this year | `KYR` | kWh |
+| Total energy | `KT0` | kWh |
+| Alarm | `SAL` | Translated alarm state and active alarm details |
+| Status Code | `SYS` | Translated inverter or connection state |
+
+### Optional production and history entities
+
+| Entity | Register | Unit |
+| --- | --- | --- |
+| Energy yesterday | `KLD` | kWh |
+| Energy last month | `KLM` | kWh |
+| Energy last year | `KLY` | kWh |
+| Relative power | `PRL` | % |
+
+### Optional diagnostic entities
+
+| Group | Registers | Unit |
+| --- | --- | --- |
+| DC string power | `PD01`–`PD03` | W |
+| AC phase voltage | `UL1`–`UL3` | V |
+| DC and string voltage | `UDC`, `UD01`–`UD03` | V |
+| AC phase current | `IL1`–`IL3` | A |
+| DC and string current | `IDC`, `ID01`–`ID03` | A |
+| Temperature | `TKK`, `TK2`, `TK3` | °C |
+| Operating hours | `KHR` | h |
+| Start count | `CAC` | count |
+| Installed power | `PIN` | W |
+| Grid frequency | `TNF` | Hz |
+| Grid voltage limits | `ULH`, `ULL` | V |
+| Grid frequency limits | `TNH`, `TNL` | Hz |
+
+Optional entities can be enabled from the SolarMax device page. An unavailable
+optional entity usually means the inverter does not return that register; it
+does not necessarily indicate a connection failure.
+
+The Alarm entity exposes its numeric `code` and, for a bitmask containing
+multiple alarms, an `active_alarms` attribute. The Status Code entity also
+retains its raw code for diagnostics while displaying a translated state.
+
+## Troubleshooting and support
+
+| Symptom | First check |
+| --- | --- |
+| Setup cannot connect | Confirm the IP and port, then stop every other MaxComm client |
+| Repeated checksum errors | Verify the inverter response, then try the checksum checkbox for known non-standard firmware |
+| `offline_fault` during daylight | Check power, Ethernet, IP address, and whether another client took the connection |
+| `offline_expected` at the wrong time | Check Home Assistant's location, time zone, sun entity, and twilight threshold |
+| Only some entities are unavailable | The inverter may not implement those MaxComm registers |
+| Held values are missing after a night restart | Wait for the first successful daytime poll |
+
+The [troubleshooting guide](docs/troubleshooting.md) explains these checks,
+logging, connection states, and diagnostic downloads in more detail.
+
+If the problem remains, use the matching
+[GitHub issue form](https://github.com/oschick/solarmax-ha-integration/issues/new/choose).
+Include the Home Assistant and integration versions, inverter model, connection
+state, relevant settings, diagnostics, and logs. Remove credentials or network
+details that you do not want to publish.
+
+## Development
+
+[CONTRIBUTING.md](CONTRIBUTING.md) covers local setup, checks, translations,
+pull requests, and releases. [docs/architecture.md](docs/architecture.md)
+describes the protocol, connection engine, coordinator, entities, and test
+emulator.
+
+Run the same validation used by CI with:
+
+```bash
+script/check
 ```
-{<Src>;<Dest>;<Length>|<Port>:<Data>|<CRC>}
-```
-
-The integration queries all supported data keys in a single request. Keys not recognized by the inverter are simply omitted from the response (graceful degradation).
-
-### Update Process
-1. On the first poll (or the first poll after re-arming at dusk/dawn), the integration opens its one TCP connection and requests the static/device keys once; every poll after that reuses the same connection, transparently reconnecting and resending once if the inverter has closed it (e.g. after the ~100s idle FIN)
-2. Builds a MaxComm protocol request with the monitored data keys and sends it
-3. Receives and validates the response (CRC checksum verification), retrying once if the frame is corrupted or truncated
-4. Parses hex-encoded values and applies network variable scaling
-5. Classifies the poll's outcome into a connection state (see [Connection States & Offline Detection](#connection-states--offline-detection)) — a poll never raises an exception that Home Assistant would treat as a coordinator failure
-6. Logs diagnostic information for troubleshooting
-
-## Use Cases
-
-### 1. Energy Production Monitoring
-Monitor your solar production in real-time and track daily, monthly, and yearly totals:
-
-```yaml
-# Dashboard card example
-type: entities
-title: Solar Production
-entities:
-  - entity: sensor.solarmax_inverter_ac_power
-    name: Current Power
-  - entity: sensor.solarmax_inverter_energy_day
-    name: Today's Production
-  - entity: sensor.solarmax_inverter_energy_total
-    name: Total Production
-```
-
-### 2. System Health Monitoring
-Keep track of your inverter's operational status and detect issues early:
-
-```yaml
-# Automation to alert on inverter alarms
-automation:
-  - alias: "Solar Inverter Alarm"
-    trigger:
-      - platform: state
-        entity_id: sensor.solarmax_inverter_alarm_codes
-        to: '!0'  # Any non-zero alarm code
-    action:
-      - service: notify.mobile_app
-        data:
-          message: "Solar inverter alarm: {{ states('sensor.solarmax_inverter_alarm_codes') }}"
-```
-
-### 3. Performance Analysis
-Analyze inverter performance with detailed diagnostic data:
-
-```yaml
-# Track inverter efficiency
-sensor:
-  - platform: template
-    sensors:
-      solar_efficiency:
-        friendly_name: "Solar Efficiency"
-        unit_of_measurement: "%"
-        value_template: >
-          {% set ac_power = states('sensor.solarmax_inverter_ac_power') | float %}
-          {% set dc_power = states('sensor.solarmax_inverter_dc_power') | float %}
-          {% if dc_power > 0 %}
-            {{ ((ac_power / dc_power) * 100) | round(1) }}
-          {% else %}
-            0
-          {% endif %}
-```
-
-### 4. Energy Management
-Integrate with Home Assistant energy dashboard and automation:
-
-```yaml
-# Energy dashboard configuration
-sensor:
-  - platform: integration
-    source: sensor.solarmax_inverter_ac_power
-    name: solar_energy_kwh
-    unit_prefix: k
-    round: 2
-    method: left
-```
-
-## Automation Examples
-
-### Daily Production Summary
-```yaml
-automation:
-  - alias: "Daily Solar Summary"
-    trigger:
-      - platform: time
-        at: "20:00:00"
-    action:
-      - service: notify.family
-        data:
-          title: "Daily Solar Production"
-          message: >
-            Today's solar production: {{ states('sensor.solarmax_inverter_energy_day') }} Wh
-            Total production: {{ states('sensor.solarmax_inverter_energy_total') }} kWh
-```
-
-### Peak Power Alert
-```yaml
-automation:
-  - alias: "Peak Solar Power"
-    trigger:
-      - platform: numeric_state
-        entity_id: sensor.solarmax_inverter_ac_power
-        above: 5000  # Adjust threshold as needed
-    action:
-      - service: notify.mobile_app
-        data:
-          message: "Solar inverter producing {{ states('sensor.solarmax_inverter_ac_power') }}W!"
-```
-
-### Maintenance Reminder
-```yaml
-automation:
-  - alias: "Solar Maintenance Reminder"
-    trigger:
-      - platform: numeric_state
-        entity_id: sensor.solarmax_inverter_power_on_hours
-        above: 8760  # One year of hours
-    action:
-      - service: notify.maintenance
-        data:
-          message: "Solar inverter has {{ states('sensor.solarmax_inverter_power_on_hours') }} operating hours. Consider maintenance check."
-```
-
-## Known Limitations
-
-### Protocol Limitations
-- **Single Device**: Integration designed for one inverter per instance
-- **MaxComm Only**: Only supports the MaxComm protocol (mainly pre-2015 SolarMax devices)
-- **TCP/IP Only**: Requires network connection (no RS485/serial support)
-- **Polling Only**: No push notifications from inverter (MaxComm is Master-Slave)
-- **Read-Only**: Only data queries (port 100/0x64); settings commands (port 200/0xC8) not implemented
-
-### Network Requirements
-- **Direct Access**: Inverter must be accessible on local network
-- **Port Availability**: Default port 12345 must be open
-- **Static IP Recommended**: DHCP changes may require reconfiguration
-
-### Functional Limitations
-- **No Control**: Read-only integration (monitoring only, no inverter control)
-- **No String Detection**: Cannot auto-detect number of DC strings
-- **Basic Diagnostics**: Limited to data provided by inverter protocol
-- **Offline Sensors**: Sensors go unavailable whenever the inverter is offline (night, or a daytime fault), unless the optional **Keep sensor values overnight** setting is enabled (see [Night-Time Sensor Behavior](#night-time-sensor-behavior)); the Status Code sensor always stays available and reports why (see [Connection States & Offline Detection](#connection-states--offline-detection))
-
-### Performance Considerations
-- **Update Frequency**: Minimum recommended interval is 10 seconds
-- **Network Impact**: One TCP connection is opened and reused across polls, not re-established every update
-- **Memory Usage**: Minimal, but stores recent connection history
-
-## Troubleshooting
-
-### Connection Issues
-
-#### Problem: "Failed to connect to inverter"
-**Possible Causes:**
-- Incorrect IP address or port
-- Network connectivity issues
-- Inverter is offline or in standby mode
-- Firewall blocking connection
-
-**Solutions:**
-1. Verify inverter IP address and port in router/network settings
-2. Test network connectivity: `ping <inverter_ip>`
-3. Check if inverter is powered on and operational
-4. Temporarily disable firewall to test connection
-5. Try connecting from command line: `telnet <inverter_ip> 12345`
-
-#### Problem: "Connection timeout"
-**Possible Causes:**
-- Network latency or congestion
-- Inverter is busy or overloaded
-- Update interval too aggressive
-
-**Solutions:**
-1. Increase update interval to 60+ seconds
-2. Check network quality and stability
-3. Ensure no other applications are polling the inverter
-4. Restart inverter if possible
-
-### Data Issues
-
-#### Problem: "Sensors showing 'unavailable'"
-**Possible Causes:**
-- The inverter is offline for a recognized reason — night, dusk/dawn, or an announced shutdown (`offline_expected`)
-- A genuine daytime connection fault (`offline_fault`) — sensors go unavailable from the first failed poll
-- Protocol communication error
-
-**Solutions:**
-1. Check the **Status Code** sensor — it always stays available and reports `offline_expected` (normal) or `offline_fault` (a real problem); see [Connection States & Offline Detection](#connection-states--offline-detection)
-2. Review logs for connection errors
-3. If `offline_expected`, wait for dawn — fast polling starts once the sun rises above the twilight threshold
-4. If `offline_fault` persists for 5 minutes, a repair issue appears under **Settings → Repairs**; otherwise restart the integration if the issue persists during the day
-
-#### Problem: "Incorrect sensor values"
-**Possible Causes:**
-- Inverter reporting wrong data
-- Unit conversion issues
-- Protocol misinterpretation
-
-**Solutions:**
-1. Compare values with inverter display/app
-2. Enable diagnostic sensors for detailed analysis
-3. Check inverter firmware version
-4. Report issue with diagnostic data
-
-### Configuration Issues
-
-#### Problem: "Integration won't start"
-**Possible Causes:**
-- Invalid configuration
-- Network not ready during startup
-- Dependency conflicts
-
-**Solutions:**
-1. Check Home Assistant logs for specific errors
-2. Verify all configuration values are valid
-3. Restart Home Assistant completely
-4. Remove and re-add integration
-
-#### Problem: "Reconfiguration fails"
-**Possible Causes:**
-- New settings are invalid
-- Integration is busy updating
-- Connection test failed
-
-**Solutions:**
-1. Verify new host/port settings are correct
-2. Wait for current update cycle to complete
-3. Test connection manually before applying changes
-
-### Getting Help
-
-If you encounter issues not covered here:
-
-1. **Enable Debug Logging**: Add to `configuration.yaml`:
-   ```yaml
-   logger:
-     logs:
-       custom_components.solarmax: debug
-   ```
-
-2. **Collect Diagnostic Data**:
-   - Go to Settings → Devices & Services
-   - Find Solarmax Inverter integration
-   - Click device name → Download Diagnostics
-
-3. **Report Issues**: Create a GitHub issue with:
-   - Integration version
-   - Home Assistant version
-   - Inverter model
-   - Error logs
-   - Diagnostic data (remove sensitive information)
-
-## Translations
-
-The integration is fully localized using Home Assistant's built-in translation system. All UI strings, entity names, sensor states, and error messages are translated.
-
-### Available Languages
-
-| Language | Code | Status |
-|----------|------|--------|
-| English | `en` | ✅ Complete |
-| German | `de` | ✅ Complete |
-| French | `fr` | ✅ Complete |
-
-### What is Translated
-
-- **Config & options flow** — All setup and reconfiguration labels, descriptions, and error messages
-- **Entity names** — All sensor names displayed in the Home Assistant UI
-- **Status codes (SYS)** — Human-readable inverter operating states, e.g. "MPP operation", "Low irradiation"
-- **Alarm codes (SAL)** — Human-readable alarm descriptions, e.g. "Insulation fault DC side"
-- **Error & repair messages** — Connection errors, timeout messages, and repair issue descriptions
-
-### Status & Alarm Code Translations
-
-The **Status Code** and **Alarm Status** sensors use Home Assistant's enum sensor translation, meaning their values are automatically displayed in the user's configured language.
-
-**Status code states** (SYS register, ~110 codes mapped — only a subset shown; the full list is in `const.py`):
-
-| Code | Key | English |
-|------|-----|---------|
-| 20000 | `no_communication` | No communication |
-| 20001 | `in_operation` | In operation |
-| 20002 | `low_irradiation` | Low irradiation |
-| 20003 | `starting_up` | Starting up |
-| 20004 | `mpp_operation` | MPP operation |
-| 20005 | `fan_running` | Fan running |
-| 20006 | `max_power_operation` | Maximum power operation |
-| 20007 | `temperature_limitation` | Temperature limitation |
-| 20008 | `grid_operation` | Grid operation |
-| 20009 | `dc_current_limited` | DC current limited |
-| 20010 | `ac_current_limited` | AC current limited |
-| 20011 | `test_mode` | Test mode |
-| 20012 | `remote_controlled` | Remote controlled |
-| 20013 | `start_delay` | Start delay |
-| 20014 | `external_limitation` | External limitation |
-| 20015 | `frequency_limitation` | Frequency limitation |
-| 20016 | `restart_limitation` | Restart limitation |
-| 20017 | `booting` | Booting |
-| 20018 | `insufficient_boot_power` | Insufficient boot power |
-| 20019 | `insufficient_power` | Insufficient power |
-| 20021 | `uninitialized` | Uninitialized |
-| 20022 | `disabled` | Disabled |
-| 20023 | `idle` | Idle |
-| 20024 | `powerunit_not_ready` | Power unit not ready |
-| 20050 | `program_firmware` | Programming firmware |
-| 20105 | `insulation_fault_dc` | Insulation fault DC |
-| 20109 | `vdc_too_high` | DC voltage too high |
-| 20114 | `leakage_current_high` | Leakage current too high |
-| 20115 | `no_grid` | No grid |
-| 20116 | `grid_frequency_high` | Grid frequency too high |
-| 20117 | `grid_frequency_low` | Grid frequency too low |
-| 20118 | `mains_error` | Mains error |
-| 20119 | `vac_10min_too_high` | AC voltage 10min too high |
-| 20122 | `grid_voltage_high` | Grid voltage too high |
-| 20123 | `grid_voltage_low` | Grid voltage too low |
-| 20124 | `temperature_too_high` | Temperature too high |
-| 20125 | `grid_current_asymmetric` | Grid current asymmetric |
-| 20126 | `external_input_error_1` | External input error 1 |
-| 20127 | `external_input_error_2` | External input error 2 |
-| 20129 | `incorrect_rotation` | Incorrect rotation direction |
-| 20130 | `wrong_device_type` | Wrong device type |
-| 20131 | `main_switch_off` | Main switch off |
-| 20132 | `diode_overtemperature` | Diode overtemperature |
-| 20134 | `fan_defective` | Fan defective |
-| 20145 | `dfdt_too_high` | df/dt too high |
-| 20150 | `ierr_step_too_high` | Ierr step too high |
-| 20154 | `shutdown_1` | Shutdown 1 |
-| 20155 | `shutdown_2` | Shutdown 2 |
-| 20157 | `insulation_fault_dc_3` | Insulation fault DC (3) |
-| 20172 | `vac_too_high_2` | AC voltage too high (2) |
-| 20173 | `vac_too_low_2` | AC voltage too low (2) |
-| 20176 | `error_dc_polarity` | Error DC polarity |
-| 20180 | `vdc_too_low` | DC voltage too low |
-| 20181 | `blocked_external` | Blocked external |
-| 20189 | `l_n_interchanged` | L and N interchanged |
-| 20190 | `below_average_yield` | Below-average yield |
-| 20191 | `limitation_error` | Limitation error |
-| 20999 | `device_error_999` | Device error 999 |
-| — | `offline_expected` | Offline (expected) |
-| — | `offline_fault` | Offline (fault) |
-| — | `unknown` | Unknown |
-
-Codes 20101–20199 not listed above are mapped as generic `device_error_NNN` states. All states are translated into English, German, and French.
-
-**Alarm code states** (bitmask — multiple alarms are detected, and the individual active alarms are listed in the `active_alarms` attribute):
-
-| Key | English | German | French |
-|-----|---------|--------|--------|
-| `no_error` | No error | Kein Fehler | Aucune erreur |
-| `external_fault_1` | External fault 1 | Externer Fehler 1 | Défaut externe 1 |
-| `insulation_fault_dc` | Insulation fault DC side | Isolationsfehler DC-Seite | Défaut d'isolation côté DC |
-| `earth_fault_current` | Earth fault current too high | Fehlerstrom Erde zu groß | Courant de défaut à la terre trop élevé |
-| `fuse_break_center_earth` | Fuse break center earth | Sicherungsbruch Mittelpunkterde | Rupture de fusible terre centrale |
-| `external_alarm_2` | External alarm 2 | Externer Alarm 2 | Alarme externe 2 |
-| `long_term_temp_limit` | Long-term temperature limitation | Langzeit-Temperaturbegrenzung | Limitation de température à long terme |
-| `ac_feed_in_error` | AC feed-in error | Fehler AC-Einspeisung | Erreur d'injection AC |
-| `external_alarm_4` | External alarm 4 | Externer Alarm 4 | Alarme externe 4 |
-| `fan_defect` | Fan defect | Ventilator defekt | Ventilateur défectueux |
-| `fuse_break` | Fuse break | Sicherungsbruch | Rupture de fusible |
-| `temp_sensor_failure` | Temperature sensor failure | Ausfall Temperatursensor | Défaillance du capteur de température |
-| `multiple_alarms` | Multiple alarms | Mehrere Alarme | Alarmes multiples |
-
-### Adding a New Language
-
-To contribute a new language translation:
-
-1. Copy `custom_components/solarmax/translations/en.json` to a new file named with the [BCP 47 language code](https://en.wikipedia.org/wiki/IETF_language_tag) (e.g. `es.json` for Spanish, `nl.json` for Dutch).
-2. Translate all string values — **do not change any keys**.
-3. Keep all placeholder variables intact (e.g. `{host}`, `{port}`, `{minutes}`).
-4. Submit a pull request.
-
-Example for a new file `es.json`:
-```json
-{
-  "config": {
-    "step": {
-      "user": {
-        "title": "Inversor Solarmax",
-        ...
-      }
-    }
-  },
-  "entity": {
-    "sensor": {
-      "sys": {
-        "name": "Código de estado",
-        "state": {
-          "grid_operation": "Operación en red",
-          ...
-        }
-      }
-    }
-  }
-}
-```
-
-## Contributing
-
-Contributions are welcome! Please feel free to submit a Pull Request.
 
 ## License
 
-This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
+This project is licensed under the [MIT License](LICENSE).

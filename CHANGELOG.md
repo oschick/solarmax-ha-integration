@@ -7,36 +7,34 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-### Changed — BREAKING
-- **Status sensor vocabulary**: `offline_night` → `offline_expected`, `connection_failed` → `offline_fault`. Automations matching the old strings must be updated.
-- **Complete connection-engine redesign**: async persistent connection (measured single-client behaviour respected), observation-based offline classification (inverter shutdown announcement SYS 20002 or DC power < 25 W, sun-position fallback), adaptive polling (15 min at night, at most 60 s during dawn and daytime failures), sensors go unavailable on the first failed daytime poll, and Home Assistant restarts at night now create entities immediately.
-- **Minimum Home Assistant version is now 2024.12.0 and minimum Python is 3.12** (raised again within this same unreleased cycle, superseding the 2024.8.0 previously stated here). The options flow relies on the `OptionsFlow.config_entry` property, which shipped in Home Assistant 2024.12. CI covers both that minimum pair and the latest supported Home Assistant/Python pair.
+### Changed: breaking
+
+- Renamed Status Code connection states: `offline_night` to `offline_expected`, and `connection_failed` to `offline_fault`. Update automations and dashboards that match the old values.
+- Raised the minimum versions to Home Assistant 2024.12.0 and Python 3.12.
 
 ### Added
-- **Configurable night-time sensor behavior**: an opt-in `Keep sensor values overnight` option keeps sensors meaningful while the inverter sleeps — production readings report 0, cumulative counters and static config reads hold their last value, and AC grid voltage/frequency and temperatures still go unavailable because they have no honest night-time value. Synthesised values are flagged with a `night_value_source` attribute. Disabled by default, so existing installs are unchanged. If the disconnect that triggered `offline_expected` was armed but happened outside the twilight window (an anomaly, e.g. shading — not a normal dusk), zeroed sensors go honestly unavailable instead of reporting a fabricated 0; held sensors keep holding their last-known value as usual.
-- **Armed-disconnect escalation**: an `offline_expected` disconnect that was armed (announced shutdown, or low DC power) but stays outside the twilight window for over an hour, with at least 10 failed probes and zero successes, is now reclassified `offline_fault` — a stuck "armed" flag can no longer mask a real fault indefinitely.
-- **Repair-issue dismissal window**: completing the connection repair's fix flow while the fault is still ongoing now suppresses re-creating the issue for 24 hours, instead of it reappearing on the very next poll. A new fault episode (recovery, or reclassification to `offline_expected`) still raises immediately.
+
+- Added the optional **Keep sensor values overnight** setting. Production readings report zero, cumulative and static values hold, daily energy resets at local midnight, and grid or temperature readings stay unavailable. Synthetic readings expose `night_value_source`.
+- Reworked the connection engine around one persistent TCP connection, observation-based offline classification, a 15-second poll budget, and adaptive polling. Home Assistant can now create entities while the inverter sleeps.
+- Added escalation from an armed daytime `offline_expected` state to `offline_fault` after one hour and ten failed probes.
+- Added a 24-hour dismissal window for a repair issue during the same fault episode.
 
 ### Fixed
-- **Terminal connection shutdown is now race-free.** `close()` rejects future requests, waits for pending connects and active polls to drain, and cannot publish a socket after returning. Expected night-time cycling uses a separate reopenable disconnect so dawn recovery still works.
-- **A failed Home Assistant platform unload no longer strands the loaded integration with a permanently closed engine.** The engine is terminally closed only after platform teardown succeeds.
-- **Initial setup now validates the returned MaxComm frame and checksum** instead of accepting arbitrary TCP data ending in `}`. The existing “ignore checksum” option is honored, and a valid `PAC`-not-applicable response remains acceptable.
-- **Partial static responses get one bounded backfill attempt.** A single device key can no longer permanently suppress missing installed-power, grid-limit, or device-information fields, while models that omit unsupported fields avoid repeated static queries forever.
-- **Repair dialog no longer returns a 500.** The connection repair issue was created without a `data` payload, and Home Assistant assigns `flow.data` from it after the flow is constructed — so opening the repair raised `AttributeError: 'NoneType' object has no attribute 'get'`. The issue now carries its context, and the flow tolerates a null payload.
-- **Options flow is saveable again.** It used to open a second, throwaway TCP connection to validate the new settings — but the running engine already holds the inverter's single client slot, so that probe always failed `cannot_connect` (worse at night, when the primary connection is also more likely mid-retry). The options flow now validates the schema only; the engine itself is the ongoing connectivity proof, and a wrong edit still surfaces within one poll after reload. The initial setup flow is unaffected and still probes before any engine exists.
-- **A fault reclassified back to `offline_fault` at dawn no longer inherits the previous day's `fault_since`.** Entering `offline_expected` now clears it, so the repair issue's elapsed-time counter starts fresh instead of counting the whole night that just passed.
-- **A single malformed field in an otherwise-valid response no longer fails the whole poll.** One bad value (non-hex, or empty) is now skipped and logged at debug level instead of raising a retryable error for the entire frame.
-- **The inverter's serial number (DIN) is now redacted in diagnostics.** It previously appeared in plain text under `sensor_data` even though the host was redacted.
-- A dropped/lost response is now retried once in-poll, the same as a corrupted response — previously only checksum/frame corruption was retried, and a single lost reply failed the whole poll immediately.
-- Closing the connection engine (e.g. on Home Assistant unload) is now final: a scheduled refresh racing the close can no longer reopen the socket underneath it, which used to leak a connection and lock the inverter out on the next reload.
-- Concurrent polls (e.g. Home Assistant's debouncer racing a scheduled refresh) are now serialized instead of racing the same TCP connection.
 
-### Changed
-- **Response timeout raised from 2.0 s to 3.5 s** (the MaxComm spec's own documented maximum response time is 3000 ms) and the **per-poll budget raised from 10 s to 15 s**, to leave headroom for the new in-poll timeout retry.
+- Made terminal connection shutdown wait for pending connects, polls, and emulator client handlers. A closed engine cannot reopen a socket during teardown.
+- Delayed terminal engine close until Home Assistant finishes unloading the sensor platform.
+- Made initial setup validate the MaxComm frame and checksum while honoring **Verify response checksum** when enabled or disabled.
+- Added one bounded retry for lost responses, corrupt frames, peer closes, and partial static data.
+- Kept valid fields from a response that also contains one malformed field.
+- Made the options flow save without opening a second TCP connection to the single-client inverter.
+- Reset `fault_since` when an expected night period starts, so a dawn fault begins a new repair timer.
+- Fixed the repair flow payload and the current Home Assistant device-registry lookup.
+- Redacted the inverter serial number from diagnostics.
 
-### Fixed
-- Config flow now uses `ConfigFlowResult` instead of the superseded `FlowResult` return type.
-- Removed an unused `async_reload_entry` helper that bypassed Home Assistant's unload processing; nothing called it, but it would have leaked listeners if it ever had been wired up.
+### Maintenance
+
+- Consolidated local checks under `script/check`, added deterministic release validation, pinned CI actions and quality tools, and added minimum plus scheduled latest-Home-Assistant test lanes.
+- Replaced free-form issue templates with guided forms and split user, contributor, architecture, and troubleshooting documentation.
 
 ## [1.3.3] - 2026-08-11
 

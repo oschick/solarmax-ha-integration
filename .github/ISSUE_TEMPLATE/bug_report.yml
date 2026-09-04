@@ -1,0 +1,149 @@
+name: Bug report
+description: Report reproducible behavior in the integration
+title: "[Bug]: "
+labels:
+  - bug
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Check the troubleshooting guide first. Remove credentials and private network data from logs and diagnostics.
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem
+      description: What happened, and what did you expect?
+      placeholder: Describe the observed and expected behavior.
+    validations:
+      required: true
+
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: Reproduction steps
+      placeholder: |
+        1. Configure ...
+        2. Wait for ...
+        3. Observe ...
+    validations:
+      required: true
+
+  - type: input
+    id: home_assistant_version
+    attributes:
+      label: Home Assistant version
+      placeholder: 2026.9.0
+    validations:
+      required: true
+
+  - type: input
+    id: integration_version
+    attributes:
+      label: Integration version
+      placeholder: 1.3.3
+    validations:
+      required: true
+
+  - type: input
+    id: inverter
+    attributes:
+      label: Inverter model and firmware
+      placeholder: SolarMax 7TP2, firmware 4.8.0
+    validations:
+      required: true
+
+  - type: dropdown
+    id: installation
+    attributes:
+      label: Installation method
+      options:
+        - HACS
+        - Manual
+    validations:
+      required: true
+
+  - type: dropdown
+    id: connection_state
+    attributes:
+      label: Status Code connection state
+      options:
+        - unknown
+        - online
+        - offline_expected
+        - offline_fault
+        - Not sure
+    validations:
+      required: true
+
+  - type: input
+    id: time_and_light
+    attributes:
+      label: Time and daylight conditions
+      description: Include local time and whether the inverter should have been producing.
+      placeholder: 14:30 local time, clear daylight
+    validations:
+      required: true
+
+  - type: dropdown
+    id: checksum
+    attributes:
+      label: Verify response checksum
+      options:
+        - Enabled
+        - Disabled
+    validations:
+      required: true
+
+  - type: dropdown
+    id: night_values
+    attributes:
+      label: Keep sensor values overnight
+      options:
+        - Disabled
+        - Enabled
+    validations:
+      required: true
+
+  - type: input
+    id: twilight
+    attributes:
+      label: Twilight elevation threshold
+      placeholder: 5
+    validations:
+      required: true
+
+  - type: dropdown
+    id: other_pollers
+    attributes:
+      label: Other software polling this inverter
+      description: SolarMax inverters accept one TCP client.
+      options:
+        - "No"
+        - "Yes"
+        - Not sure
+    validations:
+      required: true
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: Relevant debug logs
+      description: Include the smallest useful window and remove private data.
+      render: shell
+
+  - type: textarea
+    id: diagnostics
+    attributes:
+      label: Diagnostics
+      description: Drag the diagnostics file here after reviewing its contents.
+
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Submission checks
+      options:
+        - label: I searched existing issues and read the troubleshooting guide.
+          required: true
+        - label: I removed credentials and private network data.
+          required: true

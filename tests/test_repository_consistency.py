@@ -3,13 +3,16 @@
 from __future__ import annotations
 
 import json
+import re
 import subprocess
 import sys
 import tomllib
 from pathlib import Path
+from urllib.parse import unquote, urlsplit
 
 _ROOT = Path(__file__).resolve().parent.parent
 _INTEGRATION = _ROOT / "custom_components" / "solarmax"
+_MARKDOWN_LINK = re.compile(r"!?\[[^]]*\]\(([^)]+)\)")
 
 
 def _load_json(path: Path) -> dict:
@@ -29,6 +32,11 @@ def _leaf_paths(value: object, prefix: str = "") -> set[str]:
     return paths
 
 
+def _project_version() -> str:
+    with (_ROOT / "pyproject.toml").open("rb") as handle:
+        return tomllib.load(handle)["project"]["version"]
+
+
 def test_translation_files_have_the_same_keys() -> None:
     """Adding a UI string without every locale must fail validation."""
     expected = _leaf_paths(_load_json(_INTEGRATION / "strings.json"))
@@ -44,10 +52,7 @@ def test_translation_files_have_the_same_keys() -> None:
 def test_manifest_and_project_versions_match() -> None:
     """A release tag must not package conflicting source versions."""
     manifest_version = _load_json(_INTEGRATION / "manifest.json")["version"]
-    with (_ROOT / "pyproject.toml").open("rb") as handle:
-        project_version = tomllib.load(handle)["project"]["version"]
-
-    assert manifest_version == project_version
+    assert manifest_version == _project_version()
 
 
 def test_hacs_zip_settings_are_coherent() -> None:
@@ -62,10 +67,22 @@ def test_agent_guides_are_identical() -> None:
     assert (_ROOT / "AGENTS.md").read_bytes() == (_ROOT / "CLAUDE.md").read_bytes()
 
 
+def test_local_documentation_links_exist() -> None:
+    """Local links in maintained documentation must resolve."""
+    documents = [*_ROOT.glob("*.md"), *(_ROOT / "docs").glob("*.md")]
+    for document in documents:
+        for target in _MARKDOWN_LINK.findall(document.read_text(encoding="utf-8")):
+            parsed = urlsplit(target.strip("<>"))
+            if parsed.scheme or parsed.netloc or not parsed.path:
+                continue
+            linked_path = document.parent / unquote(parsed.path)
+            assert linked_path.exists(), f"{document}: missing link target {target}"
+
+
 def test_release_version_checker_accepts_matching_tag() -> None:
     """A release tag matching both source versions must pass."""
     result = subprocess.run(
-        [sys.executable, _ROOT / "script" / "check-release", "v1.3.3"],
+        [sys.executable, _ROOT / "script" / "check-release", f"v{_project_version()}"],
         cwd=_ROOT,
         capture_output=True,
         text=True,
@@ -78,7 +95,11 @@ def test_release_version_checker_accepts_matching_tag() -> None:
 def test_release_version_checker_rejects_mismatching_tag() -> None:
     """Publishing a tag that disagrees with source metadata must fail."""
     result = subprocess.run(
-        [sys.executable, _ROOT / "script" / "check-release", "v9.9.9"],
+        [
+            sys.executable,
+            _ROOT / "script" / "check-release",
+            f"not-v{_project_version()}",
+        ],
         cwd=_ROOT,
         capture_output=True,
         text=True,
@@ -86,4 +107,4 @@ def test_release_version_checker_rejects_mismatching_tag() -> None:
     )
 
     assert result.returncode != 0
-    assert "does not match source version 1.3.3" in result.stderr
+    assert f"does not match source version {_project_version()}" in result.stderr

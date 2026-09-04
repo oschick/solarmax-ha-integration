@@ -1,6 +1,6 @@
 # Repository Agent Guide
 
-This guide is intentionally identical to `CLAUDE.md`. Update both files in the same change; repository tests enforce byte-for-byte equality.
+Codex and Claude use the same repository context. Keep `AGENTS.md` and `CLAUDE.md` byte-identical; repository tests enforce this contract.
 
 ## Start here
 
