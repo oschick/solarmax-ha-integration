@@ -148,6 +148,29 @@ def test_hassfest_step_does_not_pass_unsupported_inputs() -> None:
     assert "with" not in hassfest_step
 
 
+def test_release_workflow_prepares_changes_through_a_pull_request() -> None:
+    """A release request must preserve review and protected-main checks."""
+    workflow = yaml.safe_load(
+        (_ROOT / ".github" / "workflows" / "release.yml").read_text()
+    )
+    triggers = workflow[True]
+    assert triggers["push"]["branches"] == ["main"]
+    assert triggers["push"]["paths"] == ["custom_components/solarmax/manifest.json"]
+
+    prepare = workflow["jobs"]["prepare"]
+    assert prepare["permissions"] == {"contents": "write"}
+    prepare_commands = "\n".join(
+        step["run"] for step in prepare["steps"] if "run" in step
+    )
+    assert "script/prepare-release" in prepare_commands
+    assert "git push" in prepare_commands
+    assert "compare/main..." in prepare_commands
+
+    release = workflow["jobs"]["release"]
+    assert release["needs"] == "prepare"
+    assert "needs.prepare.outputs.ready" in release["if"]
+
+
 def test_agent_guides_are_identical() -> None:
     """Codex and Claude must receive the same repository guidance."""
     assert (_ROOT / "AGENTS.md").read_bytes() == (_ROOT / "CLAUDE.md").read_bytes()

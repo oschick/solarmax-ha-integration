@@ -1,6 +1,11 @@
 name: Release
 
 on:
+  push:
+    branches:
+      - main
+    paths:
+      - custom_components/solarmax/manifest.json
   workflow_dispatch:
     inputs:
       version:
@@ -12,20 +17,23 @@ permissions:
   contents: read
 
 concurrency:
-  group: release-${{ inputs.version }}
+  group: release
   cancel-in-progress: false
 
 jobs:
-  release:
-    name: Validate and create draft
+  prepare:
+    name: Prepare or validate
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 10
     permissions:
-      attestations: write
       contents: write
-      id-token: write
+    outputs:
+      active: ${{ steps.version.outputs.active }}
+      ready: ${{ steps.prepare.outputs.ready }}
+      tag: ${{ steps.version.outputs.tag }}
     steps:
       - name: Require main branch
+        if: github.event_name == 'workflow_dispatch'
         env:
           DISPATCH_REF: ${{ github.ref }}
         run: |
@@ -34,6 +42,120 @@ jobs:
             exit 1
           fi
 
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Set up Python
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.14"
+
+      - name: Resolve release tag
+        id: version
+        env:
+          BEFORE_SHA: ${{ github.event.before }}
+          EVENT_NAME: ${{ github.event_name }}
+          INPUT_TAG: ${{ inputs.version }}
+        run: |
+          if [[ "$EVENT_NAME" == "workflow_dispatch" ]]; then
+            release_tag="$INPUT_TAG"
+            active=true
+          else
+            source_version="$(python -c 'import json; print(json.load(open("custom_components/solarmax/manifest.json"))["version"])')"
+            previous_version="$(git show "$BEFORE_SHA:custom_components/solarmax/manifest.json" | python -c 'import json, sys; print(json.load(sys.stdin)["version"])')"
+            release_tag="v$source_version"
+            if [[ "$source_version" == "$previous_version" ]]; then
+              active=false
+            else
+              active=true
+            fi
+          fi
+          echo "active=$active" >> "$GITHUB_OUTPUT"
+          echo "tag=$release_tag" >> "$GITHUB_OUTPUT"
+
+      - name: Check or prepare release metadata
+        if: steps.version.outputs.active == 'true'
+        id: prepare
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          RELEASE_TAG: ${{ steps.version.outputs.tag }}
+        run: |
+          if python script/check-release "$RELEASE_TAG"; then
+            echo "ready=true" >> "$GITHUB_OUTPUT"
+          elif [[ "$EVENT_NAME" == "workflow_dispatch" ]]; then
+            python script/prepare-release "$RELEASE_TAG"
+            python script/check-release "$RELEASE_TAG"
+            git diff --check
+            echo "ready=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "Merged release metadata is invalid" >&2
+            exit 1
+          fi
+
+      - name: Create release preparation branch
+        if: steps.prepare.outputs.ready == 'false'
+        id: branch
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ steps.version.outputs.tag }}
+        run: |
+          release_branch="release/${RELEASE_TAG#v}"
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git switch -c "$release_branch"
+          git add CHANGELOG.md pyproject.toml custom_components/solarmax/manifest.json
+          git commit -m "chore: prepare $RELEASE_TAG"
+
+          if git ls-remote --exit-code --heads origin "$release_branch" >/dev/null 2>&1; then
+            git fetch origin "$release_branch"
+            if [[ "$(git rev-parse 'FETCH_HEAD^{tree}')" != "$(git rev-parse 'HEAD^{tree}')" ]]; then
+              echo "origin/$release_branch already exists with different changes" >&2
+              exit 1
+            fi
+          else
+            original_remote="$(git remote get-url origin)"
+            authenticated_remote="https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
+            git remote set-url origin "$authenticated_remote"
+            if ! git push --set-upstream origin "$release_branch"; then
+              git remote set-url origin "$original_remote"
+              exit 1
+            fi
+            git remote set-url origin "$original_remote"
+          fi
+
+          compare_url="https://github.com/${GITHUB_REPOSITORY}/compare/main...${release_branch}?expand=1"
+          echo "branch=$release_branch" >> "$GITHUB_OUTPUT"
+          echo "compare-url=$compare_url" >> "$GITHUB_OUTPUT"
+
+      - name: Summarize preparation
+        if: steps.prepare.outputs.ready == 'false'
+        env:
+          COMPARE_URL: ${{ steps.branch.outputs.compare-url }}
+          RELEASE_TAG: ${{ steps.version.outputs.tag }}
+        run: |
+          {
+            echo "### Release preparation"
+            echo "- Tag: \`$RELEASE_TAG\`"
+            echo "- [Open the preparation pull request]($COMPARE_URL)"
+            echo "- Merge the pull request to create the draft release."
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  release:
+    name: Validate and create draft
+    needs: prepare
+    if: >-
+      needs.prepare.outputs.active == 'true' &&
+      needs.prepare.outputs.ready == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      attestations: write
+      contents: write
+      id-token: write
+    steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -80,7 +202,7 @@ jobs:
       - name: Validate source and release notes
         id: release
         env:
-          RELEASE_TAG: ${{ inputs.version }}
+          RELEASE_TAG: ${{ needs.prepare.outputs.tag }}
         run: >-
           python script/check-release "$RELEASE_TAG"
           --notes-output release-notes.md
@@ -94,7 +216,7 @@ jobs:
 
       - name: Inspect release archive
         env:
-          RELEASE_TAG: ${{ inputs.version }}
+          RELEASE_TAG: ${{ needs.prepare.outputs.tag }}
         run: python script/check-release "$RELEASE_TAG" --archive solarmax.zip
 
       - name: Import packaged integration
@@ -107,7 +229,7 @@ jobs:
 
       - name: Add compare link to release notes
         env:
-          RELEASE_TAG: ${{ inputs.version }}
+          RELEASE_TAG: ${{ needs.prepare.outputs.tag }}
         run: |
           previous_tag="$(git describe --tags --abbrev=0 "$GITHUB_SHA^" 2>/dev/null || true)"
           if [[ -n "$previous_tag" ]]; then
@@ -119,7 +241,7 @@ jobs:
       - name: Check existing tag and release
         env:
           GH_TOKEN: ${{ github.token }}
-          RELEASE_TAG: ${{ inputs.version }}
+          RELEASE_TAG: ${{ needs.prepare.outputs.tag }}
         run: |
           git fetch --force --tags origin
           if tag_commit="$(git rev-parse -q --verify "refs/tags/$RELEASE_TAG^{commit}")"; then
@@ -144,7 +266,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           IS_PRERELEASE: ${{ steps.release.outputs.prerelease }}
-          RELEASE_TAG: ${{ inputs.version }}
+          RELEASE_TAG: ${{ needs.prepare.outputs.tag }}
         run: |
           if gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
             gh release edit "$RELEASE_TAG" \
@@ -164,7 +286,7 @@ jobs:
       - name: Summarize release
         env:
           IS_PRERELEASE: ${{ steps.release.outputs.prerelease }}
-          RELEASE_TAG: ${{ inputs.version }}
+          RELEASE_TAG: ${{ needs.prepare.outputs.tag }}
         run: |
           archive_hash="$(sha256sum solarmax.zip | cut -d ' ' -f 1)"
           {

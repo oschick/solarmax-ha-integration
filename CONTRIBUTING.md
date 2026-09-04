@@ -76,16 +76,17 @@ Copy `custom_components/solarmax/translations/en.json` to the target BCP 47 lang
 
 Maintainers prepare and publish a release with these steps:
 
-1. Create a branch from `main` and run `script/prepare-release vX.Y.Z`.
-2. Review the version and changelog changes, then run `script/check` and
-   `script/check-release vX.Y.Z`.
-3. Merge those changes to `main` through a normal pull request.
-4. From the Actions page, run **Release** on `main` with the same tag.
-5. Inspect the draft release, its `solarmax.zip` asset, and its changelog notes.
-6. Publish the draft.
+1. From the Actions page, run **Release** on `main` and enter the new tag.
+2. If the source is not prepared, the workflow creates a release branch and
+   provides a link for opening its pull request. Open, review, and merge the
+   pull request after its checks pass.
+3. The merge creates the validated draft release. If the source already
+   matches the requested tag, the first workflow run creates the draft.
+4. Inspect the draft, its `solarmax.zip` asset, and its changelog notes.
+5. Publish the draft.
 
-The preparation command accepts stable versions and SemVer prerelease suffixes,
-including `v1.4.0-alpha.1`, `v1.4.0-beta.2`, `v1.4.0-rc.1`, and
+The workflow accepts stable versions and SemVer prerelease suffixes, including
+`v1.4.0-alpha.1`, `v1.4.0-beta.2`, `v1.4.0-rc.1`, and
 `v1.4.0-test`. A stable release moves the Unreleased notes into a dated version
 section. A prerelease keeps those notes under Unreleased so later prereleases
 and the final stable release retain the complete change summary. The release
