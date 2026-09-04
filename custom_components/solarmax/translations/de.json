@@ -70,7 +70,6 @@
   "issues": {
     "connection_issues": {
       "title": "Wechselrichter Verbindungsprobleme",
-      "description": "Der Wechselrichter bei {host}:{port} ist seit {minutes} Minuten nicht erreichbar. Überprüfen Sie die Netzwerkverbindung und den Wechselrichterstatus.",
       "fix_flow": {
         "step": {
           "confirm": {

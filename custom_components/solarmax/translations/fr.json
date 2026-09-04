@@ -70,7 +70,6 @@
   "issues": {
     "connection_issues": {
       "title": "Problèmes de connexion de l'onduleur",
-      "description": "L'onduleur à {host}:{port} est injoignable depuis {minutes} minutes. Vérifiez la connectivité réseau et l'état de l'onduleur.",
       "fix_flow": {
         "step": {
           "confirm": {

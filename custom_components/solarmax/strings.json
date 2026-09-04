@@ -70,7 +70,6 @@
   "issues": {
     "connection_issues": {
       "title": "Inverter Connection Issues",
-      "description": "The inverter at {host}:{port} has been unreachable for {minutes} minutes. Check network connectivity and inverter status.",
       "fix_flow": {
         "step": {
           "confirm": {
