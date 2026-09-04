@@ -12,6 +12,8 @@ import zipfile
 from pathlib import Path
 from urllib.parse import unquote, urlsplit
 
+import yaml
+
 _ROOT = Path(__file__).resolve().parent.parent
 _INTEGRATION = _ROOT / "custom_components" / "solarmax"
 _MARKDOWN_LINK = re.compile(r"!?\[[^]]*\]\(([^)]+)\)")
@@ -105,6 +107,21 @@ def test_hacs_zip_settings_are_coherent() -> None:
     hacs = _load_json(_ROOT / "hacs.json")
 
     assert "filename" not in hacs or hacs.get("zip_release") is True
+
+
+def test_hassfest_step_does_not_pass_unsupported_inputs() -> None:
+    """The pinned Hassfest action declares no configurable inputs."""
+    workflow = yaml.safe_load(
+        (_ROOT / ".github" / "workflows" / "validate.yml").read_text()
+    )
+    hassfest_steps = workflow["jobs"]["hassfest"]["steps"]
+    hassfest_step = next(
+        step
+        for step in hassfest_steps
+        if step.get("uses", "").startswith("home-assistant/actions/hassfest@")
+    )
+
+    assert "with" not in hassfest_step
 
 
 def test_agent_guides_are_identical() -> None:
