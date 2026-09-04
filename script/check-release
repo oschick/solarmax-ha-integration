@@ -11,6 +11,8 @@ import tomllib
 import zipfile
 from pathlib import Path, PurePosixPath
 
+from release_common import ReleaseVersion, parse_release_tag
+
 _REQUIRED_ARCHIVE_FILES = {
     "solarmax/__init__.py",
     "solarmax/manifest.json",
@@ -30,22 +32,28 @@ def _parse_args() -> argparse.Namespace:
         type=Path,
         help="write the matching changelog section to this file",
     )
+    parser.add_argument(
+        "--github-output",
+        type=Path,
+        help="append release metadata to a GitHub Actions output file",
+    )
     return parser.parse_args()
 
 
-def _release_notes(root: Path, version: str) -> str:
+def _release_notes(root: Path, version: ReleaseVersion) -> str:
     changelog = (root / "CHANGELOG.md").read_text(encoding="utf-8")
+    heading = "Unreleased" if version.is_prerelease else version.manifest
     section = re.search(
-        rf"^## \[{re.escape(version)}\](?: - [^\n]+)?\n(?P<body>.*?)(?=^## \[|\Z)",
+        rf"^## \[{re.escape(heading)}\](?: - [^\n]+)?\n(?P<body>.*?)(?=^## \[|\Z)",
         changelog,
         flags=re.MULTILINE | re.DOTALL,
     )
     if section is None:
-        raise ValueError(f"changelog has no section for {version}")
+        raise ValueError(f"changelog has no section for {heading}")
 
     notes = section.group("body").strip()
     if not notes:
-        raise ValueError(f"changelog section for {version} is empty")
+        raise ValueError(f"changelog section for {heading} is empty")
     return f"{notes}\n"
 
 
@@ -101,6 +109,12 @@ def _validate_archive(path: Path, version: str) -> None:
 def main() -> int:
     args = _parse_args()
 
+    try:
+        version = parse_release_tag(args.tag)
+    except ValueError as err:
+        print(err, file=sys.stderr)
+        return 1
+
     root = Path(__file__).resolve().parent.parent
     with (root / "pyproject.toml").open("rb") as handle:
         project_version = tomllib.load(handle)["project"]["version"]
@@ -109,31 +123,35 @@ def main() -> int:
     ) as handle:
         manifest_version = json.load(handle)["version"]
 
-    if manifest_version != project_version:
+    if manifest_version != version.manifest:
         print(
-            "manifest version "
-            f"{manifest_version} does not match project version {project_version}",
+            f"release tag {args.tag} does not match source version {manifest_version}",
             file=sys.stderr,
         )
         return 1
 
-    if args.tag != f"v{project_version}":
+    if project_version != version.project:
         print(
-            f"release tag {args.tag} does not match source version {project_version}",
+            "project version "
+            f"{project_version} does not match release metadata {version.project}",
             file=sys.stderr,
         )
         return 1
 
     try:
-        notes = _release_notes(root, project_version)
+        notes = _release_notes(root, version)
         if args.archive is not None:
-            _validate_archive(args.archive, project_version)
+            _validate_archive(args.archive, version.manifest)
     except (OSError, ValueError) as err:
         print(err, file=sys.stderr)
         return 1
 
     if args.notes_output is not None:
         args.notes_output.write_text(notes, encoding="utf-8")
+    if args.github_output is not None:
+        with args.github_output.open("a", encoding="utf-8") as output:
+            output.write(f"version={version.manifest}\n")
+            output.write(f"prerelease={str(version.is_prerelease).lower()}\n")
 
     print(f"release metadata matches {args.tag}")
     return 0
