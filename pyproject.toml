@@ -39,10 +39,10 @@ select = [
     "F",   # pyflakes
     "I",   # isort
     "G",   # flake8-logging-format
-      "UP",  # pyupgrade
-      "B",   # flake8-bugbear
-      "C90", # mccabe complexity
-  ]
+    "UP",  # pyupgrade
+    "B",   # flake8-bugbear
+    "C90", # mccabe complexity
+]
 
 [tool.ruff.lint.mccabe]
 max-complexity = 10

@@ -200,9 +200,7 @@ async def test_diagnostics_redacts_sensitive_data(
 async def test_diagnostics_redacts_serial_number_in_sensor_data(
     hass: HomeAssistant, mock_config_entry
 ):
-    """Finding 14: DIN (the inverter serial number) leaks in plain text
-    under sensor_data even though host is redacted. It must be redacted
-    like every other sensitive field."""
+    """Diagnostics must redact the inverter serial number."""
     mock_coordinator = _mock_coordinator(
         data=_snapshot(
             values={

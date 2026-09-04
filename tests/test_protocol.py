@@ -252,9 +252,7 @@ def test_parse_response_multi_frame():
 
 
 def test_parse_response_skips_malformed_field():
-    """Finding 7: a malformed field value (non-hex, or empty after '=') must
-    be skipped with a debug log, not fail the whole frame — only frame-level
-    CRC/IPR handling stays fatal."""
+    """A malformed field must not discard other valid fields."""
     inner = "01;FB;30|64:PAC=BB8;KDY=;SYS=4E33,0;SAL=0|"
     crc = calculate_checksum(inner)
     response = "{" + inner + crc + "}"

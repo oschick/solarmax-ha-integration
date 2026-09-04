@@ -78,13 +78,7 @@ def _build_schema(values: dict[str, Any]) -> vol.Schema:
 
 
 async def validate_input(hass: HomeAssistant, data: dict[str, Any]) -> dict[str, Any]:
-    """Validate the user input allows us to connect.
-
-    Data has the keys from the config schema with values provided by the user.
-    A one-shot PAC probe over a throwaway link; the `finally` close is a hard
-    invariant — a leaked probe socket locks the single-client inverter out
-    for ~128s, which would fail the very next setup attempt.
-    """
+    """Validate setup with a short PAC request."""
     link = SolarmaxLink(data[CONF_HOST], data[CONF_PORT])
     try:
         address = data.get(CONF_ADDRESS, DEFAULT_ADDRESS)
@@ -98,7 +92,6 @@ async def validate_input(hass: HomeAssistant, data: dict[str, Any]) -> dict[str,
     finally:
         await link.close()
 
-    # Return info that you want to store in the config entry.
     return {"title": data[CONF_DEVICE_NAME]}
 
 
@@ -120,7 +113,6 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         errors: dict[str, str] = {}
 
         if user_input is not None:
-            # Check for duplicate entries
             await self.async_set_unique_id(
                 f"{user_input[CONF_HOST]}:{user_input[CONF_PORT]}"
             )
@@ -149,17 +141,7 @@ class OptionsFlow(config_entries.OptionsFlow):
     async def async_step_init(
         self, user_input: dict[str, Any] | None = None
     ) -> ConfigFlowResult:
-        """Manage the options.
-
-        Finding 1/13: unlike the initial config flow, this does NOT probe
-        the inverter. The running coordinator's engine already holds the
-        device's single client slot, so a second connection opened here
-        would always fail cannot_connect (or always fail at night) —
-        making the options flow permanently unsaveable. The engine itself
-        is the ongoing connectivity proof; a wrong edit still surfaces
-        within one poll after reload. Only the schema is validated, which
-        the flow manager already does before this step runs.
-        """
+        """Update settings without opening a second inverter connection."""
         if user_input is not None:
             self.hass.config_entries.async_update_entry(
                 self.config_entry,
@@ -167,12 +149,10 @@ class OptionsFlow(config_entries.OptionsFlow):
                 title=user_input.get(CONF_DEVICE_NAME, self.config_entry.title),
             )
 
-            # Trigger a reload of the integration to apply changes
             await self.hass.config_entries.async_reload(self.config_entry.entry_id)
 
             return self.async_create_entry(title="", data={})
 
-        # Pre-populate the shared schema with the entry's current values.
         current_data = self.config_entry.data
         values = {
             key: current_data.get(key, default)

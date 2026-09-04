@@ -11,9 +11,7 @@ from homeassistant.loader import async_get_integration
 from .const import CONF_HOST, DEVICE_KEY_SERIAL
 from .coordinator import SolarmaxConfigEntry, SolarmaxCoordinator
 
-# DEVICE_KEY_SERIAL ("DIN") redacts the inverter's serial number wherever it
-# appears — currently under sensor_data; "serial_number" covers any device
-# block that surfaces it by that name too.
+# Redact the host and both names used for inverter serial data.
 REDACT_KEYS = {CONF_HOST, DEVICE_KEY_SERIAL, "serial_number"}
 
 
@@ -26,7 +24,6 @@ async def async_get_config_entry_diagnostics(
 
     integration = await async_get_integration(hass, entry.domain)
 
-    # Collect all diagnostic data
     diagnostics_data: dict[str, Any] = {
         "config_entry": {
             "entry_id": entry.entry_id,
@@ -54,10 +51,6 @@ async def async_get_config_entry_diagnostics(
                 else None
             ),
         },
-        # The engine's own connection/reconnect/timeout counters and its
-        # recent state-transition history — dict(...) copies out of the
-        # snapshot rather than aliasing it, matching the shape of every
-        # other block here.
         "connection": dict(snapshot.diagnostics) if snapshot else {},
         "sensor_data": {},
         "system_info": {
@@ -66,7 +59,6 @@ async def async_get_config_entry_diagnostics(
         },
     }
 
-    # Add current sensor data (redacted: DIN is the inverter's serial number)
     if snapshot:
         diagnostics_data["sensor_data"] = async_redact_data(
             {
@@ -79,8 +71,6 @@ async def async_get_config_entry_diagnostics(
             REDACT_KEYS,
         )
 
-    # Add device information (identifiers as a list: diagnostics payloads are
-    # JSON-serialized, and a set would not survive json.dumps)
     diagnostics_data["device_info"] = async_redact_data(
         {
             "identifiers": [(entry.domain, entry.entry_id)],

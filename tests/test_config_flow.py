@@ -354,10 +354,7 @@ async def test_options_flow(mock_request, hass: HomeAssistant) -> None:
 async def test_options_flow_saves_even_when_a_probe_would_fail(
     mock_request, hass: HomeAssistant
 ) -> None:
-    """Finding 1: the options flow used to open a second TCP connection to
-    validate, which always failed while the engine holds the device's one
-    client slot — making the options flow permanently unsaveable. A probe
-    that would time out must no longer block the save."""
+    """Saving options must not compete for the inverter's client slot."""
     mock_request.side_effect = LinkTimeout("no response")
 
     entry = _make_entry()
