@@ -1,0 +1,4 @@
+# Independent development tools. Keep these aligned with pre-commit and CI.
+ruff==0.16.6
+mypy==2.3.1
+pre-commit==4.6.2

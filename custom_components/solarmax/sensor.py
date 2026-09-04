@@ -3,16 +3,18 @@
 from __future__ import annotations
 
 import logging
+from collections.abc import Callable
 from typing import Any
 
 from homeassistant.components.sensor import SensorEntity, SensorEntityDescription
-from homeassistant.config_entries import ConfigEntry
-from homeassistant.core import HomeAssistant
+from homeassistant.core import HomeAssistant, callback
+from homeassistant.helpers import device_registry as dr
 from homeassistant.helpers.entity import generate_entity_id
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 from homeassistant.util import dt as dt_util
 
+from .connection import EngineState
 from .const import (
     CONF_DEVICE_NAME,
     CONF_NIGHT_KEEP_VALUES,
@@ -25,23 +27,30 @@ from .const import (
     SENSOR_TYPE_ALARM,
     SENSOR_TYPE_STATUS,
     SENSOR_TYPES,
-    SYS_STATE_CONNECTION_FAILED,
-    SYS_STATE_OFFLINE_NIGHT,
+    SYS_STATE_OFFLINE_EXPECTED,
+    SYS_STATE_OFFLINE_FAULT,
     SYS_STATE_UNKNOWN,
     SYS_STATUS_MAP,
     NightPolicy,
 )
-from .coordinator import SolarmaxCoordinator
+from .coordinator import SolarmaxConfigEntry, SolarmaxCoordinator
 
 _LOGGER = logging.getLogger(__name__)
 
 # Limit parallel updates to prevent overwhelming the inverter
 PARALLEL_UPDATES = 1
 
+# Non-ONLINE engine states mapped to the status sensor's enum option keys.
+_SYS_OFFLINE_STATE_MAP: dict[EngineState, str] = {
+    EngineState.OFFLINE_EXPECTED: SYS_STATE_OFFLINE_EXPECTED,
+    EngineState.OFFLINE_FAULT: SYS_STATE_OFFLINE_FAULT,
+    EngineState.UNKNOWN: SYS_STATE_UNKNOWN,
+}
+
 
 async def async_setup_entry(
     hass: HomeAssistant,
-    entry: ConfigEntry,
+    entry: SolarmaxConfigEntry,
     async_add_entities: AddEntitiesCallback,
 ) -> None:
     """Set up Solarmax sensor platform."""
@@ -53,6 +62,43 @@ async def async_setup_entry(
         for description in SENSOR_TYPES
     )
 
+    entry.async_on_unload(
+        coordinator.async_add_listener(
+            _make_device_registry_updater(hass, entry, coordinator)
+        )
+    )
+
+
+def _make_device_registry_updater(
+    hass: HomeAssistant, entry: SolarmaxConfigEntry, coordinator: SolarmaxCoordinator
+) -> Callable[[], None]:
+    """Refresh device metadata when static inverter data becomes available."""
+
+    @callback
+    def _update_device_registry() -> None:
+        model = coordinator.device_model
+        if model is None:
+            return
+        device_registry = dr.async_get(hass)
+        identifier = (DOMAIN, entry.entry_id)
+        get_by_identifier = getattr(
+            device_registry, "async_get_device_by_identifier", None
+        )
+        if get_by_identifier is not None:
+            device = get_by_identifier(identifier, entry.entry_id)
+        else:
+            device = device_registry.async_get_device(identifiers={identifier})
+        if device is None:
+            return
+        device_registry.async_update_device(
+            device.id,
+            model=model,
+            sw_version=coordinator.sw_version,
+            serial_number=coordinator.serial_number,
+        )
+
+    return _update_device_registry
+
 
 class SolarmaxSensor(CoordinatorEntity[SolarmaxCoordinator], SensorEntity):
     """Representation of a Solarmax sensor."""
@@ -62,7 +108,7 @@ class SolarmaxSensor(CoordinatorEntity[SolarmaxCoordinator], SensorEntity):
     def __init__(
         self,
         coordinator: SolarmaxCoordinator,
-        entry: ConfigEntry,
+        entry: SolarmaxConfigEntry,
         description: SensorEntityDescription,
         device_name: str,
     ) -> None:
@@ -112,17 +158,11 @@ class SolarmaxSensor(CoordinatorEntity[SolarmaxCoordinator], SensorEntity):
 
     @property
     def _night_policy(self) -> NightPolicy | None:
-        """Return the night policy in force right now, else None.
-
-        None means "fall through to the original behaviour" — the coordinator
-        is healthy, the option is off, it is not night, or this sensor has no
-        honest night-time value.
-        """
-        if self.coordinator.last_update_success:
-            return None
+        """Return the active night policy, if this sensor has one."""
         if not self._night_keep_values:
             return None
-        if not (self.coordinator.is_expected_offline or self.coordinator.is_night_time):
+        snapshot = self.coordinator.data
+        if snapshot is None or snapshot.state is not EngineState.OFFLINE_EXPECTED:
             return None
         policy = NIGHT_POLICY.get(self.sensor_key, NightPolicy.UNAVAILABLE)
         return None if policy is NightPolicy.UNAVAILABLE else policy
@@ -130,10 +170,18 @@ class SolarmaxSensor(CoordinatorEntity[SolarmaxCoordinator], SensorEntity):
     def _night_value_source(self, policy: NightPolicy) -> str:
         """Resolve a policy in force to the value it produces right now."""
         if policy is NightPolicy.ZERO:
+            # A shutdown inferred while the sun is up is not an honest zero.
+            if self._anomalous_expected():
+                return "unavailable"
             return "zero"
         if policy is NightPolicy.HOLD_UNTIL_MIDNIGHT and self._is_new_day():
             return "zero"
         return "hold"
+
+    def _anomalous_expected(self) -> bool:
+        """True when the current OFFLINE_EXPECTED was armed outside twilight."""
+        snapshot = self.coordinator.data
+        return snapshot is not None and snapshot.expected_outside_twilight
 
     def _is_new_day(self) -> bool:
         """True when the last successful poll fell on an earlier local day.
@@ -146,153 +194,155 @@ class SolarmaxSensor(CoordinatorEntity[SolarmaxCoordinator], SensorEntity):
             return False
         return last.date() != dt_util.now().date()
 
-    def _held_value(self) -> Any:
-        """Return the value retained from the last successful poll, if any.
+    @property
+    def _is_status(self) -> bool:
+        return self.sensor_key == SENSOR_TYPE_STATUS
 
-        The coordinator keeps its last successful payload across failed polls,
-        but a key the inverter never reported is simply absent — there is then
-        nothing to hold and the sensor must go unavailable rather than sit
-        available reporting `unknown`.
-        """
-        if not self.coordinator.data:
+    def _sensor_data(self) -> dict[str, float | int] | None:
+        """Return the cached reading for this entity."""
+        snapshot = self.coordinator.data
+        if snapshot is None:
             return None
-        sensor_data = self.coordinator.data.get(self.sensor_key)
-        if sensor_data is None:
+        return snapshot.values.get(self.sensor_key)
+
+    def _sensor_value(self) -> float | int | None:
+        sensor_data = self._sensor_data()
+        return None if sensor_data is None else sensor_data.get("value")
+
+    def _resolved_night_source(self) -> str | None:
+        policy = self._night_policy
+        return None if policy is None else self._night_value_source(policy)
+
+    def _offline_status_value(self) -> str | None:
+        """Return the connection state exposed by the status sensor."""
+        if not self._is_status:
             return None
-        return sensor_data.get("value")
+        snapshot = self.coordinator.data
+        state = snapshot.state if snapshot is not None else EngineState.UNKNOWN
+        if state is EngineState.ONLINE:
+            return None
+        return _SYS_OFFLINE_STATE_MAP.get(state, SYS_STATE_UNKNOWN)
+
+    def _decoded_value(self, value: float | int | None) -> str | int | float | None:
+        """Translate status and alarm registers into entity option keys."""
+        if self._is_status and isinstance(value, int):
+            return SYS_STATUS_MAP.get(value, SYS_STATE_UNKNOWN)
+        if self.sensor_key == SENSOR_TYPE_ALARM and isinstance(value, int):
+            return self._alarm_value(value)
+        return value
+
+    def _alarm_value(self, value: int) -> str:
+        if value in SAL_ALARM_MAP:
+            return SAL_ALARM_MAP[value]
+        if self._decode_sal_alarms(value):
+            return SAL_STATE_MULTIPLE
+        return SAL_STATE_UNKNOWN
 
     @property
     def native_value(self) -> str | int | float | None:
         """Return the state of the sensor."""
-        is_status = self.sensor_key == SENSOR_TYPE_STATUS
-
-        # Status sensor reports the offline reason when the coordinator fails.
-        if is_status and not self.coordinator.last_update_success:
-            if self.coordinator.is_expected_offline:
-                return SYS_STATE_OFFLINE_NIGHT
-            return SYS_STATE_CONNECTION_FAILED
-
-        # A resolved "zero" is synthetic and needs no history; "hold" falls
-        # through to coordinator.data, which retains the last successful poll.
-        policy = self._night_policy
-        if policy is not None and self._night_value_source(policy) == "zero":
+        if offline_value := self._offline_status_value():
+            return offline_value
+        night_source = self._resolved_night_source()
+        if night_source == "zero":
             return 0
-
-        if not self.coordinator.data:
+        if night_source == "unavailable":
             return None
-
-        sensor_data = self.coordinator.data.get(self.sensor_key)
-        if sensor_data is None:
-            return None
-
-        value = sensor_data.get("value")
-
-        # Map status/alarm registers to enum option keys (HA handles translation).
-        if is_status and isinstance(value, int):
-            return SYS_STATUS_MAP.get(value, SYS_STATE_UNKNOWN)
-
-        if self.sensor_key == SENSOR_TYPE_ALARM and isinstance(value, int):
-            if value in SAL_ALARM_MAP:
-                return SAL_ALARM_MAP[value]
-            # Bitmask with multiple bits set (0 is already a direct match above).
-            if self._decode_sal_alarms(value):
-                return SAL_STATE_MULTIPLE
-            return SAL_STATE_UNKNOWN
-
-        return value
+        return self._decoded_value(self._sensor_value())
 
     def _offline_attributes(self) -> dict[str, Any]:
         """Diagnostic attributes shown on the status sensor while offline."""
         attributes: dict[str, Any] = {
             "raw_value": "offline",
             "code": "offline",
-            "consecutive_failures": self.coordinator.consecutive_failures,
-            "expected_offline": self.coordinator.is_expected_offline,
         }
-        if self.coordinator.last_successful_update:
-            attributes["last_successful_update"] = (
-                self.coordinator.last_successful_update.isoformat()
-            )
-        if self.coordinator.api.last_successful_connection:
-            attributes["last_api_connection"] = (
-                self.coordinator.api.last_successful_connection.isoformat()
-            )
+        snapshot = self.coordinator.data
+        if snapshot is not None:
+            attributes.update(self._snapshot_diagnostic_attributes())
+        last_update = self.coordinator.last_successful_update
+        if last_update:
+            attributes["last_successful_update"] = last_update.isoformat()
+        return attributes
+
+    def _snapshot_diagnostic_attributes(self) -> dict[str, Any]:
+        """Return diagnostic flags from the current snapshot."""
+        snapshot = self.coordinator.data
+        if snapshot is None:
+            return {}
+        attributes: dict[str, Any] = {}
+        if snapshot.reconnecting:
+            attributes["reconnecting"] = True
+        if snapshot.expected_outside_twilight:
+            attributes["expected_outside_twilight"] = True
+        if snapshot.fault_since is not None:
+            attributes["fault_since"] = snapshot.fault_since.isoformat()
         return attributes
 
     @property
     def extra_state_attributes(self) -> dict[str, Any] | None:
         """Return additional state attributes."""
-        is_status = self.sensor_key == SENSOR_TYPE_STATUS
-
-        if is_status and not self.coordinator.last_update_success:
+        if self._offline_status_value() is not None:
             return self._offline_attributes()
+        night_source = self._resolved_night_source()
+        if synthetic := self._synthetic_night_attributes(night_source):
+            return synthetic
+        sensor_data = self._sensor_data()
+        return (
+            None
+            if sensor_data is None
+            else self._reading_attributes(sensor_data, night_source)
+        )
 
-        # A synthesised zero has no underlying poll data, so it must be built
-        # here — the empty-data guards below would otherwise return None.
-        night_source = None
-        if (policy := self._night_policy) is not None:
-            night_source = self._night_value_source(policy)
-            if night_source == "zero":
-                # Do not advertise the stale raw_value behind a synthetic 0.
-                return {"raw_value": 0, "night_value_source": "zero"}
+    @staticmethod
+    def _synthetic_night_attributes(night_source: str | None) -> dict[str, Any] | None:
+        """Build attributes for night values that do not come from a poll."""
+        if night_source == "zero":
+            return {"raw_value": 0, "night_value_source": "zero"}
+        if night_source == "unavailable":
+            return {"night_value_source": "unavailable"}
+        return None
 
-        if not self.coordinator.data:
-            return None
-
-        sensor_data = self.coordinator.data.get(self.sensor_key)
-        if sensor_data is None:
-            return None
-
+    def _reading_attributes(
+        self, sensor_data: dict[str, float | int], night_source: str | None
+    ) -> dict[str, Any]:
+        """Build attributes for a cached inverter reading."""
         attributes: dict[str, Any] = {}
         if "raw_value" in sensor_data:
             attributes["raw_value"] = sensor_data["raw_value"]
-
         value = sensor_data.get("value")
-        is_register = self.sensor_key in (SENSOR_TYPE_STATUS, SENSOR_TYPE_ALARM)
-        # Expose the raw numeric code for the status/alarm registers.
-        if is_register and isinstance(value, int):
-            attributes["code"] = value
-
-        # Decode the SAL bitmask into the list of active alarms.
-        if self.sensor_key == SENSOR_TYPE_ALARM and isinstance(value, int) and value:
-            if active_alarms := self._decode_sal_alarms(value):
-                attributes["active_alarms"] = active_alarms
-
-        # Surface connection health on the status sensor.
-        if is_status:
-            attributes["consecutive_failures"] = self.coordinator.consecutive_failures
-            if self.coordinator.last_successful_update:
-                attributes["last_successful_update"] = (
-                    self.coordinator.last_successful_update.isoformat()
-                )
-
-        # Flag held values so automations can tell them from live readings.
+        attributes.update(self._register_attributes(value))
+        last_update = self.coordinator.last_successful_update
+        if self._is_status and last_update:
+            attributes["last_successful_update"] = last_update.isoformat()
         if night_source is not None:
             attributes["night_value_source"] = night_source
+        return attributes
 
+    def _register_attributes(self, value: Any) -> dict[str, Any]:
+        """Return raw-code details for status and alarm registers."""
+        if not isinstance(value, int):
+            return {}
+        attributes: dict[str, Any] = {}
+        if self.sensor_key in (SENSOR_TYPE_STATUS, SENSOR_TYPE_ALARM):
+            attributes["code"] = value
+        if self.sensor_key == SENSOR_TYPE_ALARM and value:
+            if active_alarms := self._decode_sal_alarms(value):
+                attributes["active_alarms"] = active_alarms
         return attributes
 
     @property
     def available(self) -> bool:
         """Return if entity is available."""
-        if self.coordinator.last_update_success:
+        snapshot = self.coordinator.data
+        if snapshot is not None and snapshot.state is EngineState.ONLINE:
             return True
-
-        # The status sensor stays available so it can report the offline state.
-        if self.sensor_key == SENSOR_TYPE_STATUS:
+        if self._is_status:
             return True
+        return self._night_source_available(self._resolved_night_source())
 
-        # A sensor with a night policy stays available to report it — except a
-        # HOLD sensor with nothing held, which has no value to offer.
-        policy = self._night_policy
-        if policy is not None:
-            if self._night_value_source(policy) == "zero":
-                return True
-            return self._held_value() is not None
-
-        # Other sensors go unavailable when the inverter is expectedly offline
-        # (night) or after a sustained run of day-time failures.
-        if self.coordinator.is_expected_offline or self.coordinator.is_night_time:
+    def _night_source_available(self, night_source: str | None) -> bool:
+        if night_source == "zero":
+            return True
+        if night_source != "hold":
             return False
-
-        return self.coordinator.consecutive_failures <= 5
+        return self._sensor_value() is not None

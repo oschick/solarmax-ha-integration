@@ -7,8 +7,59 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+We rebuilt inverter communication around one TCP session and added optional
+overnight sensor values. Home Assistant uses separate states for normal dusk
+shutdowns and daytime faults, adapts its polling rate, and can start while the
+inverter sleeps.
+
+### Breaking changes
+
+- The new connection engine replaces the previous request-per-poll transport.
+  Hardware testing covers one SolarMax 7TP2; other inverter models and firmware
+  versions may behave differently.
+- The Status Code entity now shows **Offline (expected)** (`offline_expected`)
+  instead of **Offline (Night)** (`offline_night`), and **Offline (fault)**
+  (`offline_fault`) instead of **Connection failed** (`connection_failed`).
+  Update automations and dashboards that match the old raw values.
+- The integration now requires Home Assistant 2024.12.0 or newer and Python
+  3.12 or newer.
+
 ### Added
-- **Configurable night-time sensor behavior**: an opt-in `Keep sensor values overnight` option keeps sensors meaningful while the inverter sleeps — production readings report 0, cumulative counters and static config reads hold their last value, and AC grid voltage/frequency and temperatures still go unavailable because they have no honest night-time value. Synthesised values are flagged with a `night_value_source` attribute. Disabled by default, so existing installs are unchanged.
+
+- **Keep sensor values overnight** can show zero for production, retain
+  cumulative and static values, and reset daily energy at local midnight. Grid
+  and temperature readings remain unavailable. Synthetic readings identify
+  their source through `night_value_source`.
+- The connection engine reuses one TCP connection, limits each poll to 15
+  seconds, and changes its polling interval based on inverter state. Home
+  Assistant can create entities while the inverter sleeps.
+- An armed daytime **Offline (expected)** (`offline_expected`) state becomes
+  **Offline (fault)** (`offline_fault`) after one hour and ten failed probes.
+- Users can dismiss a connection repair for 24 hours during the same fault
+  episode.
+
+### Fixed
+
+- Shutdown waits for active connections, polls, emulator handlers, and sensor
+  platform unloads. The engine cannot reopen a socket after closing.
+- Initial setup validates MaxComm frames and respects **Verify response
+  checksum**, including the option to ignore checksums. Runtime polling retries
+  once after lost responses, corrupt frames, peer closes, or partial static
+  data.
+- Valid fields survive when the inverter returns one malformed field.
+- Saving integration options no longer opens a competing connection to an
+  inverter that accepts one TCP client.
+- Expected nighttime shutdowns reset fault timers, and the repair flow works
+  with the current Home Assistant device registry.
+- Diagnostics no longer expose the inverter serial number.
+
+### Maintenance
+
+- `script/check` runs the local quality gate. CI pins actions and quality tools,
+  validates releases, tests the minimum Home Assistant version, and checks the
+  latest version on a schedule.
+- Guided issue forms and separate contributor, architecture, and
+  troubleshooting guides make reports and maintenance easier to follow.
 
 ## [1.3.3] - 2026-08-11
 

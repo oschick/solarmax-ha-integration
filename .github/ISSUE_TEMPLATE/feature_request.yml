@@ -1,0 +1,47 @@
+name: Feature request
+description: Propose a focused change to the integration
+title: "[Feature]: "
+labels:
+  - enhancement
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: User problem
+      description: Describe the task or limitation you want to address.
+    validations:
+      required: true
+
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed behavior
+      description: Describe the result in Home Assistant from a user's perspective.
+    validations:
+      required: true
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+      description: Include existing entities, templates, or automations you tried.
+
+  - type: input
+    id: inverter
+    attributes:
+      label: Inverter model
+      description: Leave blank when the request applies to all models.
+
+  - type: textarea
+    id: protocol_evidence
+    attributes:
+      label: Protocol or device evidence
+      description: For new registers or device behavior, include documentation or redacted observations.
+
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Submission checks
+      options:
+        - label: I searched existing issues for the same request.
+          required: true

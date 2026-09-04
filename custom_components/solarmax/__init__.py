@@ -4,10 +4,8 @@ from __future__ import annotations
 
 import logging
 
-from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import Platform
 from homeassistant.core import HomeAssistant
-from homeassistant.exceptions import ConfigEntryNotReady
 from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers.event import async_track_time_change
 
@@ -18,7 +16,7 @@ from .const import (
     DEFAULT_NIGHT_KEEP_VALUES,
     DOMAIN,
 )
-from .coordinator import SolarmaxCoordinator
+from .coordinator import SolarmaxConfigEntry, SolarmaxCoordinator
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -30,7 +28,7 @@ _UNIQUE_ID_MIGRATIONS = {
 }
 
 
-def _migrate_unique_ids(hass: HomeAssistant, entry: ConfigEntry) -> None:
+def _migrate_unique_ids(hass: HomeAssistant, entry: SolarmaxConfigEntry) -> None:
     """Migrate renamed sensor unique IDs to prevent orphaned entities."""
     registry = er.async_get(hass)
 
@@ -57,20 +55,17 @@ def _migrate_unique_ids(hass: HomeAssistant, entry: ConfigEntry) -> None:
                 registry.async_update_entity(entity_id, new_unique_id=new_unique_id)
 
 
-async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
+async def async_setup_entry(hass: HomeAssistant, entry: SolarmaxConfigEntry) -> bool:
     """Set up Solarmax Inverter from a config entry."""
     # Migrate renamed entity unique IDs (v1.2.0 → v1.2.1: KDL → KLD)
     _migrate_unique_ids(hass, entry)
 
     coordinator = SolarmaxCoordinator(hass, entry)
 
-    # Test connection before proceeding with setup
-    try:
-        await coordinator.async_config_entry_first_refresh()
-    except Exception as err:
-        level = logging.DEBUG if coordinator.is_night_time else logging.ERROR
-        _LOGGER.log(level, "Failed to connect to inverter during setup: %s", err)
-        raise ConfigEntryNotReady(f"Failed to connect to inverter: {err}") from err
+    # The coordinator's _async_update_data() never raises (see its class
+    # docstring), so this can never fail and never needs ConfigEntryNotReady:
+    # entities exist immediately even against a dark inverter, engine UNKNOWN.
+    await coordinator.async_config_entry_first_refresh()
 
     # Use runtime_data instead of hass.data
     entry.runtime_data = coordinator
@@ -98,18 +93,22 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     return True
 
 
-async def async_update_listener(hass: HomeAssistant, entry: ConfigEntry) -> None:
+async def async_update_listener(
+    hass: HomeAssistant, entry: SolarmaxConfigEntry
+) -> None:
     """Handle options update."""
     # Reload the integration when options are updated
     await hass.config_entries.async_reload(entry.entry_id)
 
 
-async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
-    """Unload a config entry (runtime_data is cleaned up automatically)."""
-    return await hass.config_entries.async_unload_platforms(entry, PLATFORMS)
+async def async_unload_entry(hass: HomeAssistant, entry: SolarmaxConfigEntry) -> bool:
+    """Unload a config entry (runtime_data is cleaned up automatically).
 
-
-async def async_reload_entry(hass: HomeAssistant, entry: ConfigEntry) -> None:
-    """Reload config entry."""
-    await async_unload_entry(hass, entry)
-    await async_setup_entry(hass, entry)
+    Keep the engine usable if platform teardown fails and Home Assistant
+    leaves the config entry loaded. A successful teardown is followed by
+    terminal engine close, which drains any poll still in flight.
+    """
+    unload_ok = await hass.config_entries.async_unload_platforms(entry, PLATFORMS)
+    if unload_ok:
+        await entry.runtime_data.engine.close()
+    return unload_ok

@@ -5,25 +5,25 @@ from __future__ import annotations
 from typing import Any
 
 from homeassistant.components.diagnostics import async_redact_data
-from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 from homeassistant.loader import async_get_integration
 
-from .const import CONF_HOST
-from .coordinator import SolarmaxCoordinator
+from .const import CONF_HOST, DEVICE_KEY_SERIAL
+from .coordinator import SolarmaxConfigEntry, SolarmaxCoordinator
 
-REDACT_KEYS = {CONF_HOST}
+# Redact the host and both names used for inverter serial data.
+REDACT_KEYS = {CONF_HOST, DEVICE_KEY_SERIAL, "serial_number"}
 
 
 async def async_get_config_entry_diagnostics(
-    hass: HomeAssistant, entry: ConfigEntry
+    hass: HomeAssistant, entry: SolarmaxConfigEntry
 ) -> dict[str, Any]:
     """Return diagnostics for a config entry."""
     coordinator: SolarmaxCoordinator = entry.runtime_data
+    snapshot = coordinator.data
 
     integration = await async_get_integration(hass, entry.domain)
 
-    # Collect all diagnostic data
     diagnostics_data: dict[str, Any] = {
         "config_entry": {
             "entry_id": entry.entry_id,
@@ -37,17 +37,21 @@ async def async_get_config_entry_diagnostics(
             "state": entry.state.value if entry.state else None,
         },
         "coordinator": {
-            "last_update_success": coordinator.last_update_success,
-            "last_exception": (
-                str(coordinator.last_exception) if coordinator.last_exception else None
-            ),
             "update_interval": str(coordinator.update_interval),
-            "data_available": coordinator.data is not None,
-            "data_keys": list(coordinator.data.keys()) if coordinator.data else [],
-            "consecutive_failures": coordinator.consecutive_failures,
-            "is_expected_offline": coordinator.is_expected_offline,
+            "state": snapshot.state if snapshot else None,
+            "reconnecting": snapshot.reconnecting if snapshot else None,
+            "fault_since": (
+                snapshot.fault_since.isoformat()
+                if snapshot and snapshot.fault_since
+                else None
+            ),
+            "last_successful_update": (
+                coordinator.last_successful_update.isoformat()
+                if coordinator.last_successful_update
+                else None
+            ),
         },
-        "api_connection": {},
+        "connection": dict(snapshot.diagnostics) if snapshot else {},
         "sensor_data": {},
         "system_info": {
             "ha_version": hass.config.as_dict().get("version"),
@@ -55,46 +59,26 @@ async def async_get_config_entry_diagnostics(
         },
     }
 
-    if coordinator.last_successful_update:
-        diagnostics_data["coordinator"]["last_successful_update"] = (
-            coordinator.last_successful_update.isoformat()
+    if snapshot:
+        diagnostics_data["sensor_data"] = async_redact_data(
+            {
+                sensor_key: {
+                    "value": sensor_value.get("value"),
+                    "raw_value": sensor_value.get("raw_value"),
+                }
+                for sensor_key, sensor_value in snapshot.values.items()
+            },
+            REDACT_KEYS,
         )
 
-    # API connection diagnostics
-    if coordinator.api.last_successful_connection:
-        diagnostics_data["api_connection"]["last_successful_connection"] = (
-            coordinator.api.last_successful_connection.isoformat()
-        )
-
-    # These counters are optional (not all API versions expose them).
-    if hasattr(coordinator.api, "connection_attempts"):
-        diagnostics_data["api_connection"]["connection_attempts"] = (
-            coordinator.api.connection_attempts
-        )
-
-    if hasattr(coordinator.api, "timeout_errors"):
-        diagnostics_data["api_connection"]["timeout_errors"] = (
-            coordinator.api.timeout_errors
-        )
-
-    # Add current sensor data
-    if coordinator.data:
-        diagnostics_data["sensor_data"] = {
-            sensor_key: {
-                "value": sensor_data.get("value"),
-                "raw_value": sensor_data.get("raw_value"),
-                "timestamp": sensor_data.get("timestamp"),
-            }
-            for sensor_key, sensor_data in coordinator.data.items()
-        }
-
-    # Add device information (identifiers as a list: diagnostics payloads are
-    # JSON-serialized, and a set would not survive json.dumps)
-    diagnostics_data["device_info"] = {
-        "identifiers": [(entry.domain, entry.entry_id)],
-        "name": entry.data.get("device_name", "Solarmax Inverter"),
-        "manufacturer": "Solarmax",
-        "model": coordinator.device_model or "Inverter",
-    }
+    diagnostics_data["device_info"] = async_redact_data(
+        {
+            "identifiers": [(entry.domain, entry.entry_id)],
+            "name": entry.data.get("device_name", "Solarmax Inverter"),
+            "manufacturer": "Solarmax",
+            "model": coordinator.device_model or "Inverter",
+        },
+        REDACT_KEYS,
+    )
 
     return diagnostics_data

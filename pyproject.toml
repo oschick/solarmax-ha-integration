@@ -17,11 +17,12 @@ classifiers = [
     "License :: OSI Approved :: MIT License",
     "Operating System :: OS Independent",
     "Programming Language :: Python :: 3",
-    "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: 3.14",
     "Topic :: Home Automation",
 ]
-requires-python = ">=3.11"
+requires-python = ">=3.12"
 
 [project.urls]
 Homepage = "https://github.com/oschick/solarmax-ha-integration"
@@ -30,7 +31,7 @@ Homepage = "https://github.com/oschick/solarmax-ha-integration"
 
 [tool.ruff]
 line-length = 88
-target-version = "py311"
+target-version = "py312"
 
 [tool.ruff.lint]
 select = [
@@ -40,7 +41,11 @@ select = [
     "G",   # flake8-logging-format
     "UP",  # pyupgrade
     "B",   # flake8-bugbear
+    "C90", # mccabe complexity
 ]
+
+[tool.ruff.lint.mccabe]
+max-complexity = 10
 
 [tool.ruff.lint.per-file-ignores]
 # Dev/debug scripts: lazy logging and line length are not worth enforcing
@@ -50,7 +55,7 @@ select = [
 testpaths = ["tests"]
 norecursedirs = [".git", "testing_config"]
 asyncio_mode = "auto"
-addopts = "--strict-markers --disable-warnings"
+addopts = "--strict-markers"
 
 [tool.coverage.run]
 source = ["custom_components"]
@@ -61,6 +66,9 @@ omit = [
 ]
 
 [tool.coverage.report]
+fail_under = 90
+show_missing = true
+skip_covered = true
 exclude_lines = [
     "pragma: no cover",
     "def __repr__",
@@ -70,7 +78,6 @@ exclude_lines = [
 ]
 
 [tool.mypy]
-python_version = "3.11"
 check_untyped_defs = true
 disallow_any_generics = true
 disallow_incomplete_defs = true

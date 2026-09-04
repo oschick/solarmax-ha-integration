@@ -7,10 +7,11 @@ from typing import Any
 
 import voluptuous as vol
 from homeassistant import config_entries
+from homeassistant.config_entries import ConfigFlowResult
 from homeassistant.core import HomeAssistant, callback
-from homeassistant.data_entry_flow import FlowResult
 from homeassistant.exceptions import HomeAssistantError
 
+from .connection import LinkClosed, LinkTimeout, SolarmaxLink
 from .const import (
     CONF_ADDRESS,
     CONF_DEVICE_NAME,
@@ -29,7 +30,7 @@ from .const import (
     DEFAULT_VERIFY_CHECKSUM,
     DOMAIN,
 )
-from .solarmax_api import SolarmaxAPI
+from .protocol import ProtocolError, build_request, parse_response
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -77,22 +78,20 @@ def _build_schema(values: dict[str, Any]) -> vol.Schema:
 
 
 async def validate_input(hass: HomeAssistant, data: dict[str, Any]) -> dict[str, Any]:
-    """Validate the user input allows us to connect.
+    """Validate setup with a short PAC request."""
+    link = SolarmaxLink(data[CONF_HOST], data[CONF_PORT])
+    try:
+        address = data.get(CONF_ADDRESS, DEFAULT_ADDRESS)
+        raw = await link.request(build_request(address, ["PAC"]))
+        parse_response(
+            raw,
+            data.get(CONF_VERIFY_CHECKSUM, DEFAULT_VERIFY_CHECKSUM),
+        )
+    except (LinkTimeout, LinkClosed, ProtocolError, OSError) as err:
+        raise CannotConnect from err
+    finally:
+        await link.close()
 
-    Data has the keys from the config schema with values provided by the user.
-    """
-    api = SolarmaxAPI(
-        data[CONF_HOST],
-        data[CONF_PORT],
-        data.get(CONF_ADDRESS, DEFAULT_ADDRESS),
-        verify_checksum=data.get(CONF_VERIFY_CHECKSUM, DEFAULT_VERIFY_CHECKSUM),
-    )
-
-    # Test the connection
-    if not await hass.async_add_executor_job(api.test_connection):
-        raise CannotConnect
-
-    # Return info that you want to store in the config entry.
     return {"title": data[CONF_DEVICE_NAME]}
 
 
@@ -109,12 +108,11 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
 
     async def async_step_user(
         self, user_input: dict[str, Any] | None = None
-    ) -> FlowResult:
+    ) -> ConfigFlowResult:
         """Handle the initial step."""
         errors: dict[str, str] = {}
 
         if user_input is not None:
-            # Check for duplicate entries
             await self.async_set_unique_id(
                 f"{user_input[CONF_HOST]}:{user_input[CONF_PORT]}"
             )
@@ -134,16 +132,6 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             step_id="user",
             data_schema=_build_schema(_DEFAULT_VALUES),
             errors=errors,
-            description_placeholders={
-                "host": "IP address of your Solarmax inverter",
-                "port": "Communication port (usually 12345)",
-                "update_interval": "How often to poll for data (seconds)",
-                "device_name": "Friendly name for this inverter",
-                "twilight_elevation_threshold": (
-                    "Sun elevation (degrees) below which the inverter is "
-                    "expected to be offline"
-                ),
-            },
         )
 
 
@@ -152,33 +140,19 @@ class OptionsFlow(config_entries.OptionsFlow):
 
     async def async_step_init(
         self, user_input: dict[str, Any] | None = None
-    ) -> FlowResult:
-        """Manage the options."""
-        errors: dict[str, str] = {}
-
+    ) -> ConfigFlowResult:
+        """Update settings without opening a second inverter connection."""
         if user_input is not None:
-            try:
-                # Validate the new configuration
-                await validate_input(self.hass, user_input)
-            except CannotConnect:
-                errors["base"] = "cannot_connect"
-            except Exception:  # pylint: disable=broad-except
-                _LOGGER.exception("Unexpected exception during reconfiguration")
-                errors["base"] = "unknown"
-            else:
-                # Update the config entry with new data
-                self.hass.config_entries.async_update_entry(
-                    self.config_entry,
-                    data=user_input,
-                    title=user_input.get(CONF_DEVICE_NAME, self.config_entry.title),
-                )
+            self.hass.config_entries.async_update_entry(
+                self.config_entry,
+                data=user_input,
+                title=user_input.get(CONF_DEVICE_NAME, self.config_entry.title),
+            )
 
-                # Trigger a reload of the integration to apply changes
-                await self.hass.config_entries.async_reload(self.config_entry.entry_id)
+            await self.hass.config_entries.async_reload(self.config_entry.entry_id)
 
-                return self.async_create_entry(title="", data={})
+            return self.async_create_entry(title="", data={})
 
-        # Pre-populate the shared schema with the entry's current values.
         current_data = self.config_entry.data
         values = {
             key: current_data.get(key, default)
@@ -188,7 +162,6 @@ class OptionsFlow(config_entries.OptionsFlow):
         return self.async_show_form(
             step_id="init",
             data_schema=_build_schema(values),
-            errors=errors,
             description_placeholders={
                 "current_host": current_data.get(CONF_HOST, "Unknown"),
                 "current_port": str(current_data.get(CONF_PORT, DEFAULT_PORT)),

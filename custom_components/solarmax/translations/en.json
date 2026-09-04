@@ -13,6 +13,9 @@
           "verify_checksum": "Verify response checksum",
           "night_keep_values": "Keep sensor values overnight",
           "twilight_elevation_threshold": "Twilight elevation threshold (degrees)"
+        },
+        "data_description": {
+          "twilight_elevation_threshold": "Sun elevation below which an unannounced disconnect counts as expected (also starts fast dawn polling)."
         }
       }
     },
@@ -40,6 +43,9 @@
           "verify_checksum": "Verify response checksum",
           "night_keep_values": "Keep sensor values overnight",
           "twilight_elevation_threshold": "Twilight elevation threshold (degrees)"
+        },
+        "data_description": {
+          "twilight_elevation_threshold": "Sun elevation below which an unannounced disconnect counts as expected (also starts fast dawn polling)."
         }
       }
     },
@@ -64,7 +70,14 @@
   "issues": {
     "connection_issues": {
       "title": "Inverter Connection Issues",
-      "description": "The inverter at {host}:{port} has had {failures} consecutive connection failures. Check network connectivity and inverter status."
+      "fix_flow": {
+        "step": {
+          "confirm": {
+            "title": "Inverter unreachable",
+            "description": "The inverter at {host}:{port} has been unreachable for {minutes} minutes during daytime. Check power, network, and the DC side, then confirm to dismiss."
+          }
+        }
+      }
     },
     "configuration_issue": {
       "title": "Configuration Issue",
@@ -263,8 +276,8 @@
           "device_error_121": "Device error 121",
           "grid_voltage_high": "Grid voltage too high",
           "grid_voltage_low": "Grid voltage too low",
-          "device_error_124": "Device error 124",
-          "device_error_125": "Device error 125",
+          "temperature_too_high": "Temperature too high",
+          "grid_current_asymmetric": "Grid current asymmetric",
           "external_input_error_1": "External input error 1",
           "external_input_error_2": "External input error 2",
           "device_error_128": "Device error 128",
@@ -328,8 +341,8 @@
           "device_error_198": "Device error 198",
           "device_error_199": "Device error 199",
           "device_error_999": "Device error 999",
-          "offline_night": "Offline (Night)",
-          "connection_failed": "Connection failed",
+          "offline_expected": "Offline (expected)",
+          "offline_fault": "Offline (fault)",
           "unknown": "Unknown"
         }
       }

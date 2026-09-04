@@ -35,3 +35,14 @@ async def mock_solarmax_setup(hass: HomeAssistant):
     """Set up the Solarmax integration."""
     assert await async_setup_component(hass, DOMAIN, {})
     await hass.async_block_till_done()
+
+
+@pytest.fixture
+def emulator(socket_enabled):
+    """A running MaxComm inverter emulator on an ephemeral port."""
+    from tests.emulator import EmulatorHandle
+
+    handle = EmulatorHandle()
+    handle.start()
+    yield handle
+    handle.stop()

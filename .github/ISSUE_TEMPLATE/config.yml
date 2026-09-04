@@ -1,0 +1,5 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Troubleshooting guide
+    url: https://github.com/oschick/solarmax-ha-integration/blob/main/docs/troubleshooting.md
+    about: Check connection states, checksum errors, night behavior, logs, and diagnostics.

@@ -1,34 +1,20 @@
-## Description
-Brief description of the changes in this PR.
+## Summary
 
-## Type of change
-Please delete options that are not relevant:
-- [ ] Bug fix (non-breaking change which fixes an issue)
-- [ ] New feature (non-breaking change which adds functionality)
-- [ ] Breaking change (fix or feature that would cause existing functionality to not work as expected)
-- [ ] Documentation update
+<!-- Describe the problem and the chosen behavior. -->
 
-## Related Issue
-Fixes #(issue number)
+## User impact
 
-## Testing
-Please describe the tests that you ran to verify your changes:
-- [ ] Config flow works correctly
-- [ ] Sensors update properly
-- [ ] Error handling works as expected
-- [ ] Manual testing completed
+<!-- Include compatibility, migration, and configuration effects. Write "None" when users will not notice. -->
+
+## Verification
+
+<!-- List exact commands and relevant manual or hardware checks. -->
 
 ## Checklist
-- [ ] My code follows the style guidelines of this project
-- [ ] I have performed a self-review of my own code
-- [ ] I have commented my code, particularly in hard-to-understand areas
-- [ ] I have made corresponding changes to the documentation
-- [ ] My changes generate no new warnings
-- [ ] I have added tests that prove my fix is effective or that my feature works
-- [ ] New and existing unit tests pass locally with my changes
 
-## Screenshots (if applicable)
-Add screenshots to help explain your changes.
-
-## Additional Notes
-Add any other notes about the PR here.
+- [ ] The change is focused and preserves the inverter's single-client constraint.
+- [ ] New behavior or a bug fix has focused tests.
+- [ ] `script/check` passes.
+- [ ] User-facing behavior is reflected in `README.md` and `CHANGELOG.md`.
+- [ ] New user-facing strings exist in `strings.json` and every translation.
+- [ ] `AGENTS.md` and `CLAUDE.md` remain byte-identical when either guide changes.

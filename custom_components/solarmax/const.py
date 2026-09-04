@@ -32,7 +32,18 @@ DEFAULT_VERIFY_CHECKSUM = True
 # insufficient irradiance, even though the sun is technically above the
 # horizon.
 DEFAULT_TWILIGHT_ELEVATION_THRESHOLD = 5
+
 DEFAULT_NIGHT_KEEP_VALUES = False
+
+# Coordinator poll cadence (seconds) when the engine reports OFFLINE_EXPECTED.
+NIGHT_POLL_SECONDS = 900
+DAWN_POLL_SECONDS = 60
+# Maximum cadence during a daytime connection failure or startup grace.
+FAULT_POLL_SECONDS = 60
+# How long an OFFLINE_FAULT must persist before a repair issue is raised.
+FAULT_REPAIR_SECONDS = 300
+# Avoid immediately recreating a repair issue dismissed during the same fault.
+REPAIR_DISMISS_SUPPRESS_SECONDS = 24 * 60 * 60
 
 # Static device-identification MaxComm keys (queried once for device info)
 DEVICE_KEY_TYPE = "TYP"  # device type / model identifier
@@ -308,15 +319,15 @@ SYS_STATUS_MAP: dict[int, str] = {
     20999: "device_error_999",
 }
 
-# Special SYS states (not from inverter data)
-SYS_STATE_OFFLINE_NIGHT = "offline_night"
-SYS_STATE_CONNECTION_FAILED = "connection_failed"
+# Special SYS states (not from inverter data) — mirror EngineState, minus ONLINE.
+SYS_STATE_OFFLINE_EXPECTED = "offline_expected"
+SYS_STATE_OFFLINE_FAULT = "offline_fault"
 SYS_STATE_UNKNOWN = "unknown"
 
 # All possible SYS options for the enum sensor
 SYS_OPTIONS: list[str] = list(SYS_STATUS_MAP.values()) + [
-    SYS_STATE_OFFLINE_NIGHT,
-    SYS_STATE_CONNECTION_FAILED,
+    SYS_STATE_OFFLINE_EXPECTED,
+    SYS_STATE_OFFLINE_FAULT,
     SYS_STATE_UNKNOWN,
 ]
 

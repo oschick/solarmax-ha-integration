@@ -13,6 +13,9 @@
           "verify_checksum": "Vérifier le checksum de la réponse",
           "night_keep_values": "Conserver les valeurs des capteurs la nuit",
           "twilight_elevation_threshold": "Seuil d'élévation crépusculaire (degrés)"
+        },
+        "data_description": {
+          "twilight_elevation_threshold": "Élévation du soleil en dessous de laquelle une déconnexion non annoncée est considérée comme attendue (déclenche également l'interrogation rapide à l'aube)."
         }
       }
     },
@@ -40,6 +43,9 @@
           "twilight_elevation_threshold": "Seuil d'élévation crépusculaire (degrés)",
           "verify_checksum": "Vérifier la somme de contrôle de la réponse",
           "night_keep_values": "Conserver les valeurs des capteurs la nuit"
+        },
+        "data_description": {
+          "twilight_elevation_threshold": "Élévation du soleil en dessous de laquelle une déconnexion non annoncée est considérée comme attendue (déclenche également l'interrogation rapide à l'aube)."
         }
       }
     },
@@ -64,7 +70,14 @@
   "issues": {
     "connection_issues": {
       "title": "Problèmes de connexion de l'onduleur",
-      "description": "L'onduleur à {host}:{port} a eu {failures} échecs de connexion consécutifs. Vérifiez la connectivité réseau et l'état de l'onduleur."
+      "fix_flow": {
+        "step": {
+          "confirm": {
+            "title": "Onduleur injoignable",
+            "description": "L'onduleur à {host}:{port} est injoignable depuis {minutes} minutes en journée. Vérifiez l'alimentation, le réseau et le côté DC, puis confirmez pour fermer ce problème."
+          }
+        }
+      }
     },
     "configuration_issue": {
       "title": "Problème de configuration",
@@ -263,8 +276,8 @@
           "device_error_121": "Erreur appareil 121",
           "grid_voltage_high": "Tension secteur trop élevée",
           "grid_voltage_low": "Tension secteur trop basse",
-          "device_error_124": "Erreur appareil 124",
-          "device_error_125": "Erreur appareil 125",
+          "temperature_too_high": "Température trop élevée",
+          "grid_current_asymmetric": "Courant secteur asymétrique",
           "external_input_error_1": "Erreur entrée externe 1",
           "external_input_error_2": "Erreur entrée externe 2",
           "device_error_128": "Erreur appareil 128",
@@ -328,8 +341,8 @@
           "device_error_198": "Erreur appareil 198",
           "device_error_199": "Erreur appareil 199",
           "device_error_999": "Erreur appareil 999",
-          "offline_night": "Hors ligne (Nuit)",
-          "connection_failed": "Échec de connexion",
+          "offline_expected": "Hors ligne (attendu)",
+          "offline_fault": "Hors ligne (défaut)",
           "unknown": "Inconnu"
         }
       }

@@ -54,7 +54,7 @@ class InverterState:
     """Holds the current emulated inverter state."""
 
     # Status (SYS) - raw integer code
-    sys: int = 20004  # MPP operation
+    sys: int = 20008  # Netzbetrieb (grid operation) — matches live 7TP2 capture
 
     # Alarm (SAL) - bitmask
     sal: int = 0  # No error
@@ -372,6 +372,19 @@ class SolarmaxEmulator:
         self.running = False
         self._server_socket: socket.socket | None = None
         self._lock = threading.Lock()
+        # Behaviour measured on a live 7TP2 (2026-09-01 probe):
+        self.bound_port: int | None = None  # set after bind (supports port=0)
+        self.idle_timeout: float = 100.0  # peer-closes idle conns ~90-120s
+        self.dark = False  # powered off: swallow everything, answer nothing
+        self._active_client = False  # the real device serves ONE TCP client
+        self._inject: str | None = None  # one-shot failure injection
+        self._respond_only: list[str] | None = None  # answer only these fields
+        self._pre_dusk: InverterState | None = None
+        self._client_socket: socket.socket | None = None
+        self._thread_lock = threading.Lock()
+        self._client_threads: set[threading.Thread] = set()
+        self._timer_thread: threading.Thread | None = None
+        self._stop_event = threading.Event()  # interrupts a pending dark timer
 
     def calculate_checksum(self, data: str) -> str:
         """Calculate the Solarmax protocol checksum."""
@@ -415,7 +428,32 @@ class SolarmaxEmulator:
         else:
             return format(raw, "X")
 
-    def build_response(self, requested_fields: list[str]) -> str:
+    def build_response(self, requested_fields: list[str]) -> str | None:
+        if self._respond_only is not None:
+            requested_fields = [f for f in requested_fields if f in self._respond_only]
+        response = self._build_response_clean(requested_fields)
+        failure, self._inject = self._inject, None
+        if failure == "drop":
+            # One-shot: swallow this request entirely, no reply at all —
+            # simulates a single lost response (line noise, not a dark
+            # device) that a client-side timeout-retry should recover from.
+            return None
+        if failure == "corrupt_crc":
+            return response[:-5] + "0000}"
+        if failure == "truncate":
+            # Cut off mid-frame but still terminate the read: an unclosed
+            # buffer would just hang the client until it times out (no
+            # data reaches the parser at all) rather than exercising the
+            # checksum-mismatch retry path this simulates.
+            return response[: max(4, len(response) // 2)] + "}"
+        if failure == "empty_data":
+            head, _, _ = response.partition(":")
+            payload = head[1:] + ":"
+            crc = self.calculate_checksum(payload + "|")
+            return "{" + payload + "|" + crc + "}"
+        return response
+
+    def _build_response_clean(self, requested_fields: list[str]) -> str:
         """Build a response message for the requested fields.
 
         Mimics real inverter behavior: if the response exceeds 255 bytes,
@@ -500,28 +538,36 @@ class SolarmaxEmulator:
         """Handle a single client connection."""
         _LOGGER.info(f"Client connected: {client_addr[0]}:{client_addr[1]}")
         try:
-            client_socket.settimeout(10.0)
-            data = client_socket.recv(1024).decode("utf-8", errors="ignore")
-
-            if data:
-                _LOGGER.debug(f"Received: {data}")
+            idle_deadline = time.monotonic() + self.idle_timeout
+            client_socket.settimeout(min(self.idle_timeout, 0.25))
+            while self.running:
+                try:
+                    data = client_socket.recv(1024).decode("utf-8", errors="ignore")
+                except TimeoutError:
+                    if time.monotonic() < idle_deadline:
+                        continue
+                    _LOGGER.debug(f"Idle window elapsed for {client_addr} -> FIN")
+                    break
+                if not data:
+                    break  # client closed
+                idle_deadline = time.monotonic() + self.idle_timeout
+                if self.dark:
+                    continue  # powered off: swallow silently, never answer
                 fields = self.parse_request(data)
-
                 if fields:
                     response = self.build_response(fields)
-                    _LOGGER.info(
-                        f"  Request:  {len(fields)} fields: {', '.join(fields)}"
-                    )
+                    if response is None:
+                        _LOGGER.debug("  Dropped request (drop injection)")
+                        continue
                     _LOGGER.debug(f"  Response: {response}")
                     client_socket.send(response.encode("utf-8"))
                 else:
                     _LOGGER.warning(f"  Could not parse request: {data!r}")
-        except TimeoutError:
-            _LOGGER.debug(f"Client {client_addr} timed out")
         except Exception as e:
-            _LOGGER.error(f"Error handling client {client_addr}: {e}")
+            _LOGGER.debug(f"Client {client_addr} ended: {e}")
         finally:
             client_socket.close()
+            self._active_client = False
 
     def start(self):
         """Start the emulator server."""
@@ -536,6 +582,7 @@ class SolarmaxEmulator:
             sys.exit(1)
 
         self._server_socket.listen(5)
+        self.bound_port = self._server_socket.getsockname()[1]
         self.running = True
 
         _LOGGER.info("=" * 60)
@@ -551,23 +598,114 @@ class SolarmaxEmulator:
 
         while self.running:
             try:
+                # Single-client gate: while a client is being served (or the
+                # device is dark), do not accept — queued connections complete
+                # their handshake in the kernel backlog but are never answered,
+                # reproducing the silent-hang lockout measured on the device.
+                if self._active_client or self.dark:
+                    time.sleep(0.05)
+                    continue
                 client_socket, client_addr = self._server_socket.accept()
-                thread = threading.Thread(
-                    target=self.handle_client,
-                    args=(client_socket, client_addr),
-                    daemon=True,
-                )
-                thread.start()
+                with self._thread_lock:
+                    if not self.running:
+                        client_socket.close()
+                        break
+                    self._active_client = True
+                    self._client_socket = client_socket
+                    thread = threading.Thread(
+                        target=self.handle_client,
+                        args=(client_socket, client_addr),
+                        name="solarmax-emulator-client",
+                        daemon=True,
+                    )
+                    self._client_threads = {
+                        existing
+                        for existing in self._client_threads
+                        if existing.is_alive()
+                    }
+                    self._client_threads.add(thread)
+                    thread.start()
             except TimeoutError:
                 continue
             except OSError:
                 break
 
+    def begin_dusk(self, announce_seconds: float | None) -> None:
+        """Scripted dusk: announce SYS 20002 with zero power, then go dark.
+
+        Mirrors the live capture: 20008 -> 20002 (PAC=0, PDC=0) for the
+        announcement window (30s-2min naturally), then the device vanishes
+        (every request times out; the drop signature is TIMEOUT, not FIN).
+
+        `announce_seconds=None` means announce-only: set the SYS/PDC state
+        and start no dark timer at all (no live `time.sleep` thread left
+        running for a test that never calls `wake()`).
+        """
+        import copy
+
+        with self._lock:
+            self._pre_dusk = copy.copy(self.state)
+            self.state.sys = 20002
+            self.state.pac = 0
+            # The real device still reports a 1-2W residual on PDC while
+            # shutting down (user observation) — never emulate a clean zero.
+            self.state.pdc = 3
+            self.state.pd01 = 0
+            self.state.pd02 = 0
+
+        if announce_seconds is None:
+            return
+
+        def _go_dark() -> None:
+            # Interruptible: stop() sets _stop_event so this wakes
+            # immediately instead of joining a thread mid-sleep.
+            if self._stop_event.wait(announce_seconds):
+                return
+            self.dark = True
+            _LOGGER.info("Emulator: dark (powered off)")
+
+        self._timer_thread = threading.Thread(target=_go_dark, daemon=True)
+        self._timer_thread.start()
+
+    def wake(self) -> None:
+        """Dawn: restore the pre-dusk state and answer again."""
+        with self._lock:
+            if self._pre_dusk is not None:
+                self.state = self._pre_dusk
+                self._pre_dusk = None
+        self.dark = False
+
+    def inject(self, failure: str) -> None:
+        """Poison exactly the next response: corrupt_crc | truncate | empty_data | drop."""
+        if failure not in ("corrupt_crc", "truncate", "empty_data", "drop"):
+            raise ValueError(f"unknown failure: {failure}")
+        self._inject = failure
+
     def stop(self):
-        """Stop the emulator server."""
-        self.running = False
-        if self._server_socket:
-            self._server_socket.close()
+        """Stop the emulator and join every thread it started.
+
+        Client handlers use a short receive tick because closing a socket from
+        another thread does not wake recv() reliably on every platform.
+        """
+        with self._thread_lock:
+            self.running = False
+            sockets = (self._client_socket, self._server_socket)
+            client_threads = tuple(self._client_threads)
+        self._stop_event.set()
+        for sock in sockets:
+            if sock is not None:
+                try:
+                    sock.shutdown(socket.SHUT_RDWR)
+                except OSError:
+                    pass
+                try:
+                    sock.close()
+                except OSError:
+                    pass
+        threads = (*client_threads, self._timer_thread)
+        for thread in threads:
+            if thread is not None and thread.is_alive():
+                thread.join(timeout=5)
         _LOGGER.info("Emulator stopped.")
 
     def update_state(self, **kwargs):
@@ -578,86 +716,82 @@ class SolarmaxEmulator:
                     setattr(self.state, key, value)
 
 
-def interactive_loop(emulator: SolarmaxEmulator):
-    """Run an interactive command loop for changing emulator state."""
-    print("\nInteractive mode. Commands:")
-    print("  set <field> <value>   - Set a field value (e.g., 'set pac 5000')")
-    print("  scenario <name>       - Load a scenario (day/night/starting/alarm/...)")
-    print("  status                - Show current state")
-    print("  help                  - Show this help")
-    print("  quit                  - Stop emulator")
-    print("")
+def _set_interactive_value(emulator: SolarmaxEmulator, field: str, raw: str) -> None:
+    """Apply one value entered in the interactive console."""
+    if not hasattr(emulator.state, field):
+        print(f"  Unknown field: {field}")
+        return
 
+    try:
+        value: int | bool = int(raw)
+    except ValueError:
+        if raw.lower() not in ("true", "false"):
+            print(f"  Invalid value: {raw}")
+            return
+        value = raw.lower() == "true"
+
+    emulator.update_state(**{field: value})
+    print(f"  {field} = {value}")
+
+
+def _load_interactive_scenario(emulator: SolarmaxEmulator, name: str) -> None:
+    """Replace the emulator state with a named scenario."""
+    with emulator._lock:
+        emulator.state = get_scenario_state(name)
+    print(f"  Loaded scenario: {name}")
+
+
+def execute_interactive_command(emulator: SolarmaxEmulator, command_line: str) -> bool:
+    """Execute one console command and return whether the loop should continue."""
+    parts = command_line.split()
+    if not parts:
+        return True
+
+    command = parts[0].lower()
+    if command in ("quit", "exit"):
+        return False
+    if command == "help":
+        print("Commands:")
+        print("  set <field> <value>   - Set a field (pac, pdc, sys, sal, etc.)")
+        print("  scenario <name>       - Load a predefined scenario")
+        print("  status                - Show current state")
+        print("  noise                 - Toggle measurement noise")
+        print("  quit                  - Stop emulator")
+    elif command == "status":
+        state = emulator.state
+        print(f"\n  SYS (status):    {state.sys}")
+        print(f"  SAL (alarm):     {state.sal}")
+        print(f"  PAC (AC power):  {state.pac} raw -> {state.pac / 2}W")
+        print(f"  PDC (DC power):  {state.pdc} raw -> {state.pdc / 2}W")
+        print(f"  UL1 (voltage):   {state.ul1} raw -> {state.ul1 / 10}V")
+        print(f"  TKK (temp):      {state.tkk}°C")
+        print(f"  TNF (freq):      {state.tnf} raw -> {state.tnf / 100} Hz")
+        print(f"  PIN (installed): {state.pin} raw -> {state.pin / 2}W")
+        print(f"  KDY (day):       {state.kdy} raw -> {state.kdy / 10} kWh")
+        print(f"  KT0 (total):     {state.kt0} kWh")
+        print(f"  Noise: {'on' if state.add_noise else 'off'}\n")
+    elif command == "set" and len(parts) >= 3:
+        _set_interactive_value(emulator, parts[1].lower(), parts[2])
+    elif command == "scenario" and len(parts) >= 2:
+        _load_interactive_scenario(emulator, parts[1].lower())
+    elif command == "noise":
+        emulator.update_state(add_noise=not emulator.state.add_noise)
+        print(f"  Noise: {'on' if emulator.state.add_noise else 'off'}")
+    else:
+        print(f"  Unknown command: {command_line}")
+    return True
+
+
+def interactive_loop(emulator: SolarmaxEmulator) -> None:
+    """Run an interactive command loop for changing emulator state."""
+    execute_interactive_command(emulator, "help")
     while emulator.running:
         try:
-            cmd = input("emulator> ").strip()
+            command = input("emulator> ").strip()
         except (EOFError, KeyboardInterrupt):
             break
-
-        if not cmd:
-            continue
-
-        parts = cmd.split()
-        command = parts[0].lower()
-
-        if command == "quit" or command == "exit":
+        if command and not execute_interactive_command(emulator, command):
             break
-        elif command == "help":
-            print("Commands:")
-            print("  set <field> <value>   - Set a field (pac, pdc, sys, sal, etc.)")
-            print(
-                "  scenario <name>       - day, night, starting, alarm, multi_alarm, max_power, low_irradiation"
-            )
-            print("  status                - Show current state")
-            print("  quit                  - Stop emulator")
-        elif command == "status":
-            s = emulator.state
-            print(f"\n  SYS (status):    {s.sys}")
-            print(f"  SAL (alarm):     {s.sal}")
-            print(f"  PAC (AC power):  {s.pac} raw -> {s.pac / 2}W")
-            print(f"  PDC (DC power):  {s.pdc} raw -> {s.pdc / 2}W")
-            print(f"  UL1 (voltage):   {s.ul1} raw -> {s.ul1 / 10}V")
-            print(f"  TKK (temp):      {s.tkk}°C")
-            print(f"  TK2 (temp 2):    {s.tk2}°C")
-            print(f"  TK3 (temp 3):    {s.tk3}°C")
-            print(f"  TNF (freq):      {s.tnf} raw -> {s.tnf / 100} Hz")
-            print(f"  PRL (rel power): {s.prl}%")
-            print(f"  PIN (installed): {s.pin} raw -> {s.pin / 2}W")
-            print(f"  KDY (day):       {s.kdy} raw -> {s.kdy / 10} kWh")
-            print(f"  kld (yesterday): {s.kld} raw -> {s.kld / 10} kWh")
-            print(f"  KT0 (total):     {s.kt0} kWh")
-            print(f"  Noise: {'on' if s.add_noise else 'off'}")
-            print("")
-        elif command == "set" and len(parts) >= 3:
-            field_name = parts[1].lower()
-            try:
-                value = int(parts[2])
-                if hasattr(emulator.state, field_name):
-                    emulator.update_state(**{field_name: value})
-                    print(f"  {field_name} = {value}")
-                else:
-                    print(f"  Unknown field: {field_name}")
-            except ValueError:
-                if parts[2].lower() in ("true", "false"):
-                    emulator.update_state(**{field_name: parts[2].lower() == "true"})
-                    print(f"  {field_name} = {parts[2].lower() == 'true'}")
-                else:
-                    print(f"  Invalid value: {parts[2]}")
-        elif command == "scenario" and len(parts) >= 2:
-            scenario_name = parts[1].lower()
-            try:
-                new_state = get_scenario_state(scenario_name)
-                with emulator._lock:
-                    emulator.state = new_state
-                print(f"  Loaded scenario: {scenario_name}")
-            except Exception as e:
-                print(f"  Error loading scenario: {e}")
-        elif command == "noise":
-            emulator.state.add_noise = not emulator.state.add_noise
-            print(f"  Noise: {'on' if emulator.state.add_noise else 'off'}")
-        else:
-            print(f"  Unknown command: {cmd}")
-
     emulator.stop()
 
 

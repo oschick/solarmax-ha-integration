@@ -1,27 +1,33 @@
 """Test the Solarmax coordinator."""
 
+from __future__ import annotations
+
 import logging
+from datetime import datetime, timedelta
 from unittest.mock import MagicMock, patch
 
 import pytest
 from homeassistant.core import HomeAssistant
-from homeassistant.helpers.update_coordinator import UpdateFailed
+from homeassistant.helpers import issue_registry as ir
 from homeassistant.util import dt as dt_util
 from pytest_homeassistant_custom_component.common import MockConfigEntry
 
+from custom_components.solarmax.connection import (
+    ConnectionEngine,
+    EngineSnapshot,
+    EngineState,
+)
 from custom_components.solarmax.const import (
     CONF_HOST,
     CONF_PORT,
     CONF_TWILIGHT_ELEVATION_THRESHOLD,
     CONF_UPDATE_INTERVAL,
+    DAWN_POLL_SECONDS,
     DOMAIN,
+    FAULT_REPAIR_SECONDS,
+    NIGHT_POLL_SECONDS,
 )
 from custom_components.solarmax.coordinator import SolarmaxCoordinator
-from custom_components.solarmax.solarmax_api import (
-    SolarmaxConnectionError,
-    SolarmaxProtocolError,
-    SolarmaxTimeoutError,
-)
 
 
 @pytest.fixture
@@ -46,97 +52,306 @@ def coordinator(hass: HomeAssistant, mock_config_entry):
     return SolarmaxCoordinator(hass, mock_config_entry)
 
 
-@patch("custom_components.solarmax.coordinator.SolarmaxAPI")
-async def test_coordinator_successful_update(mock_api_class, coordinator):
-    """Test successful data update."""
-    mock_api = MagicMock()
-    mock_api.get_data.return_value = {
-        "PAC": {"value": 1500.0, "raw_value": 3000},
-        "SYS": {"value": 20019, "raw_value": 20019},
-    }
-    mock_api_class.return_value = mock_api
-    coordinator.api = mock_api
-
-    result = await coordinator._async_update_data()
-
-    assert result is not None
-    assert "PAC" in result
-    assert coordinator.consecutive_failures == 0
-    assert coordinator.last_successful_update is not None
-
-
-@patch("custom_components.solarmax.coordinator.SolarmaxAPI")
-async def test_coordinator_connection_error_day(mock_api_class, coordinator):
-    """Test connection error during day time."""
-    mock_api = MagicMock()
-    mock_api.get_data.side_effect = SolarmaxConnectionError("Connection failed")
-    mock_api_class.return_value = mock_api
-    coordinator.api = mock_api
-
-    # Mock daytime
-    with patch.object(coordinator, "_is_night_time", return_value=False):
-        with pytest.raises(UpdateFailed):
-            await coordinator._async_update_data()
-
-    assert coordinator.consecutive_failures == 1
+def _snap(
+    state: EngineState,
+    *,
+    fault_since: datetime | None = None,
+    values: dict[str, dict[str, float | int]] | None = None,
+    diagnostics: dict[str, object] | None = None,
+    reconnecting: bool = False,
+) -> EngineSnapshot:
+    """Build a minimal EngineSnapshot for coordinator-level tests."""
+    return EngineSnapshot(
+        state=state,
+        values=values or {},
+        shutdown_announced=False,
+        reconnecting=reconnecting,
+        expected_outside_twilight=False,
+        fault_since=fault_since,
+        diagnostics=diagnostics or {},
+    )
 
 
-@patch("custom_components.solarmax.coordinator.SolarmaxAPI")
-async def test_coordinator_connection_error_night(mock_api_class, coordinator):
-    """Test connection error during night time."""
-    mock_api = MagicMock()
-    mock_api.get_data.side_effect = SolarmaxConnectionError("Connection failed")
-    mock_api_class.return_value = mock_api
-    coordinator.api = mock_api
+class _StubEngine:
+    """Stand-in for ConnectionEngine: returns a prepared snapshot, or raises.
 
-    # Mock nighttime
-    with patch.object(coordinator, "_is_night_time", return_value=True):
-        with pytest.raises(UpdateFailed):
-            await coordinator._async_update_data()
+    The real ConnectionEngine has its own emulator-driven coverage
+    (test_connection_engine.py); the coordinator is tested against this
+    stub so it only needs to trust the engine's documented contract.
+    """
 
-    assert coordinator.is_expected_offline is True
+    def __init__(
+        self,
+        state: EngineState = EngineState.ONLINE,
+        *,
+        fault_since: datetime | None = None,
+        values: dict[str, dict[str, float | int]] | None = None,
+        diagnostics: dict[str, object] | None = None,
+        exc: Exception | None = None,
+    ) -> None:
+        self._snapshot = _snap(
+            state, fault_since=fault_since, values=values, diagnostics=diagnostics
+        )
+        self._exc = exc
+
+    async def poll(self) -> EngineSnapshot:
+        if self._exc is not None:
+            raise self._exc
+        return self._snapshot
+
+    async def close(self) -> None:
+        """No-op close, matching ConnectionEngine.close()'s signature."""
 
 
-@patch("custom_components.solarmax.coordinator.SolarmaxAPI")
-async def test_coordinator_timeout_error(mock_api_class, coordinator):
-    """Test timeout error."""
-    mock_api = MagicMock()
-    mock_api.get_data.side_effect = SolarmaxTimeoutError("Timeout")
-    mock_api_class.return_value = mock_api
-    coordinator.api = mock_api
-
-    with patch.object(coordinator, "_is_night_time", return_value=False):
-        with pytest.raises(UpdateFailed, match=r"Timeout \(attempt 1\)"):
-            await coordinator._async_update_data()
+# --- Coordinator snapshot contract ------------------------------------------
 
 
-async def test_is_night_time_with_sun_component(coordinator):
-    """Test night time detection with sun component."""
-    # Sun component showing below horizon
+async def test_update_returns_snapshot_and_never_raises(hass, mock_config_entry):
+    """A poll that returns OFFLINE_FAULT must not raise UpdateFailed."""
+    coordinator = SolarmaxCoordinator(hass, mock_config_entry)
+    coordinator._engine = _StubEngine(state=EngineState.OFFLINE_FAULT)
+    snapshot = await coordinator._async_update_data()  # no UpdateFailed
+    assert snapshot.state is EngineState.OFFLINE_FAULT
+
+
+async def test_interval_follows_state(hass, mock_config_entry):
+    """Polling cadence only slows down for OFFLINE_EXPECTED, and only then
+    depends on whether the sun is below the twilight threshold."""
+    coordinator = SolarmaxCoordinator(hass, mock_config_entry)
+    assert coordinator._interval_for(_snap(EngineState.ONLINE)) == timedelta(seconds=30)
+    with patch.object(coordinator, "sun_below_threshold", return_value=True):
+        assert coordinator._interval_for(
+            _snap(EngineState.OFFLINE_EXPECTED)
+        ) == timedelta(seconds=NIGHT_POLL_SECONDS)
+    with patch.object(coordinator, "sun_below_threshold", return_value=False):
+        assert coordinator._interval_for(
+            _snap(EngineState.OFFLINE_EXPECTED)
+        ) == timedelta(seconds=DAWN_POLL_SECONDS)
+    # A configured cadence faster than the fault cap remains unchanged.
+    assert coordinator._interval_for(_snap(EngineState.OFFLINE_FAULT)) == timedelta(
+        seconds=30
+    )
+
+
+def test_fault_interval_is_capped_at_one_minute(coordinator):
+    """A long configured interval must not delay fault recovery detection."""
+    coordinator._configured_interval = timedelta(hours=1)
+
+    assert coordinator._interval_for(_snap(EngineState.OFFLINE_FAULT)) == timedelta(
+        seconds=60
+    )
+
+
+def test_reconnecting_unknown_interval_is_capped_at_one_minute(coordinator):
+    """Daytime startup failures need the same recovery cadence during grace."""
+    coordinator._configured_interval = timedelta(hours=1)
+
+    assert coordinator._interval_for(
+        _snap(EngineState.UNKNOWN, reconnecting=True)
+    ) == timedelta(seconds=60)
+
+
+async def test_repair_raised_after_sustained_fault_and_cleared(hass, mock_config_entry):
+    """A fault older than FAULT_REPAIR_SECONDS raises the repair issue;
+    recovering to ONLINE clears it."""
+    coordinator = SolarmaxCoordinator(hass, mock_config_entry)
+    old = dt_util.utcnow() - timedelta(seconds=FAULT_REPAIR_SECONDS + 1)
+    await coordinator._async_handle_snapshot(
+        _snap(EngineState.OFFLINE_FAULT, fault_since=old)
+    )
+    issue = ir.async_get(hass).async_get_issue(DOMAIN, coordinator._repair_issue_id)
+    assert issue is not None
+    assert issue.data["host"] == "192.168.1.100"  # dialog payload guaranteed
+
+    await coordinator._async_handle_snapshot(_snap(EngineState.ONLINE))
+    assert (
+        ir.async_get(hass).async_get_issue(DOMAIN, coordinator._repair_issue_id) is None
+    )
+
+
+# --- Repair issue: additional coverage --------------------------------------
+
+
+async def test_repair_not_raised_before_sustained_threshold(coordinator, hass):
+    """A fault younger than FAULT_REPAIR_SECONDS does not raise the issue."""
+    recent = dt_util.utcnow() - timedelta(seconds=FAULT_REPAIR_SECONDS - 1)
+    await coordinator._async_handle_snapshot(
+        _snap(EngineState.OFFLINE_FAULT, fault_since=recent)
+    )
+    assert (
+        ir.async_get(hass).async_get_issue(DOMAIN, coordinator._repair_issue_id) is None
+    )
+
+
+async def test_repair_issue_payload_has_host_port_minutes(coordinator, hass):
+    """data and translation_placeholders carry exactly host/port/minutes —
+    the old {failures} placeholder no longer exists."""
+    old = dt_util.utcnow() - timedelta(seconds=FAULT_REPAIR_SECONDS + 60)
+    await coordinator._async_handle_snapshot(
+        _snap(EngineState.OFFLINE_FAULT, fault_since=old)
+    )
+    issue = ir.async_get(hass).async_get_issue(DOMAIN, coordinator._repair_issue_id)
+    assert issue is not None
+    assert set(issue.data) == {"host", "port", "minutes"}
+    assert issue.translation_placeholders == issue.data
+    assert issue.data["port"] == "12345"
+    assert issue.data["minutes"] == "6"  # (300 + 60) // 60
+
+
+async def test_repair_minutes_refreshes_across_polls(coordinator, hass):
+    """`minutes` must keep refreshing for the life of the fault, not freeze
+    at whatever value was computed when the issue was first raised — a
+    2-hour outage should not still show the created-at value."""
+    fault_since = dt_util.utcnow() - timedelta(seconds=310)
+    await coordinator._async_handle_snapshot(
+        _snap(EngineState.OFFLINE_FAULT, fault_since=fault_since)
+    )
+    issue = ir.async_get(hass).async_get_issue(DOMAIN, coordinator._repair_issue_id)
+    assert issue is not None
+    assert issue.data["minutes"] == "5"  # 310 // 60
+
+    # Same fault, further aged: the coordinator must recompute, not reuse
+    # the value captured on the first call.
+    fault_since = dt_util.utcnow() - timedelta(seconds=7300)
+    await coordinator._async_handle_snapshot(
+        _snap(EngineState.OFFLINE_FAULT, fault_since=fault_since)
+    )
+    issue = ir.async_get(hass).async_get_issue(DOMAIN, coordinator._repair_issue_id)
+    assert issue is not None
+    assert issue.data["minutes"] == "121"  # 7300 // 60
+
+
+# --- state-transition logging: the replacement for the old ERROR spew -----
+
+
+async def test_state_transition_logging(coordinator, caplog):
+    """Entering FAULT logs exactly one WARNING; any other transition logs
+    INFO; a repeated same-state snapshot logs nothing. This is now the only
+    trail of connection state changes, since _async_handle_snapshot never
+    raises."""
+    logger_name = "custom_components.solarmax.coordinator"
+    caplog.set_level(logging.INFO, logger=logger_name)
+
+    def records() -> list[logging.LogRecord]:
+        return [r for r in caplog.records if r.name == logger_name]
+
+    # A startup fault log identifies the unreachable inverter directly.
+    assert coordinator.data is None
+    await coordinator._async_handle_snapshot(_snap(EngineState.OFFLINE_FAULT))
+    assert len(records()) == 1
+    assert records()[0].levelname == "WARNING"
+    assert "192.168.1.100:12345" in records()[0].getMessage()
+    coordinator.data = _snap(EngineState.OFFLINE_FAULT)
+    caplog.clear()
+
+    # OFFLINE_FAULT -> OFFLINE_EXPECTED: one INFO.
+    await coordinator._async_handle_snapshot(_snap(EngineState.OFFLINE_EXPECTED))
+    assert len(records()) == 1
+    assert records()[0].levelname == "INFO"
+    coordinator.data = _snap(EngineState.OFFLINE_EXPECTED)
+    caplog.clear()
+
+    # OFFLINE_EXPECTED -> OFFLINE_EXPECTED (no change): nothing logged.
+    await coordinator._async_handle_snapshot(_snap(EngineState.OFFLINE_EXPECTED))
+    assert records() == []
+
+
+# --- last_successful_update: local-time semantics (KDY midnight reset) -----
+
+
+async def test_last_successful_update_returns_local_time(coordinator, hass):
+    """Convert engine timestamps to local time for midnight policies."""
+    await hass.config.async_set_time_zone("Europe/Berlin")
+    utc_now = dt_util.utcnow()
+    coordinator.data = _snap(
+        EngineState.ONLINE, diagnostics={"last_successful_poll": utc_now}
+    )
+    result = coordinator.last_successful_update
+    assert result == dt_util.as_local(utc_now)
+    assert result.utcoffset() != timedelta(0)
+
+
+async def test_last_successful_update_none_when_unavailable(coordinator):
+    """No data yet, or a snapshot without the diagnostics key, both read as
+    None rather than raising."""
+    assert coordinator.last_successful_update is None
+
+    coordinator.data = _snap(EngineState.ONLINE, diagnostics={})
+    assert coordinator.last_successful_update is None
+
+
+# --- Unexpected engine errors -----------------------------------------------
+
+
+async def test_engine_exception_restates_previous_snapshot_as_fault(coordinator):
+    """An unexpected exception from the engine must not escape
+    _async_update_data; the previous snapshot's values are preserved."""
+    coordinator.data = _snap(
+        EngineState.ONLINE, values={"PAC": {"value": 1500.0, "raw_value": 3000}}
+    )
+    coordinator._engine = _StubEngine(exc=RuntimeError("boom"))
+
+    snapshot = await coordinator._async_update_data()
+
+    assert snapshot.state is EngineState.OFFLINE_FAULT
+    assert snapshot.values == {"PAC": {"value": 1500.0, "raw_value": 3000}}
+    assert snapshot.fault_since is not None
+
+
+async def test_engine_exception_with_no_previous_data_builds_empty_fault(
+    coordinator,
+):
+    """If the very first poll raises, there is no previous snapshot to
+    restate — fall back to an empty OFFLINE_FAULT snapshot."""
+    assert coordinator.data is None
+    coordinator._engine = _StubEngine(exc=RuntimeError("boom"))
+
+    snapshot = await coordinator._async_update_data()
+
+    assert snapshot.state is EngineState.OFFLINE_FAULT
+    assert snapshot.values == {}
+    assert snapshot.fault_since is not None
+
+
+async def test_engine_exception_preserves_existing_fault_since(coordinator):
+    """A second unrelated exception while already faulted must not push
+    fault_since forward."""
+    original_fault_since = dt_util.utcnow() - timedelta(seconds=120)
+    coordinator.data = _snap(
+        EngineState.OFFLINE_FAULT, fault_since=original_fault_since
+    )
+    coordinator._engine = _StubEngine(exc=RuntimeError("boom again"))
+
+    snapshot = await coordinator._async_update_data()
+
+    assert snapshot.fault_since == original_fault_since
+
+
+# --- sun_below_threshold: ported from the removed _is_night_time -----------
+
+
+async def test_sun_below_threshold_with_sun_component(coordinator):
+    """Test threshold detection with sun component."""
     coordinator.hass.states.async_set("sun.sun", "below_horizon")
-    assert coordinator._is_night_time() is True
+    assert coordinator.sun_below_threshold() is True
 
-    # Sun component showing above horizon
     coordinator.hass.states.async_set("sun.sun", "above_horizon")
-    assert coordinator._is_night_time() is False
+    assert coordinator.sun_below_threshold() is False
 
 
-async def test_is_night_time_dusk_twilight(coordinator):
-    """Test that low sun elevation above the horizon is treated as night."""
-    # Sun above horizon but at low elevation (dusk twilight window)
+async def test_sun_below_threshold_dusk_twilight(coordinator):
+    """Test that low sun elevation above the horizon is treated as below-threshold."""
     coordinator.hass.states.async_set("sun.sun", "above_horizon", {"elevation": 2.0})
-    assert coordinator._is_night_time() is True
+    assert coordinator.sun_below_threshold() is True
 
-    # Sun above horizon with high elevation (broad daylight)
     coordinator.hass.states.async_set("sun.sun", "above_horizon", {"elevation": 30.0})
-    assert coordinator._is_night_time() is False
+    assert coordinator.sun_below_threshold() is False
 
-    # Sun above horizon with no elevation attribute available
     coordinator.hass.states.async_set("sun.sun", "above_horizon", {})
-    assert coordinator._is_night_time() is False
+    assert coordinator.sun_below_threshold() is False
 
 
-async def test_is_night_time_configurable_twilight_threshold(
+async def test_sun_below_threshold_configurable_twilight_threshold(
     hass: HomeAssistant,
 ):
     """Test that the twilight elevation threshold is configurable."""
@@ -154,276 +369,66 @@ async def test_is_night_time_configurable_twilight_threshold(
     )
     custom_coordinator = SolarmaxCoordinator(hass, entry)
 
-    # Elevation of 7 degrees is below the custom 10-degree threshold, so it
-    # should be treated as night even though it's above the default 5-degree
-    # threshold used elsewhere.
     hass.states.async_set("sun.sun", "above_horizon", {"elevation": 7.0})
-    assert custom_coordinator._is_night_time() is True
+    assert custom_coordinator.sun_below_threshold() is True
 
-    # Elevation above the custom threshold is still daytime.
     hass.states.async_set("sun.sun", "above_horizon", {"elevation": 15.0})
-    assert custom_coordinator._is_night_time() is False
+    assert custom_coordinator.sun_below_threshold() is False
 
 
-def test_is_night_time_fallback(coordinator):
-    """Test night time detection fallback logic."""
-    # No sun component state exists, so the time-based fallback is used
+def test_sun_below_threshold_fallback(coordinator):
+    """Test the clock-based fallback used when no sun component exists."""
     with patch("custom_components.solarmax.coordinator.dt_util.now") as mock_now:
-        # Test night time (22:00)
         mock_time = MagicMock()
         mock_time.hour = 22
         mock_now.return_value = mock_time
-        assert coordinator._is_night_time() is True
+        assert coordinator.sun_below_threshold() is True
 
-        # Test day time (14:00)
         mock_time.hour = 14
-        assert coordinator._is_night_time() is False
+        assert coordinator.sun_below_threshold() is False
 
-        # Test early morning (05:00)
         mock_time.hour = 5
-        assert coordinator._is_night_time() is True
+        assert coordinator.sun_below_threshold() is True
 
 
-def test_consecutive_failures_tracking(coordinator):
-    """Test consecutive failures tracking."""
-    assert coordinator.consecutive_failures == 0
-
-    coordinator._consecutive_failures = 3
-    assert coordinator.consecutive_failures == 3
+# --- device-info properties, read from snapshot.values ----------------------
 
 
-def test_expected_offline_property(coordinator):
-    """Test expected offline property."""
-    assert coordinator.is_expected_offline is False
-
-    coordinator._is_expected_offline = True
-    assert coordinator.is_expected_offline is True
-
-
-@patch("custom_components.solarmax.coordinator.SolarmaxAPI")
-async def test_coordinator_recovery_after_failures(mock_api_class, coordinator):
-    """Test recovery after multiple failures."""
-    mock_api = MagicMock()
-    mock_api_class.return_value = mock_api
-    coordinator.api = mock_api
-
-    # Simulate some failures first
-    coordinator._consecutive_failures = 3
-
-    # Then successful update
-    mock_api.get_data.return_value = {"PAC": {"value": 1500.0, "raw_value": 3000}}
-
-    with patch.object(coordinator, "_is_night_time", return_value=False):
-        result = await coordinator._async_update_data()
-
-    assert result is not None
-    assert coordinator.consecutive_failures == 0
-    assert coordinator.last_successful_update is not None
-
-
-async def test_daytime_failure_after_night_clears_stale_state(coordinator, caplog):
-    """A genuine day-time outage after a night must not stay 'offline_night'."""
-    caplog.set_level(logging.DEBUG, logger="custom_components.solarmax.coordinator")
-    mock_api = MagicMock()
-    mock_api.get_data.side_effect = SolarmaxConnectionError("Connection failed")
-    mock_api.host = "192.168.1.100"
-    mock_api.port = 12345
-    coordinator.api = mock_api
-
-    # A full night of expected-offline failures
-    with patch.object(coordinator, "_is_night_time", return_value=True):
-        for _ in range(10):
-            with pytest.raises(UpdateFailed):
-                await coordinator._async_update_data()
-
-    assert coordinator.is_expected_offline is True
-
-    # Morning: the inverter is still down — a real outage, not a night
-    with patch.object(coordinator, "_is_night_time", return_value=False):
-        with pytest.raises(UpdateFailed):
-            await coordinator._async_update_data()
-
-    assert coordinator.is_expected_offline is False
-    assert coordinator.consecutive_failures == 1
-
-    # The escalation starts over and reaches ERROR on the 4th day-time failure.
-    # Keep the whole loop inside the day patch: the real _is_night_time() uses
-    # the wall clock, so this test must not depend on the time of day it runs.
-    with patch.object(coordinator, "_is_night_time", return_value=False):
-        for _ in range(3):
-            with pytest.raises(UpdateFailed):
-                await coordinator._async_update_data()
-
-    assert any(
-        "failure #4" in record.message and record.levelno == logging.ERROR
-        for record in caplog.records
-    )
-
-
-async def test_empty_data_not_logged_as_unexpected_error(coordinator, caplog):
-    """Empty inverter response must not hit the generic 'Unexpected error' path."""
-    caplog.set_level(logging.DEBUG, logger="custom_components.solarmax.coordinator")
-    mock_api = MagicMock()
-    mock_api.get_data.return_value = {}
-    coordinator.api = mock_api
-
-    with patch.object(coordinator, "_is_night_time", return_value=False):
-        with pytest.raises(UpdateFailed, match=r"Timeout \(attempt 1\)"):
-            await coordinator._async_update_data()
-
-    assert coordinator.consecutive_failures == 1
-    assert not any("Unexpected error" in r.message for r in caplog.records)
-
-
-async def test_protocol_error_escalates_like_connection_error(coordinator, caplog):
-    """Protocol errors must go through the same WARNING/ERROR/DEBUG escalation."""
-    caplog.set_level(logging.DEBUG, logger="custom_components.solarmax.coordinator")
-    mock_api = MagicMock()
-    mock_api.get_data.side_effect = SolarmaxProtocolError("Checksum mismatch")
-    mock_api.host = "192.168.1.100"
-    mock_api.port = 12345
-    coordinator.api = mock_api
-
-    with patch.object(coordinator, "_is_night_time", return_value=False):
-        for _ in range(3):
-            with pytest.raises(UpdateFailed):
-                await coordinator._async_update_data()
-        with pytest.raises(UpdateFailed, match=r"Protocol error \(attempt 4\)"):
-            await coordinator._async_update_data()
-
-    assert coordinator.consecutive_failures == 4
-    assert any(
-        "failure #4" in record.message and record.levelno == logging.ERROR
-        for record in caplog.records
-    )
-    assert not any("Unexpected error" in r.message for r in caplog.records)
-
-
-async def test_repair_issue_created_after_sustained_daytime_failures(coordinator, hass):
-    """A repair issue is raised after 4 consecutive day-time failures."""
-    from homeassistant.helpers.issue_registry import async_get
-
-    mock_api = MagicMock()
-    mock_api.get_data.side_effect = SolarmaxConnectionError("Connection failed")
-    mock_api.host = "192.168.1.100"
-    mock_api.port = 12345
-    coordinator.api = mock_api
-
-    with patch.object(coordinator, "_is_night_time", return_value=False):
-        for _ in range(4):
-            with pytest.raises(UpdateFailed):
-                await coordinator._async_update_data()
-
-    issue = async_get(hass).async_get_issue(DOMAIN, "connection_issues_test_entry")
-    assert issue is not None
-    assert issue.translation_key == "connection_issues"
-    assert issue.translation_placeholders == {
-        "host": "192.168.1.100",
-        "port": "12345",
-        "failures": "4",
-    }
-
-
-async def test_repair_issue_deleted_after_recovery(coordinator, hass):
-    """A raised repair issue is cleared once the connection is restored."""
-    from homeassistant.helpers.issue_registry import async_get
-
-    mock_api = MagicMock()
-    mock_api.get_data.side_effect = SolarmaxConnectionError("Connection failed")
-    mock_api.host = "192.168.1.100"
-    mock_api.port = 12345
-    coordinator.api = mock_api
-
-    with patch.object(coordinator, "_is_night_time", return_value=False):
-        for _ in range(4):
-            with pytest.raises(UpdateFailed):
-                await coordinator._async_update_data()
-
-    assert (
-        async_get(hass).async_get_issue(DOMAIN, "connection_issues_test_entry")
-        is not None
-    )
-
-    mock_api.get_data.side_effect = None
-    mock_api.get_data.return_value = {"PAC": {"value": 1500.0, "raw_value": 3000}}
-    with patch.object(coordinator, "_is_night_time", return_value=False):
-        await coordinator._async_update_data()
-
-    assert (
-        async_get(hass).async_get_issue(DOMAIN, "connection_issues_test_entry") is None
-    )
-
-
-async def test_repair_issue_cleared_even_if_flag_reset_by_restart(coordinator, hass):
-    """Recovery clears a stale repair issue even if it predates this session.
-
-    The coordinator's in-memory flag resets on restart, so deletion must not
-    depend on it — the issue registry itself decides whether to delete.
-    """
-    from homeassistant.helpers.issue_registry import (
-        IssueSeverity,
-        async_create_issue,
-        async_get,
-    )
-
-    # Simulate an issue that was raised before a restart (flag is now False)
-    async_create_issue(
-        hass,
-        DOMAIN,
-        "connection_issues_test_entry",
-        is_fixable=True,
-        severity=IssueSeverity.ERROR,
-        translation_key="connection_issues",
-        translation_placeholders={
-            "host": "192.168.1.100",
-            "port": "12345",
-            "failures": "4",
+async def test_device_info_props_from_snapshot_values(coordinator):
+    """device_model/sw_version/serial_number read from the latest
+    snapshot's values via DEVICE_TYPE_MAP, with no separate fetch step."""
+    coordinator.data = _snap(
+        EngineState.ONLINE,
+        values={
+            "TYP": {"value": 20650, "raw_value": 20650},
+            "SWV": {"value": 314, "raw_value": 314},
+            "BDN": {"value": 5, "raw_value": 5},
+            "DIN": {"value": 123456, "raw_value": 123456},
         },
     )
-    assert (
-        async_get(hass).async_get_issue(DOMAIN, "connection_issues_test_entry")
-        is not None
-    )
-
-    mock_api = MagicMock()
-    mock_api.get_data.return_value = {"PAC": {"value": 1500.0, "raw_value": 3000}}
-    coordinator.api = mock_api
-
-    with patch.object(coordinator, "_is_night_time", return_value=False):
-        await coordinator._async_update_data()
-
-    assert (
-        async_get(hass).async_get_issue(DOMAIN, "connection_issues_test_entry") is None
-    )
+    assert coordinator.device_model == "SolarMax 7TP2"
+    assert coordinator.sw_version == "314 (build 5)"
+    assert coordinator.serial_number == "123456"
 
 
-async def test_repair_issue_deleted_when_night_failures_start(coordinator, hass):
-    """A repair issue is cleared once the night-time offline period starts."""
-    from homeassistant.helpers.issue_registry import async_get
+async def test_device_info_props_none_without_data(coordinator):
+    """Before the first poll, device-info properties read as None."""
+    assert coordinator.data is None
+    assert coordinator.device_model is None
+    assert coordinator.sw_version is None
+    assert coordinator.serial_number is None
 
-    mock_api = MagicMock()
-    mock_api.get_data.side_effect = SolarmaxConnectionError("Connection failed")
-    mock_api.host = "192.168.1.100"
-    mock_api.port = 12345
-    coordinator.api = mock_api
 
-    with patch.object(coordinator, "_is_night_time", return_value=False):
-        for _ in range(4):
-            with pytest.raises(UpdateFailed):
-                await coordinator._async_update_data()
+# --- engine property ---------------------------------------------------------
 
-    assert (
-        async_get(hass).async_get_issue(DOMAIN, "connection_issues_test_entry")
-        is not None
-    )
 
-    with patch.object(coordinator, "_is_night_time", return_value=True):
-        with pytest.raises(UpdateFailed):
-            await coordinator._async_update_data()
+def test_engine_property_returns_the_connection_engine(coordinator):
+    """engine exposes the ConnectionEngine the coordinator polls."""
+    assert isinstance(coordinator.engine, ConnectionEngine)
+    assert coordinator.engine is coordinator._engine
 
-    assert (
-        async_get(hass).async_get_issue(DOMAIN, "connection_issues_test_entry") is None
-    )
+
+# --- midnight handler: kept verbatim from the old suite ---------------------
 
 
 async def test_async_handle_midnight_notifies_listeners(hass, mock_config_entry):
@@ -435,3 +440,91 @@ async def test_async_handle_midnight_notifies_listeners(hass, mock_config_entry)
         coordinator.async_handle_midnight(dt_util.now())
 
     notify.assert_called_once()
+
+
+# --- Repair-issue episodes and the dismissal window -------------------------
+
+
+async def test_repair_dismissal_suppresses_recreation_within_24h(coordinator, hass):
+    """Completing the fix flow (issue deleted) while the fault persists must
+    not immediately re-raise the issue on the very next poll."""
+    old = dt_util.utcnow() - timedelta(seconds=FAULT_REPAIR_SECONDS + 60)
+    await coordinator._async_handle_snapshot(
+        _snap(EngineState.OFFLINE_FAULT, fault_since=old)
+    )
+    assert (
+        ir.async_get(hass).async_get_issue(DOMAIN, coordinator._repair_issue_id)
+        is not None
+    )
+
+    # User completes the fix flow: HA deletes the issue on CREATE_ENTRY.
+    ir.async_delete_issue(hass, DOMAIN, coordinator._repair_issue_id)
+
+    # Same fault, further aged, on the next poll.
+    older = dt_util.utcnow() - timedelta(seconds=FAULT_REPAIR_SECONDS + 120)
+    await coordinator._async_handle_snapshot(
+        _snap(EngineState.OFFLINE_FAULT, fault_since=older)
+    )
+    assert (
+        ir.async_get(hass).async_get_issue(DOMAIN, coordinator._repair_issue_id) is None
+    )
+
+
+async def test_repair_recreated_after_24h_dismiss_window_elapses(coordinator, hass):
+    """Past the 24h suppression window, a still-ongoing fault re-raises."""
+    old = dt_util.utcnow() - timedelta(seconds=FAULT_REPAIR_SECONDS + 60)
+    await coordinator._async_handle_snapshot(
+        _snap(EngineState.OFFLINE_FAULT, fault_since=old)
+    )
+    ir.async_delete_issue(hass, DOMAIN, coordinator._repair_issue_id)
+
+    # First poll after dismissal is still suppressed (proves the window works).
+    await coordinator._async_handle_snapshot(
+        _snap(EngineState.OFFLINE_FAULT, fault_since=old)
+    )
+    assert (
+        ir.async_get(hass).async_get_issue(DOMAIN, coordinator._repair_issue_id) is None
+    )
+
+    # Simulate >24h elapsed since the dismissal.
+    coordinator._dismissed_at = dt_util.utcnow() - timedelta(hours=24, seconds=1)
+    await coordinator._async_handle_snapshot(
+        _snap(EngineState.OFFLINE_FAULT, fault_since=old)
+    )
+    assert (
+        ir.async_get(hass).async_get_issue(DOMAIN, coordinator._repair_issue_id)
+        is not None
+    )
+
+
+async def test_repair_new_episode_after_recovery_recreates_immediately(
+    coordinator, hass
+):
+    """Recovery (or reclassification via EXPECTED) ends the dismissal
+    suppression — a brand-new fault episode raises immediately."""
+    old = dt_util.utcnow() - timedelta(seconds=FAULT_REPAIR_SECONDS + 60)
+    await coordinator._async_handle_snapshot(
+        _snap(EngineState.OFFLINE_FAULT, fault_since=old)
+    )
+    ir.async_delete_issue(hass, DOMAIN, coordinator._repair_issue_id)
+    await coordinator._async_handle_snapshot(
+        _snap(EngineState.OFFLINE_FAULT, fault_since=old)
+    )
+    assert (
+        ir.async_get(hass).async_get_issue(DOMAIN, coordinator._repair_issue_id) is None
+    )
+
+    # Recovery ends the episode and clears the dismissal anchor.
+    await coordinator._async_handle_snapshot(_snap(EngineState.ONLINE))
+    assert coordinator._dismissed_at is None
+    assert coordinator._issue_raised is False
+
+    # A brand-new fault raises immediately, with no 24h suppression left over.
+    new_old = dt_util.utcnow() - timedelta(seconds=FAULT_REPAIR_SECONDS + 10)
+    await coordinator._async_handle_snapshot(
+        _snap(EngineState.OFFLINE_FAULT, fault_since=new_old)
+    )
+    assert (
+        ir.async_get(hass).async_get_issue(DOMAIN, coordinator._repair_issue_id)
+        is not None
+    )

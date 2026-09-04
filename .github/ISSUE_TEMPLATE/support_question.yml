@@ -1,0 +1,67 @@
+name: Support question
+description: Ask for help configuring or using the integration
+title: "[Question]: "
+labels:
+  - question
+body:
+  - type: markdown
+    attributes:
+      value: Read the troubleshooting guide before submitting a question.
+
+  - type: textarea
+    id: question
+    attributes:
+      label: Question
+      description: Describe what you want to achieve and where you are stuck.
+    validations:
+      required: true
+
+  - type: textarea
+    id: attempted
+    attributes:
+      label: Steps already tried
+    validations:
+      required: true
+
+  - type: input
+    id: versions
+    attributes:
+      label: Home Assistant and integration versions
+      placeholder: Home Assistant 2026.9.0, Solarmax 1.3.3
+    validations:
+      required: true
+
+  - type: input
+    id: inverter
+    attributes:
+      label: Inverter model
+      placeholder: SolarMax 7TP2
+    validations:
+      required: true
+
+  - type: dropdown
+    id: connection_state
+    attributes:
+      label: Status Code connection state
+      options:
+        - unknown
+        - online
+        - offline_expected
+        - offline_fault
+        - Not sure
+    validations:
+      required: true
+
+  - type: textarea
+    id: context
+    attributes:
+      label: Relevant settings or context
+      description: Remove host names, addresses, credentials, and other private data.
+
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Submission checks
+      options:
+        - label: I read the troubleshooting guide and searched existing issues.
+          required: true
