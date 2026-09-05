@@ -1,17 +1,25 @@
 """Test the Solarmax config flow."""
 
+import asyncio
+from typing import Any
 from unittest.mock import AsyncMock, patch
 
 import pytest
 from homeassistant import config_entries, data_entry_flow
+from homeassistant.config_entries import ConfigFlowResult
 from homeassistant.core import HomeAssistant
 from homeassistant.data_entry_flow import FlowResultType
 from pytest_homeassistant_custom_component.common import MockConfigEntry
 
 from custom_components.solarmax import async_update_listener
-from custom_components.solarmax.config_flow import CannotConnect, validate_input
-from custom_components.solarmax.configuration import split_entry_input
-from custom_components.solarmax.connection import LinkClosed, LinkTimeout
+from custom_components.solarmax.configuration import (
+    OPTION_DEFAULTS,
+    CannotConnect,
+    endpoint_unique_id,
+    split_entry_input,
+    validate_connection,
+)
+from custom_components.solarmax.connection import LinkClosed, LinkTimeout, SolarmaxLink
 from custom_components.solarmax.const import (
     CONF_ADDRESS,
     CONF_DEVICE_NAME,
@@ -21,14 +29,12 @@ from custom_components.solarmax.const import (
     CONF_TWILIGHT_ELEVATION_THRESHOLD,
     CONF_UPDATE_INTERVAL,
     CONF_VERIFY_CHECKSUM,
-    DEFAULT_NIGHT_KEEP_VALUES,
-    DEFAULT_TWILIGHT_ELEVATION_THRESHOLD,
     DOMAIN,
 )
 from custom_components.solarmax.protocol import build_request, calculate_checksum
 
-_LINK_REQUEST = "custom_components.solarmax.config_flow.SolarmaxLink.request"
-_LINK_CLOSE = "custom_components.solarmax.config_flow.SolarmaxLink.close"
+_LINK_REQUEST = "custom_components.solarmax.configuration.SolarmaxLink.request"
+_LINK_CLOSE = "custom_components.solarmax.configuration.SolarmaxLink.close"
 
 
 def test_split_entry_input_separates_connection_data_from_options() -> None:
@@ -68,6 +74,125 @@ def _response(data: str, *, checksum: str | None = None) -> str:
     return response.replace("$$$$", checksum or calculate_checksum(checksum_data))
 
 
+def _configured_endpoint_entry(
+    *, host: str, port: int, address: int
+) -> MockConfigEntry:
+    """Create a current-version entry for one inverter endpoint."""
+    return MockConfigEntry(
+        domain=DOMAIN,
+        title="Existing inverter",
+        data={
+            CONF_HOST: host,
+            CONF_PORT: port,
+            CONF_ADDRESS: address,
+            CONF_DEVICE_NAME: "Existing inverter",
+        },
+        options=dict(OPTION_DEFAULTS),
+        unique_id=endpoint_unique_id(host, port, address),
+        version=2,
+        minor_version=1,
+    )
+
+
+async def _submit_user_flow(
+    hass: HomeAssistant, *, host: str, port: int, address: int
+) -> ConfigFlowResult:
+    """Submit one complete initial setup flow."""
+    form = await hass.config_entries.flow.async_init(
+        DOMAIN, context={"source": config_entries.SOURCE_USER}
+    )
+    return await hass.config_entries.flow.async_configure(
+        form["flow_id"],
+        {
+            CONF_HOST: host,
+            CONF_PORT: port,
+            CONF_ADDRESS: address,
+            CONF_DEVICE_NAME: "New inverter",
+            **OPTION_DEFAULTS,
+        },
+    )
+
+
+@patch.object(SolarmaxLink, "request", new_callable=AsyncMock)
+async def test_setup_rejects_same_endpoint_with_different_address(
+    mock_request: AsyncMock, hass: HomeAssistant
+) -> None:
+    """Only one config entry may claim an inverter TCP endpoint."""
+    mock_request.return_value = _response("PAC=03E8")
+    existing = _configured_endpoint_entry(host="192.0.2.5", port=12345, address=1)
+    existing.add_to_hass(hass)
+
+    result = await _submit_user_flow(hass, host="192.0.2.5", port=12345, address=2)
+
+    assert result["type"] is FlowResultType.ABORT
+    assert result["reason"] == "already_configured"
+
+
+@patch.object(SolarmaxLink, "request", new_callable=AsyncMock)
+async def test_setup_uses_address_aware_unique_id(
+    mock_request: AsyncMock, hass: HomeAssistant
+) -> None:
+    """The inverter address participates in config entry identity."""
+    mock_request.return_value = _response("PAC=03E8")
+
+    result = await _submit_user_flow(hass, host="192.0.2.6", port=12345, address=7)
+
+    assert result["type"] is FlowResultType.CREATE_ENTRY
+    assert result["result"].unique_id == "192.0.2.6:12345:7"
+
+
+@patch.object(SolarmaxLink, "request", new_callable=AsyncMock)
+async def test_setup_creates_split_data_and_options(
+    mock_request: AsyncMock, hass: HomeAssistant
+) -> None:
+    """Connection identity and preferences use their canonical stores."""
+    mock_request.return_value = _response("PAC=03E8")
+
+    result = await _submit_user_flow(hass, host="192.0.2.7", port=12345, address=3)
+
+    assert result["data"] == {
+        CONF_HOST: "192.0.2.7",
+        CONF_PORT: 12345,
+        CONF_ADDRESS: 3,
+        CONF_DEVICE_NAME: "New inverter",
+    }
+    assert result["options"] == OPTION_DEFAULTS
+
+
+async def test_setup_serializes_concurrent_claims_for_endpoint(
+    hass: HomeAssistant,
+) -> None:
+    """Concurrent flows cannot both claim the same TCP endpoint."""
+    probe_started = asyncio.Event()
+    release_probe = asyncio.Event()
+
+    async def blocked_probe(**kwargs: Any) -> None:
+        probe_started.set()
+        await release_probe.wait()
+
+    with patch(
+        "custom_components.solarmax.config_flow.validate_connection",
+        side_effect=blocked_probe,
+    ):
+        first_submission = asyncio.create_task(
+            _submit_user_flow(hass, host="192.0.2.8", port=12345, address=1)
+        )
+        await probe_started.wait()
+        second_submission = asyncio.create_task(
+            _submit_user_flow(hass, host="192.0.2.8", port=12345, address=2)
+        )
+        await asyncio.sleep(0)
+        assert not second_submission.done()
+        release_probe.set()
+        first, second = await asyncio.gather(first_submission, second_submission)
+
+    assert sorted(result["type"] for result in (first, second)) == [
+        FlowResultType.ABORT,
+        FlowResultType.CREATE_ENTRY,
+    ]
+    assert len(hass.config_entries.async_entries(DOMAIN)) == 1
+
+
 async def test_form(hass: HomeAssistant) -> None:
     """Test we get the form."""
     result = await hass.config_entries.flow.async_init(
@@ -104,17 +229,14 @@ async def test_form_successful_connection(mock_request, hass: HomeAssistant) -> 
         CONF_PORT: 12345,
         CONF_ADDRESS: 1,
         CONF_DEVICE_NAME: "Test Inverter",
-        CONF_UPDATE_INTERVAL: 30,
-        CONF_VERIFY_CHECKSUM: True,
-        CONF_NIGHT_KEEP_VALUES: DEFAULT_NIGHT_KEEP_VALUES,
-        CONF_TWILIGHT_ELEVATION_THRESHOLD: DEFAULT_TWILIGHT_ELEVATION_THRESHOLD,
     }
+    assert result2["options"] == OPTION_DEFAULTS
 
 
 @patch(_LINK_CLOSE, new_callable=AsyncMock)
 @patch(_LINK_REQUEST, new_callable=AsyncMock)
-async def test_validate_input_closes_probe_link_on_success(
-    mock_request, mock_close, hass: HomeAssistant
+async def test_validate_connection_closes_probe_link_on_success(
+    mock_request, mock_close
 ) -> None:
     """The `finally: await link.close()` is a hard invariant (spec: a leaked
     probe socket locks the single-client inverter out for ~128s and would
@@ -123,14 +245,11 @@ async def test_validate_input_closes_probe_link_on_success(
     """
     mock_request.return_value = _response("PAC=03E8")
 
-    await validate_input(
-        hass,
-        {
-            CONF_HOST: "192.168.1.100",
-            CONF_PORT: 12345,
-            CONF_ADDRESS: 2,
-            CONF_DEVICE_NAME: "Test Inverter",
-        },
+    await validate_connection(
+        host="192.168.1.100",
+        port=12345,
+        address=2,
+        verify_checksum=True,
     )
 
     mock_close.assert_awaited_once()
@@ -139,8 +258,8 @@ async def test_validate_input_closes_probe_link_on_success(
 
 @patch(_LINK_CLOSE, new_callable=AsyncMock)
 @patch(_LINK_REQUEST, new_callable=AsyncMock)
-async def test_validate_input_closes_probe_link_on_failure(
-    mock_request, mock_close, hass: HomeAssistant
+async def test_validate_connection_closes_probe_link_on_failure(
+    mock_request, mock_close
 ) -> None:
     """Same invariant on the failure path — and covers the LinkClosed arm of
     the except tuple, which no other test exercises.
@@ -148,86 +267,73 @@ async def test_validate_input_closes_probe_link_on_failure(
     mock_request.side_effect = LinkClosed("peer closed the connection")
 
     with pytest.raises(CannotConnect):
-        await validate_input(
-            hass,
-            {
-                CONF_HOST: "192.168.1.100",
-                CONF_PORT: 12345,
-                CONF_DEVICE_NAME: "Test Inverter",
-            },
+        await validate_connection(
+            host="192.168.1.100",
+            port=12345,
+            address=1,
+            verify_checksum=True,
         )
 
     mock_close.assert_awaited_once()
 
 
 @patch(_LINK_REQUEST, new_callable=AsyncMock)
-async def test_validate_input_rejects_non_maxcomm_response(
-    mock_request, hass: HomeAssistant
-) -> None:
+async def test_validate_connection_rejects_non_maxcomm_response(mock_request) -> None:
     """A TCP service that merely terminates with `}` is not an inverter."""
     mock_request.return_value = "not-a-maxcomm-frame}"
 
     with pytest.raises(CannotConnect):
-        await validate_input(
-            hass,
-            {
-                CONF_HOST: "192.168.1.100",
-                CONF_PORT: 12345,
-                CONF_DEVICE_NAME: "Test Inverter",
-            },
+        await validate_connection(
+            host="192.168.1.100",
+            port=12345,
+            address=1,
+            verify_checksum=True,
         )
 
 
 @patch(_LINK_REQUEST, new_callable=AsyncMock)
-async def test_validate_input_rejects_invalid_checksum_by_default(
-    mock_request, hass: HomeAssistant
+async def test_validate_connection_rejects_invalid_checksum(
+    mock_request,
 ) -> None:
-    """Default setup validation rejects corrupted MaxComm frames."""
+    """Checksum-enabled setup validation rejects corrupted MaxComm frames."""
     mock_request.return_value = _response("PAC=03E8", checksum="0000")
 
     with pytest.raises(CannotConnect):
-        await validate_input(
-            hass,
-            {
-                CONF_HOST: "192.168.1.100",
-                CONF_PORT: 12345,
-                CONF_DEVICE_NAME: "Test Inverter",
-            },
+        await validate_connection(
+            host="192.168.1.100",
+            port=12345,
+            address=1,
+            verify_checksum=True,
         )
 
 
 @patch(_LINK_REQUEST, new_callable=AsyncMock)
-async def test_validate_input_honors_disabled_checksum(
-    mock_request, hass: HomeAssistant
+async def test_validate_connection_honors_disabled_checksum(
+    mock_request,
 ) -> None:
     """The user's ignore-checksum choice also applies to the setup probe."""
     mock_request.return_value = _response("PAC=03E8", checksum="0000")
 
-    await validate_input(
-        hass,
-        {
-            CONF_HOST: "192.168.1.100",
-            CONF_PORT: 12345,
-            CONF_DEVICE_NAME: "Test Inverter",
-            CONF_VERIFY_CHECKSUM: False,
-        },
+    await validate_connection(
+        host="192.168.1.100",
+        port=12345,
+        address=1,
+        verify_checksum=False,
     )
 
 
 @patch(_LINK_REQUEST, new_callable=AsyncMock)
-async def test_validate_input_accepts_not_applicable_pac(
-    mock_request, hass: HomeAssistant
+async def test_validate_connection_accepts_not_applicable_pac(
+    mock_request,
 ) -> None:
     """A valid inverter may report PAC as unavailable while not producing."""
     mock_request.return_value = _response("PAC")
 
-    await validate_input(
-        hass,
-        {
-            CONF_HOST: "192.168.1.100",
-            CONF_PORT: 12345,
-            CONF_DEVICE_NAME: "Test Inverter",
-        },
+    await validate_connection(
+        host="192.168.1.100",
+        port=12345,
+        address=1,
+        verify_checksum=True,
     )
 
 

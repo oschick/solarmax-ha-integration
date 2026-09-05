@@ -8,10 +8,16 @@ from typing import Any
 import voluptuous as vol
 from homeassistant import config_entries
 from homeassistant.config_entries import ConfigFlowResult
-from homeassistant.core import HomeAssistant, callback
-from homeassistant.exceptions import HomeAssistantError
+from homeassistant.core import callback
 
-from .connection import LinkClosed, LinkTimeout, SolarmaxLink
+from .configuration import (
+    CannotConnect,
+    configuration_mutation_lock,
+    endpoint_unique_id,
+    find_endpoint_conflict,
+    split_entry_input,
+    validate_connection,
+)
 from .const import (
     CONF_ADDRESS,
     CONF_DEVICE_NAME,
@@ -30,7 +36,6 @@ from .const import (
     DEFAULT_VERIFY_CHECKSUM,
     DOMAIN,
 )
-from .protocol import ProtocolError, build_request, parse_response
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -77,24 +82,6 @@ def _build_schema(values: dict[str, Any]) -> vol.Schema:
     )
 
 
-async def validate_input(hass: HomeAssistant, data: dict[str, Any]) -> dict[str, Any]:
-    """Validate setup with a short PAC request."""
-    link = SolarmaxLink(data[CONF_HOST], data[CONF_PORT])
-    try:
-        address = data.get(CONF_ADDRESS, DEFAULT_ADDRESS)
-        raw = await link.request(build_request(address, ["PAC"]))
-        parse_response(
-            raw,
-            data.get(CONF_VERIFY_CHECKSUM, DEFAULT_VERIFY_CHECKSUM),
-        )
-    except (LinkTimeout, LinkClosed, ProtocolError, OSError) as err:
-        raise CannotConnect from err
-    finally:
-        await link.close()
-
-    return {"title": data[CONF_DEVICE_NAME]}
-
-
 class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
     """Handle a config flow for Solarmax Inverter."""
 
@@ -114,20 +101,34 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         errors: dict[str, str] = {}
 
         if user_input is not None:
-            await self.async_set_unique_id(
-                f"{user_input[CONF_HOST]}:{user_input[CONF_PORT]}"
-            )
-            self._abort_if_unique_id_configured()
+            data, options = split_entry_input(user_input)
+            host = data[CONF_HOST]
+            port = data[CONF_PORT]
+            address = data[CONF_ADDRESS]
 
-            try:
-                info = await validate_input(self.hass, user_input)
-            except CannotConnect:
-                errors["base"] = "cannot_connect"
-            except Exception:
-                _LOGGER.exception("Unexpected exception")
-                errors["base"] = "unknown"
-            else:
-                return self.async_create_entry(title=info["title"], data=user_input)
+            async with configuration_mutation_lock(self.hass):
+                if find_endpoint_conflict(self.hass, host, port) is not None:
+                    return self.async_abort(reason="already_configured")
+                await self.async_set_unique_id(endpoint_unique_id(host, port, address))
+                self._abort_if_unique_id_configured()
+                try:
+                    await validate_connection(
+                        host=host,
+                        port=port,
+                        address=address,
+                        verify_checksum=options[CONF_VERIFY_CHECKSUM],
+                    )
+                except CannotConnect:
+                    errors["base"] = "cannot_connect"
+                except Exception:
+                    _LOGGER.exception("Unexpected exception")
+                    errors["base"] = "unknown"
+                else:
+                    if find_endpoint_conflict(self.hass, host, port) is not None:
+                        return self.async_abort(reason="already_configured")
+                    return self.async_create_entry(
+                        title=data[CONF_DEVICE_NAME], data=data, options=options
+                    )
 
         return self.async_show_form(
             step_id="user",
@@ -166,7 +167,3 @@ class OptionsFlow(config_entries.OptionsFlow):
                 "current_port": str(current_data.get(CONF_PORT, DEFAULT_PORT)),
             },
         )
-
-
-class CannotConnect(HomeAssistantError):
-    """Error to indicate we cannot connect."""
