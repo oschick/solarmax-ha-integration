@@ -90,12 +90,12 @@ def _make_device_registry_updater(
             device = device_registry.async_get_device(identifiers={identifier})
         if device is None:
             return
-        device_registry.async_update_device(
-            device.id,
-            model=model,
-            sw_version=coordinator.sw_version,
-            serial_number=coordinator.serial_number,
-        )
+        metadata: dict[str, Any] = {"model": model}
+        if coordinator.sw_version is not None:
+            metadata["sw_version"] = coordinator.sw_version
+        if coordinator.serial_number is not None:
+            metadata["serial_number"] = coordinator.serial_number
+        device_registry.async_update_device(device.id, **metadata)
 
     return _update_device_registry
 

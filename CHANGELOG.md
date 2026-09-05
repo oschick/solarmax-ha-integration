@@ -61,6 +61,8 @@ inverter sleeps.
   offline after dawn starts a new daytime fault episode.
 - Delayed model, firmware, and serial data now refreshes the Home Assistant
   device registry after the inverter becomes available.
+- Partial device-information polls no longer clear firmware or serial data
+  already stored in Home Assistant.
 - Diagnostics no longer expose the inverter serial number.
 - HACS installs the same `solarmax.zip` archive that the release workflow tests
   and attests.
