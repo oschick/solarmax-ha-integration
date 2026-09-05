@@ -14,6 +14,7 @@ from homeassistant.core import HomeAssistant
 from homeassistant.helpers import issue_registry as ir
 
 from .configuration import (
+    TCP_PORT_SCHEMA,
     CannotConnect,
     EntryReloadError,
     async_apply_and_reload,
@@ -83,7 +84,7 @@ class SolarmaxConnectionRepairFlow(RepairsFlow):
             data_schema=vol.Schema(
                 {
                     vol.Required(CONF_HOST, default=values[CONF_HOST]): str,
-                    vol.Required(CONF_PORT, default=values[CONF_PORT]): vol.Coerce(int),
+                    vol.Required(CONF_PORT, default=values[CONF_PORT]): TCP_PORT_SCHEMA,
                 }
             ),
             errors=errors,

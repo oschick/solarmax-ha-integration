@@ -442,6 +442,19 @@ def test_sun_below_threshold_fallback(coordinator):
         assert coordinator.sun_below_threshold() is True
 
 
+@pytest.mark.parametrize("state", ["unavailable", "unknown"])
+def test_unavailable_sun_state_uses_clock_fallback(coordinator, state):
+    """An unusable sun entity must not suppress the clock fallback."""
+    coordinator.hass.states.async_set("sun.sun", state, {})
+
+    with patch("custom_components.solarmax.coordinator.dt_util.now") as mock_now:
+        mock_now.return_value.hour = 22
+        assert coordinator.sun_below_threshold() is True
+        assert coordinator._fast_expected_polling() is False
+
+    assert coordinator.sun_source == "clock_fallback"
+
+
 def test_invalid_sun_elevation_uses_clock_fallback(coordinator):
     """Malformed sun attributes must not break classification or scheduling."""
     coordinator.hass.states.async_set(

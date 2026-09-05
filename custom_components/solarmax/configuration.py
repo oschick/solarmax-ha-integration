@@ -9,6 +9,7 @@ from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from typing import Any, Self
 
+import voluptuous as vol
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.exceptions import HomeAssistantError
@@ -36,6 +37,7 @@ from .protocol import ProtocolError, build_request, parse_response
 _CONFIGURATION_LOCK = "configuration_mutation_lock"
 _LOGGER = logging.getLogger(__name__)
 
+TCP_PORT_SCHEMA = vol.All(vol.Coerce(int), vol.Range(min=1, max=65535))
 CONNECTION_KEYS = (CONF_HOST, CONF_PORT, CONF_ADDRESS, CONF_DEVICE_NAME)
 OPTION_KEYS = (
     CONF_UPDATE_INTERVAL,

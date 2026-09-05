@@ -8,6 +8,7 @@ from datetime import datetime, timedelta
 from typing import Any, cast
 
 from homeassistant.config_entries import ConfigEntry
+from homeassistant.const import STATE_UNAVAILABLE, STATE_UNKNOWN
 from homeassistant.core import HomeAssistant, State, callback
 from homeassistant.helpers.issue_registry import (
     IssueSeverity,
@@ -85,6 +86,7 @@ class SolarmaxCoordinator(DataUpdateCoordinator[EngineSnapshot]):
             verify_checksum=entry_option(
                 entry, CONF_VERIFY_CHECKSUM, DEFAULT_VERIFY_CHECKSUM
             ),
+            today=lambda: dt_util.now().date(),
         )
 
         self._configured_interval = timedelta(
@@ -156,9 +158,13 @@ class SolarmaxCoordinator(DataUpdateCoordinator[EngineSnapshot]):
         except Exception as e:  # noqa: BLE001 - defensive, must not fail a poll
             _LOGGER.debug("Error reading sun.sun: %s", e)
             return None
-        if sun_component is not None:
+        if sun_component is not None and sun_component.state not in (
+            STATE_UNAVAILABLE,
+            STATE_UNKNOWN,
+        ):
             self._sun_source = "sun.sun"
-        return sun_component
+            return sun_component
+        return None
 
     def _clock_fallback_hour(self) -> int:
         """Return the current hour and record use of the clock fallback."""
