@@ -50,21 +50,9 @@
       }
     },
     "error": {
-      "cannot_connect": "Failed to connect to inverter with new settings",
       "invalid_host": "Invalid host address",
       "timeout": "Connection timeout",
       "unknown": "Unexpected error occurred"
-    }
-  },
-  "exceptions": {
-    "connection_error": {
-      "message": "Failed to connect to inverter at {host}:{port}"
-    },
-    "timeout_error": {
-      "message": "Connection timeout after {timeout} seconds"
-    },
-    "protocol_error": {
-      "message": "Communication protocol error: {details}"
     }
   },
   "issues": {
@@ -78,10 +66,6 @@
           }
         }
       }
-    },
-    "configuration_issue": {
-      "title": "Configuration Issue",
-      "description": "There is a configuration issue with your Solarmax inverter: {issue}"
     }
   },
   "entity": {

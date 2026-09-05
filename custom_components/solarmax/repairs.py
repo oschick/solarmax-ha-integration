@@ -56,17 +56,6 @@ class SolarmaxConnectionRepairFlow(_BaseSolarmaxRepairFlow):
         }
 
 
-class SolarmaxConfigurationRepairFlow(_BaseSolarmaxRepairFlow):
-    """Handler for Solarmax configuration repair flow."""
-
-    def _placeholders(self) -> dict[str, str]:
-        data = self.data or {}
-        return {
-            "host": str(data.get("host", "unknown")),
-            "issue": str(data.get("issue", "configuration issue")),
-        }
-
-
 async def async_create_fix_flow(
     hass: HomeAssistant,
     issue_id: str,
@@ -75,8 +64,6 @@ async def async_create_fix_flow(
     """Create flow."""
     if issue_id.startswith("connection_issues"):
         return SolarmaxConnectionRepairFlow(data or {})
-    elif issue_id.startswith("configuration_issue"):
-        return SolarmaxConfigurationRepairFlow(data or {})
 
     # Fallback to confirm repair flow
     return ConfirmRepairFlow()

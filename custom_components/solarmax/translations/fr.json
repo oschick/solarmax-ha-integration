@@ -50,21 +50,9 @@
       }
     },
     "error": {
-      "cannot_connect": "Impossible de se connecter à l'onduleur avec les nouveaux paramètres",
       "invalid_host": "Adresse hôte invalide",
       "timeout": "Délai de connexion dépassé",
       "unknown": "Une erreur inattendue s'est produite"
-    }
-  },
-  "exceptions": {
-    "connection_error": {
-      "message": "Impossible de se connecter à l'onduleur à {host}:{port}"
-    },
-    "timeout_error": {
-      "message": "Délai de connexion dépassé après {timeout} secondes"
-    },
-    "protocol_error": {
-      "message": "Erreur de protocole de communication : {details}"
     }
   },
   "issues": {
@@ -78,10 +66,6 @@
           }
         }
       }
-    },
-    "configuration_issue": {
-      "title": "Problème de configuration",
-      "description": "Il y a un problème de configuration avec votre onduleur Solarmax : {issue}"
     }
   },
   "entity": {

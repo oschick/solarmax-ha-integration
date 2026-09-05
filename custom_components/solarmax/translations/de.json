@@ -50,21 +50,9 @@
       }
     },
     "error": {
-      "cannot_connect": "Verbindung zum Wechselrichter mit neuen Einstellungen fehlgeschlagen",
       "invalid_host": "Ungültige Host-Adresse",
       "timeout": "Verbindungszeit überschritten",
       "unknown": "Unerwarteter Fehler aufgetreten"
-    }
-  },
-  "exceptions": {
-    "connection_error": {
-      "message": "Verbindung zum Wechselrichter bei {host}:{port} fehlgeschlagen"
-    },
-    "timeout_error": {
-      "message": "Verbindungszeit nach {timeout} Sekunden überschritten"
-    },
-    "protocol_error": {
-      "message": "Kommunikationsprotokoll-Fehler: {details}"
     }
   },
   "issues": {
@@ -78,10 +66,6 @@
           }
         }
       }
-    },
-    "configuration_issue": {
-      "title": "Konfigurationsproblem",
-      "description": "Es gibt ein Konfigurationsproblem mit Ihrem Solarmax Wechselrichter: {issue}"
     }
   },
   "entity": {
