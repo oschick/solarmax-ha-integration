@@ -116,14 +116,13 @@ jobs:
               exit 1
             fi
           else
-            original_remote="$(git remote get-url origin)"
-            authenticated_remote="https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
-            git remote set-url origin "$authenticated_remote"
-            if ! git push --set-upstream origin "$release_branch"; then
-              git remote set-url origin "$original_remote"
+            auth_header="$(printf 'github-actions[bot]:%s' "$GH_TOKEN" | base64 -w 0)"
+            if ! GIT_CONFIG_COUNT=1 \
+              GIT_CONFIG_KEY_0=http.https://github.com/.extraheader \
+              GIT_CONFIG_VALUE_0="AUTHORIZATION: basic $auth_header" \
+              git push --set-upstream origin "$release_branch"; then
               exit 1
             fi
-            git remote set-url origin "$original_remote"
           fi
 
           compare_url="https://github.com/${GITHUB_REPOSITORY}/compare/main...${release_branch}?expand=1"
@@ -210,8 +209,7 @@ jobs:
 
       - name: Build tracked release archive
         run: >-
-          git archive --format=zip --prefix=solarmax/
-          --output=solarmax.zip
+          git archive --format=zip --output=solarmax.zip
           "$GITHUB_SHA:custom_components/solarmax"
 
       - name: Inspect release archive
@@ -223,8 +221,8 @@ jobs:
         env:
           RELEASE_ROOT: ${{ runner.temp }}/solarmax-release
         run: |
-          mkdir -p "$RELEASE_ROOT"
-          python -m zipfile -e solarmax.zip "$RELEASE_ROOT"
+          mkdir -p "$RELEASE_ROOT/solarmax"
+          python -m zipfile -e solarmax.zip "$RELEASE_ROOT/solarmax"
           PYTHONPATH="$RELEASE_ROOT" python -c 'import solarmax'
 
       - name: Add compare link to release notes

@@ -46,12 +46,20 @@ inverter sleeps.
   checksum**, including the option to ignore checksums. Runtime polling retries
   once after lost responses, corrupt frames, peer closes, or partial static
   data.
+- Response handling now allows the MaxComm protocol's three-second response
+  window, with a 3.5-second timeout and a 15-second overall poll budget.
 - Valid fields survive when the inverter returns one malformed field.
 - Saving integration options no longer opens a competing connection to an
   inverter that accepts one TCP client.
-- Expected nighttime shutdowns reset fault timers, and the repair flow works
-  with the current Home Assistant device registry.
+- Opening a connection repair no longer fails when Home Assistant provides no
+  issue data, and dismissing it suppresses the same fault for 24 hours.
+- Expected nighttime shutdowns reset fault timers, so an inverter that remains
+  offline after dawn starts a new daytime fault episode.
+- Delayed model, firmware, and serial data now refreshes the Home Assistant
+  device registry after the inverter becomes available.
 - Diagnostics no longer expose the inverter serial number.
+- HACS installs the same `solarmax.zip` archive that the release workflow tests
+  and attests.
 
 ### Maintenance
 
@@ -264,7 +272,14 @@ inverter sleeps.
 - Translation support
 - HACS compatibility
 
-[Unreleased]: https://github.com/oschick/solarmax-ha-integration/compare/v1.0.7...HEAD
+[Unreleased]: https://github.com/oschick/solarmax-ha-integration/compare/v1.3.3...HEAD
+[1.3.3]: https://github.com/oschick/solarmax-ha-integration/compare/v1.3.2...v1.3.3
+[1.3.2]: https://github.com/oschick/solarmax-ha-integration/compare/v1.3.1...v1.3.2
+[1.3.1]: https://github.com/oschick/solarmax-ha-integration/compare/v1.3.0...v1.3.1
+[1.3.0]: https://github.com/oschick/solarmax-ha-integration/compare/v1.2.1...v1.3.0
+[1.2.1]: https://github.com/oschick/solarmax-ha-integration/compare/v1.2.0...v1.2.1
+[1.2.0]: https://github.com/oschick/solarmax-ha-integration/compare/v1.1.0...v1.2.0
+[1.1.0]: https://github.com/oschick/solarmax-ha-integration/compare/v1.0.7...v1.1.0
 [1.0.7]: https://github.com/oschick/solarmax-ha-integration/compare/v1.0.6...v1.0.7
 [1.0.6]: https://github.com/oschick/solarmax-ha-integration/compare/v1.0.5...v1.0.6
 [1.0.5]: https://github.com/oschick/solarmax-ha-integration/compare/v1.0.4...v1.0.5

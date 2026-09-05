@@ -2,6 +2,7 @@
 
 import asyncio
 
+from custom_components.solarmax import connection as connection_module
 from custom_components.solarmax.connection import (
     ARMED_ESCALATION_MIN_FAILURES,
     ARMED_ESCALATION_SECONDS,
@@ -540,6 +541,25 @@ async def test_timeout_is_retried_once_within_the_poll(emulator):
         emulator.inject("drop")  # swallow exactly the next request, no reply
         snapshot = await engine.poll()
         assert snapshot.state is EngineState.ONLINE
+    finally:
+        await engine.close()
+
+
+async def test_successful_responses_are_parsed_once(emulator, monkeypatch):
+    """One normal poll parses each static and telemetry response once."""
+    original = connection_module.parse_response
+    parsed_responses: list[str] = []
+
+    def track_parse(response: str, verify_checksum: bool):
+        parsed_responses.append(response)
+        return original(response, verify_checksum)
+
+    monkeypatch.setattr(connection_module, "parse_response", track_parse)
+    engine = _engine(emulator)
+    try:
+        snapshot = await engine.poll()
+        assert snapshot.state is EngineState.ONLINE
+        assert len(parsed_responses) == 2  # one static and one telemetry response
     finally:
         await engine.close()
 

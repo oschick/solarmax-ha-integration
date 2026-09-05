@@ -25,6 +25,9 @@ _CHANGELOG = """\
 ## [1.3.3] - 2026-08-11
 
 - Older note.
+
+[Unreleased]: https://github.com/oschick/solarmax-ha-integration/compare/v1.3.3...HEAD
+[1.3.3]: https://github.com/oschick/solarmax-ha-integration/compare/v1.3.2...v1.3.3
 """
 
 
@@ -78,6 +81,14 @@ def test_prepare_stable_release_consumes_unreleased_notes(tmp_path: Path) -> Non
     changelog = (root / "CHANGELOG.md").read_text(encoding="utf-8")
     assert "## [Unreleased]\n\n## [1.4.0] - 2026-09-04" in changelog
     assert changelog.count("Prepared release note") == 1
+    assert (
+        "[Unreleased]: "
+        "https://github.com/oschick/solarmax-ha-integration/compare/v1.4.0...HEAD"
+    ) in changelog
+    assert (
+        "[1.4.0]: "
+        "https://github.com/oschick/solarmax-ha-integration/compare/v1.3.3...v1.4.0"
+    ) in changelog
 
 
 @pytest.mark.parametrize(

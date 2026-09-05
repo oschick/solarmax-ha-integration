@@ -14,9 +14,9 @@ from pathlib import Path, PurePosixPath
 from release_common import ReleaseVersion, parse_release_tag
 
 _REQUIRED_ARCHIVE_FILES = {
-    "solarmax/__init__.py",
-    "solarmax/manifest.json",
-    "solarmax/strings.json",
+    "__init__.py",
+    "manifest.json",
+    "strings.json",
 }
 _FORBIDDEN_ARCHIVE_PARTS = {"__pycache__", "tests"}
 
@@ -61,7 +61,7 @@ def _is_forbidden_archive_path(name: str) -> bool:
     path = PurePosixPath(name)
     if name.startswith("/") or "\\" in name:
         return True
-    if not path.parts or path.parts[0] != "solarmax" or ".." in path.parts:
+    if not path.parts or path.parts[0] == "solarmax" or ".." in path.parts:
         return True
     if any(part.startswith(".") for part in path.parts):
         return True
@@ -95,7 +95,7 @@ def _validate_archive(path: Path, version: str) -> None:
                 except (UnicodeDecodeError, json.JSONDecodeError) as err:
                     raise ValueError(f"archive contains invalid JSON: {name}") from err
 
-            manifest = json.loads(archive.read("solarmax/manifest.json"))
+            manifest = json.loads(archive.read("manifest.json"))
     except (FileNotFoundError, zipfile.BadZipFile) as err:
         raise ValueError(f"cannot read release archive: {path}") from err
 

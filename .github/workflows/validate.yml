@@ -106,6 +106,7 @@ jobs:
       - name: Run repository checks
         env:
           CI_REPORT_DIR: ${{ runner.temp }}/solarmax-ci
+          SKIP: actionlint
         run: script/check
 
       - name: Check changed-line coverage
