@@ -15,7 +15,8 @@ import asyncio
 import logging
 import socket
 import time
-from collections.abc import Callable
+from collections.abc import AsyncIterator, Callable
+from contextlib import asynccontextmanager
 from dataclasses import asdict, dataclass, field
 from datetime import UTC, datetime
 from enum import StrEnum
@@ -372,6 +373,15 @@ class ConnectionEngine:
                     return await self._poll_inner()
             except (TimeoutError, LinkTimeout, LinkClosed, ProtocolError):
                 return await self._on_failure()
+
+    @asynccontextmanager
+    async def validation_handoff(self) -> AsyncIterator[None]:
+        """Temporarily release the inverter connection for validation."""
+        async with self._poll_lock:
+            if self._closed:
+                raise LinkClosed("connection engine is closed")
+            await self._link.disconnect()
+            yield
 
     async def close(self) -> None:
         """Idempotent; the last word — no poll() may touch the link again.

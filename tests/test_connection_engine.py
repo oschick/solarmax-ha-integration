@@ -119,6 +119,29 @@ class _ScriptedLink:
         self.connected = False
 
 
+class _RecordingLink:
+    """Link double that records handoff and poll activity."""
+
+    def __init__(self) -> None:
+        self.disconnect_calls = 0
+        self.request_count = 0
+        self.connected = False
+        self.attempts = 0
+        self.reconnects = 0
+        self.timeouts = 0
+
+    async def request(self, _payload: str) -> str:
+        self.request_count += 1
+        return _response("PAC=03E8")
+
+    async def disconnect(self) -> None:
+        self.disconnect_calls += 1
+        self.connected = False
+
+    async def close(self) -> None:
+        self.connected = False
+
+
 def _engine(emulator, *, sun_below=lambda: False, grace=0.0, timeout=0.5, clock=None):
     # grace=0.0 disables the startup window so classification is tested directly;
     # the two grace tests pass an explicit grace to exercise the window itself.
@@ -694,6 +717,34 @@ async def test_concurrent_polls_are_serialized(emulator):
         assert link.attempts == 1  # one connection served both polls, serially
     finally:
         await engine.close()
+
+
+async def test_validation_handoff_disconnects_and_pauses_poll():
+    """A handoff drops the link and excludes polls until its context exits."""
+    link = _RecordingLink()
+    engine = ConnectionEngine(link, address=1, sun_below=lambda: False)
+
+    async with engine.validation_handoff():
+        poll = asyncio.create_task(engine.poll())
+        await asyncio.sleep(0)
+        assert link.disconnect_calls == 1
+        assert not poll.done()
+
+    await poll
+    assert link.request_count > 0
+
+
+async def test_validation_handoff_releases_poll_after_cancellation():
+    """Cancellation of a handoff must not leave the poll lock held."""
+    engine = ConnectionEngine(_RecordingLink(), address=1, sun_below=lambda: False)
+
+    async def cancelled_handoff() -> None:
+        async with engine.validation_handoff():
+            raise asyncio.CancelledError
+
+    with pytest.raises(asyncio.CancelledError):
+        await cancelled_handoff()
+    assert (await engine.poll()).state is EngineState.ONLINE
 
 
 def test_default_response_timeout_and_poll_budget():
