@@ -169,13 +169,21 @@ inverter or network is still becoming available.
 | Online | Configured update interval |
 | Startup reconnect | Configured interval or 60 seconds, whichever is shorter |
 | Daytime fault | Configured interval or 60 seconds, whichever is shorter |
-| Expected offline below twilight | 15 minutes |
-| Expected offline above twilight | 60 seconds |
+| Expected offline during full night | 15 minutes |
+| Expected offline from civil dawn or during daytime | 60 seconds |
 
-The faster daytime cadence detects the inverter's return promptly. Each poll
-has a 15-second budget. A lost response or corrupt frame gets one retry within
-that budget. Reloading or unloading the integration closes the socket so the
-inverter does not retain the client slot.
+Expected-offline polling accelerates when the rising sun reaches -6°, before
+the configurable twilight threshold used to classify faults. This helps detect
+the inverter's return promptly without increasing traffic throughout the
+night. Each poll has a 15-second budget. A lost response or corrupt frame gets
+one retry within that budget. Reloading or unloading the integration closes
+the socket so the inverter does not retain the client slot.
+
+If Home Assistant's `sun.sun` entity is unavailable, the integration logs one
+warning and uses the local clock: 20:00-06:00 for expected-offline
+classification, with faster recovery polling starting at 05:00. A diagnostic
+download reports `sun.sun`, `clock_fallback`, or `unknown` as the active sun
+source.
 
 If a daytime fault lasts five minutes, Home Assistant creates a repair issue.
 The issue clears automatically after communication recovers.

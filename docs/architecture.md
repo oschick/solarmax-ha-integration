@@ -55,8 +55,14 @@ It chooses the next interval from state:
 
 - `online`: configured interval
 - startup reconnect or `offline_fault`: configured interval capped at 60 seconds
-- `offline_expected` below the twilight threshold: 900 seconds
-- `offline_expected` above the threshold: 60 seconds
+- `offline_expected` during full night: 900 seconds
+- `offline_expected` from civil dawn (-6° while rising) or during daytime: 60 seconds
+
+The internal civil-dawn threshold affects scheduling only. The configured
+twilight elevation remains the source of fault classification. Without a
+`sun.sun` entity, classification uses 20:00-06:00 and fast recovery polling
+uses 05:00-20:00. The fallback logs one warning per coordinator instance, and
+diagnostics expose the active sun source.
 
 A fault lasting five minutes creates a Home Assistant repair issue. Recovery or an expected period removes it. Completing the repair flow suppresses the same fault episode for 24 hours.
 

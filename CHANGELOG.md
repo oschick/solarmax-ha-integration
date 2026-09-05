@@ -33,6 +33,11 @@ inverter sleeps.
 - The connection engine reuses one TCP connection, limits each poll to 15
   seconds, and changes its polling interval based on inverter state. Home
   Assistant can create entities while the inverter sleeps.
+- Expected-offline polling accelerates at civil dawn (-6° while rising), while
+  the configured twilight threshold remains responsible for classifying
+  faults. The clock fallback starts faster polling at 05:00.
+- Diagnostics report whether sun calculations use `sun.sun` or the clock
+  fallback, which also logs one warning when activated.
 - An armed daytime **Offline (expected)** (`offline_expected`) state becomes
   **Offline (fault)** (`offline_fault`) after one hour and ten failed probes.
 - Users can dismiss a connection repair for 24 hours during the same fault

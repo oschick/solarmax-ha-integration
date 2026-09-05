@@ -115,22 +115,59 @@ async def test_update_returns_snapshot_and_never_raises(hass, mock_config_entry)
 
 
 async def test_interval_follows_state(hass, mock_config_entry):
-    """Polling cadence only slows down for OFFLINE_EXPECTED, and only then
-    depends on whether the sun is below the twilight threshold."""
+    """Online polling uses the configured cadence; faults retain their cap."""
     coordinator = SolarmaxCoordinator(hass, mock_config_entry)
     assert coordinator._interval_for(_snap(EngineState.ONLINE)) == timedelta(seconds=30)
-    with patch.object(coordinator, "sun_below_threshold", return_value=True):
-        assert coordinator._interval_for(
-            _snap(EngineState.OFFLINE_EXPECTED)
-        ) == timedelta(seconds=NIGHT_POLL_SECONDS)
-    with patch.object(coordinator, "sun_below_threshold", return_value=False):
-        assert coordinator._interval_for(
-            _snap(EngineState.OFFLINE_EXPECTED)
-        ) == timedelta(seconds=DAWN_POLL_SECONDS)
     # A configured cadence faster than the fault cap remains unchanged.
     assert coordinator._interval_for(_snap(EngineState.OFFLINE_FAULT)) == timedelta(
         seconds=30
     )
+
+
+@pytest.mark.parametrize(
+    ("state", "elevation", "rising", "expected_seconds"),
+    [
+        ("below_horizon", -6.1, True, NIGHT_POLL_SECONDS),
+        ("below_horizon", -6.0, True, DAWN_POLL_SECONDS),
+        ("above_horizon", 4.0, True, DAWN_POLL_SECONDS),
+        ("below_horizon", -5.0, False, NIGHT_POLL_SECONDS),
+        ("above_horizon", 6.0, False, DAWN_POLL_SECONDS),
+    ],
+)
+def test_expected_offline_interval_tracks_dawn_and_daytime(
+    coordinator, state, elevation, rising, expected_seconds
+):
+    """Fast polling starts at civil dawn and remains active in daytime."""
+    coordinator.hass.states.async_set(
+        "sun.sun",
+        state,
+        {"elevation": elevation, "rising": rising},
+    )
+
+    assert coordinator._interval_for(_snap(EngineState.OFFLINE_EXPECTED)) == timedelta(
+        seconds=expected_seconds
+    )
+
+
+@pytest.mark.parametrize(
+    ("hour", "expected_seconds"),
+    [
+        (4, NIGHT_POLL_SECONDS),
+        (5, DAWN_POLL_SECONDS),
+        (19, DAWN_POLL_SECONDS),
+        (20, NIGHT_POLL_SECONDS),
+    ],
+)
+def test_expected_offline_interval_uses_clock_dawn_fallback(
+    coordinator, hour, expected_seconds
+):
+    """The clock fallback starts recovery polling an hour before daytime."""
+    with patch("custom_components.solarmax.coordinator.dt_util.now") as mock_now:
+        mock_now.return_value.hour = hour
+
+        assert coordinator._interval_for(
+            _snap(EngineState.OFFLINE_EXPECTED)
+        ) == timedelta(seconds=expected_seconds)
 
 
 def test_fault_interval_is_capped_at_one_minute(coordinator):
@@ -385,6 +422,46 @@ def test_sun_below_threshold_fallback(coordinator):
 
         mock_time.hour = 5
         assert coordinator.sun_below_threshold() is True
+
+
+def test_sun_source_tracks_active_input(coordinator):
+    """Support diagnostics report the source used by the last sun check."""
+    assert coordinator.sun_source == "unknown"
+
+    with patch("custom_components.solarmax.coordinator.dt_util.now") as mock_now:
+        mock_now.return_value.hour = 22
+        coordinator.sun_below_threshold()
+    assert coordinator.sun_source == "clock_fallback"
+
+    coordinator.hass.states.async_set(
+        "sun.sun",
+        "above_horizon",
+        {"elevation": 20.0, "rising": True},
+    )
+    coordinator.sun_below_threshold()
+    assert coordinator.sun_source == "sun.sun"
+
+
+def test_clock_fallback_logs_one_warning(coordinator, caplog):
+    """Repeated sun checks must not repeat the missing-entity warning."""
+    with (
+        patch("custom_components.solarmax.coordinator.dt_util.now") as mock_now,
+        caplog.at_level(
+            logging.WARNING,
+            logger="custom_components.solarmax.coordinator",
+        ),
+    ):
+        mock_now.return_value.hour = 5
+        coordinator.sun_below_threshold()
+        coordinator._interval_for(_snap(EngineState.OFFLINE_EXPECTED))
+
+    warnings = [
+        record
+        for record in caplog.records
+        if record.name == "custom_components.solarmax.coordinator"
+        and record.levelno == logging.WARNING
+    ]
+    assert len(warnings) == 1
 
 
 # --- device-info properties, read from snapshot.values ----------------------
