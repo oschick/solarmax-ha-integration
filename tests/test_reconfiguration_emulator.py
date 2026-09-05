@@ -4,7 +4,7 @@ import asyncio
 from unittest.mock import patch
 
 import pytest
-from homeassistant.config_entries import ConfigEntryDisabler
+from homeassistant.config_entries import ConfigEntryDisabler, ConfigEntryState
 from homeassistant.data_entry_flow import FlowResultType
 
 from custom_components.solarmax import async_setup_entry
@@ -182,6 +182,35 @@ async def test_cancelled_setup_closes_open_connection(hass, emulator, during_ref
         assert not thread.is_alive()
 
 
+async def test_failed_initial_setup_detaches_closed_runtime(
+    hass, emulator, proposed_emulator
+):
+    """A setup error must not leave its closed coordinator attached."""
+    host, port = emulator.addr
+    entry = _configured_endpoint_entry(host=host, port=port, address=1)
+    entry.add_to_hass(hass)
+
+    with patch.object(
+        hass.config_entries,
+        "async_forward_entry_setups",
+        side_effect=RuntimeError("platform setup failed"),
+    ):
+        assert not await hass.config_entries.async_setup(entry.entry_id)
+
+    assert entry.state is ConfigEntryState.SETUP_ERROR
+    assert not hasattr(entry, "runtime_data")
+
+    new_host, new_port = proposed_emulator.addr
+    try:
+        result = await _submit_reconfigure(hass, entry, host=new_host, port=new_port)
+        assert result["type"] is FlowResultType.ABORT
+        assert result["reason"] == "reconfigure_successful"
+        assert entry.runtime_data.data.state is EngineState.ONLINE
+    finally:
+        if entry.state is ConfigEntryState.LOADED:
+            await hass.config_entries.async_unload(entry.entry_id)
+
+
 async def test_reconfigure_emulator_cancel_validation(
     hass, emulator, proposed_emulator
 ):
@@ -309,6 +338,59 @@ async def test_repair_emulator_waits_for_full_poll(
         assert _connection_issue(hass, entry) is None
     finally:
         release_poll.set()
+        await hass.config_entries.async_unload(entry.entry_id)
+
+
+async def test_old_runtime_poll_cannot_verify_new_repair_endpoint(
+    hass, emulator, proposed_emulator
+):
+    """Only an ONLINE poll from the proposed endpoint verifies its repair."""
+    entry = await _loaded_entry(hass, emulator)
+    old_runtime = entry.runtime_data
+    _create_connection_issue(hass, entry)
+    poll_task = None
+    issue_seen_during_unload = []
+    unload_platforms = hass.config_entries.async_unload_platforms
+
+    async def probe(**kwargs):
+        nonlocal poll_task
+        await validate_connection(**kwargs)
+        poll_task = asyncio.create_task(old_runtime._async_update_data())
+        await asyncio.sleep(0)
+        assert not poll_task.done()
+
+    async def unload(current, platforms):
+        issue = _connection_issue(hass, entry)
+        assert issue.data["verification_pending"] == 1
+        snapshot = await asyncio.wait_for(poll_task, 5)
+        assert snapshot.state is EngineState.ONLINE
+        assert entry.runtime_data is old_runtime
+        issue_seen_during_unload.append(_connection_issue(hass, entry) is not None)
+        return await unload_platforms(current, platforms)
+
+    try:
+        with (
+            patch(
+                "custom_components.solarmax.repairs.validate_connection",
+                side_effect=probe,
+            ),
+            patch.object(
+                hass.config_entries,
+                "async_unload_platforms",
+                side_effect=unload,
+            ),
+        ):
+            host, port = proposed_emulator.addr
+            result = await _submit_repair(hass, entry, host=host, port=port)
+
+        assert result["type"] is FlowResultType.ABORT
+        assert issue_seen_during_unload == [True]
+        assert entry.runtime_data is not old_runtime
+        assert entry.runtime_data.data.state is EngineState.ONLINE
+        assert _connection_issue(hass, entry) is None
+    finally:
+        if poll_task is not None:
+            await asyncio.gather(poll_task, return_exceptions=True)
         await hass.config_entries.async_unload(entry.entry_id)
 
 

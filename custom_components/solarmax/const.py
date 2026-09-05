@@ -44,6 +44,7 @@ FAULT_POLL_SECONDS = 60
 FAULT_REPAIR_SECONDS = 300
 # A repair probe succeeded; only a complete ONLINE poll verifies recovery.
 REPAIR_PENDING = "verification_pending"
+REPAIR_PENDING_ENDPOINT = "verification_endpoint"
 
 # Static device-identification MaxComm keys (queried once for device info)
 DEVICE_KEY_TYPE = "TYP"  # device type / model identifier

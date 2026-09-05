@@ -32,6 +32,7 @@ from .const import (
     DEFAULT_VERIFY_CHECKSUM,
     DOMAIN,
     REPAIR_PENDING,
+    REPAIR_PENDING_ENDPOINT,
 )
 
 _LOGGER = logging.getLogger(__name__)
@@ -89,13 +90,18 @@ class SolarmaxConnectionRepairFlow(RepairsFlow):
             description_placeholders=self._placeholders(),
         )
 
-    def _set_pending(self, issue: ir.IssueEntry, pending: bool) -> None:
+    def _set_pending(
+        self, issue: ir.IssueEntry, pending: bool, endpoint: str | None = None
+    ) -> None:
         """Update the same issue record, preserving native Ignore and metadata."""
         data = dict(issue.data or {})
         if pending:
             data[REPAIR_PENDING] = 1
+            if endpoint is not None:
+                data[REPAIR_PENDING_ENDPOINT] = endpoint
         else:
             data.pop(REPAIR_PENDING, None)
+            data.pop(REPAIR_PENDING_ENDPOINT, None)
         ir.async_create_issue(
             self.hass,
             DOMAIN,
@@ -116,6 +122,7 @@ class SolarmaxConnectionRepairFlow(RepairsFlow):
     ) -> data_entry_flow.FlowResult:
         """Serialize probing and activation with all other configuration flows."""
         host, port = values[CONF_HOST], values[CONF_PORT]
+        target_endpoint = endpoint_unique_id(host, port, entry.data[CONF_ADDRESS])
         if find_endpoint_conflict(
             self.hass, host, port, exclude_entry_id=entry.entry_id
         ):
@@ -146,7 +153,7 @@ class SolarmaxConnectionRepairFlow(RepairsFlow):
                     self.hass, host, port, exclude_entry_id=entry.entry_id
                 ):
                     return self.async_abort(reason="already_configured")
-                self._set_pending(issue, True)
+                self._set_pending(issue, True, target_endpoint)
                 marked_pending = True
             # Unload closes the engine, so release its poll lock first.
             unchanged = (host, port) == (entry.data[CONF_HOST], entry.data[CONF_PORT])
@@ -164,7 +171,7 @@ class SolarmaxConnectionRepairFlow(RepairsFlow):
                     data=dict(entry.data) | {CONF_HOST: host, CONF_PORT: port},
                     options=entry.options,
                     title=entry.title,
-                    unique_id=endpoint_unique_id(host, port, entry.data[CONF_ADDRESS]),
+                    unique_id=target_endpoint,
                 )
         except asyncio.CancelledError:
             if marked_pending and not accepted:

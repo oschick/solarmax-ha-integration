@@ -20,7 +20,7 @@ from homeassistant.helpers.issue_registry import (
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator
 from homeassistant.util import dt as dt_util
 
-from .configuration import entry_option
+from .configuration import endpoint_unique_id, entry_option
 from .connection import ConnectionEngine, EngineSnapshot, EngineState, SolarmaxLink
 from .const import (
     CONF_ADDRESS,
@@ -44,6 +44,7 @@ from .const import (
     FAULT_REPAIR_SECONDS,
     NIGHT_POLL_SECONDS,
     REPAIR_PENDING,
+    REPAIR_PENDING_ENDPOINT,
 )
 
 _LOGGER = logging.getLogger(__name__)
@@ -67,6 +68,11 @@ class SolarmaxCoordinator(DataUpdateCoordinator[EngineSnapshot]):
     def __init__(self, hass: HomeAssistant, entry: ConfigEntry) -> None:
         """Initialize the coordinator."""
         self._entry = entry
+        self._endpoint_unique_id = endpoint_unique_id(
+            entry.data[CONF_HOST],
+            entry.data[CONF_PORT],
+            entry.data.get(CONF_ADDRESS, DEFAULT_ADDRESS),
+        )
 
         link = SolarmaxLink(
             host=entry.data[CONF_HOST],
@@ -287,8 +293,23 @@ class SolarmaxCoordinator(DataUpdateCoordinator[EngineSnapshot]):
         issue = async_get_issue_registry(self.hass).async_get_issue(
             DOMAIN, self._repair_issue_id
         )
-        if issue is not None and (issue.data or {}).get(REPAIR_PENDING) == 1:
-            if snapshot.state is EngineState.ONLINE:
+        issue_data = issue.data or {} if issue is not None else {}
+        if issue_data.get(REPAIR_PENDING) == 1:
+            pending_endpoint = issue_data.get(REPAIR_PENDING_ENDPOINT)
+            current_endpoint = endpoint_unique_id(
+                self._entry.data[CONF_HOST],
+                self._entry.data[CONF_PORT],
+                self._entry.data.get(CONF_ADDRESS, DEFAULT_ADDRESS),
+            )
+            replacement_or_restored_runtime = (
+                getattr(self._entry, "runtime_data", None) is None
+                and self._endpoint_unique_id == current_endpoint
+            )
+            if snapshot.state is EngineState.ONLINE and (
+                pending_endpoint is None
+                or pending_endpoint == self._endpoint_unique_id
+                or replacement_or_restored_runtime
+            ):
                 self._clear_repair_issue()
             return
         fault_seconds = self._repairable_fault_seconds(snapshot)
