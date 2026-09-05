@@ -51,6 +51,7 @@ def mock_config_entry():
 def _legacy_entry(
     *,
     version: int = 1,
+    minor_version: int = 1,
     data_update: dict[str, Any] | None = None,
     options: dict[str, Any] | None = None,
 ) -> MockConfigEntry:
@@ -64,7 +65,7 @@ def _legacy_entry(
     return MockConfigEntry(
         domain=DOMAIN,
         version=version,
-        minor_version=1,
+        minor_version=minor_version,
         unique_id="192.0.2.10:12345",
         data=data,
         options=options or {},
@@ -120,6 +121,13 @@ async def test_migrate_future_major_version_is_rejected(hass):
     entry.add_to_hass(hass)
     assert await async_migrate_entry(hass, entry) is False
     assert entry.version == 3
+
+
+async def test_migrate_future_minor_version_is_rejected(hass):
+    entry = _legacy_entry(version=2, minor_version=2)
+    entry.add_to_hass(hass)
+    assert await async_migrate_entry(hass, entry) is False
+    assert (entry.version, entry.minor_version) == (2, 2)
 
 
 @patch("custom_components.solarmax.SolarmaxCoordinator")
@@ -189,6 +197,32 @@ async def test_setup_entry_registers_midnight_listener_when_night_keep_values_en
     mock_track_time_change.assert_called_once_with(
         hass, mock_coordinator.async_handle_midnight, hour=0, minute=0, second=0
     )
+
+
+@patch("custom_components.solarmax.async_track_time_change")
+@patch("custom_components.solarmax.SolarmaxCoordinator")
+async def test_failed_setup_does_not_register_midnight_listener(
+    mock_coordinator_class, mock_track_time_change, hass: HomeAssistant
+):
+    """A failed platform setup must not leave a midnight callback behind."""
+    entry = _legacy_entry(data_update={CONF_NIGHT_KEEP_VALUES: True})
+    mock_coordinator = MagicMock()
+    mock_coordinator.async_config_entry_first_refresh = AsyncMock()
+    mock_coordinator.async_shutdown = AsyncMock()
+    mock_coordinator.engine.close = AsyncMock()
+    mock_coordinator_class.return_value = mock_coordinator
+
+    with (
+        patch.object(
+            hass.config_entries,
+            "async_forward_entry_setups",
+            side_effect=RuntimeError("platform setup failed"),
+        ),
+        pytest.raises(RuntimeError, match="platform setup failed"),
+    ):
+        await async_setup_entry(hass, entry)
+
+    mock_track_time_change.assert_not_called()
 
 
 @patch("custom_components.solarmax.async_track_time_change")

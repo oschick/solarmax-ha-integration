@@ -206,11 +206,12 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             values[key] for key in (CONF_HOST, CONF_PORT, CONF_ADDRESS)
         )
         name = values[CONF_DEVICE_NAME]
+        name_changed = name != entry.data[CONF_DEVICE_NAME]
         data = dict(entry.data) | values
         if (host, port, address) == tuple(
             entry.data[key] for key in (CONF_HOST, CONF_PORT, CONF_ADDRESS)
         ):
-            if name != entry.data[CONF_DEVICE_NAME]:
+            if name_changed:
                 self.hass.config_entries.async_update_entry(
                     entry, data=data, title=name
                 )
@@ -243,6 +244,8 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             title=name,
             unique_id=endpoint_unique_id(host, port, address),
         )
+        if name_changed:
+            update_device_name(self.hass, entry.entry_id, name)
         return self.async_abort(reason="reconfigure_successful")
 
 
@@ -275,7 +278,10 @@ class OptionsFlow(config_entries.OptionsFlow):
                 else:
                     return self.async_create_entry(title="", data=user_input)
 
-        values = OPTION_DEFAULTS | dict(self.config_entry.options)
+        values = {
+            key: entry_option(self.config_entry, key, default)
+            for key, default in OPTION_DEFAULTS.items()
+        }
         if user_input is not None:
             values = user_input
 

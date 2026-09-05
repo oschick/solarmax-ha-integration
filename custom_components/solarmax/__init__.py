@@ -33,7 +33,7 @@ _UNIQUE_ID_MIGRATIONS = {
 
 async def async_migrate_entry(hass: HomeAssistant, entry: SolarmaxConfigEntry) -> bool:
     """Migrate a legacy config entry to split data and options storage."""
-    if entry.version > 2:
+    if entry.version > 2 or (entry.version == 2 and entry.minor_version > 1):
         return False
     if entry.version == 2:
         return True
@@ -100,17 +100,16 @@ async def async_setup_entry(hass: HomeAssistant, entry: SolarmaxConfigEntry) -> 
         # Use runtime_data instead of hass.data
         entry.runtime_data = coordinator
 
-        # When night_keep_values is on, sensors keep showing yesterday's held
-        # values overnight — Energy Day has to notice the day boundary itself.
-        # Registering nothing by default keeps the common path free.
+        await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
+
+        # Register only after platform setup succeeds so failed setup cannot
+        # leave callbacks targeting a closed coordinator.
         if entry_option(entry, CONF_NIGHT_KEEP_VALUES, DEFAULT_NIGHT_KEEP_VALUES):
             entry.async_on_unload(
                 async_track_time_change(
                     hass, coordinator.async_handle_midnight, hour=0, minute=0, second=0
                 )
             )
-
-        await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
 
         _LOGGER.info(
             "Successfully set up Solarmax inverter at %s:%s",

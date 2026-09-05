@@ -273,6 +273,24 @@ async def test_repair_reload_failure_restores_entry_and_open_issue(
     assert _connection_issue(hass, configured_entry).data["verification_pending"] == 1
 
 
+async def test_repair_failed_unload_accepts_recovered_original_runtime(
+    hass, configured_entry
+):
+    """The runtime retained by a failed unload can verify the restored endpoint."""
+    coordinator = SolarmaxCoordinator(hass, configured_entry)
+    configured_entry.runtime_data = coordinator
+    with (
+        patch("custom_components.solarmax.repairs.validate_connection"),
+        patch.object(hass.config_entries, "async_reload", return_value=False),
+    ):
+        result = await _submit_repair(hass, configured_entry, host="192.0.2.20")
+
+    assert result["errors"] == {"base": "reload_failed"}
+    assert configured_entry.data["host"] == "192.0.2.10"
+    await coordinator._async_handle_snapshot(_snap(EngineState.ONLINE))
+    assert _connection_issue(hass, configured_entry) is None
+
+
 async def test_repair_missing_entry_aborts(hass, configured_entry):
     flow = await _repair_flow(hass, configured_entry)
     with patch.object(hass.config_entries, "async_get_entry", return_value=None):

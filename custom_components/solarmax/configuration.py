@@ -142,11 +142,9 @@ async def _await_atomic(task: asyncio.Task[None]) -> None:
     cancellation: asyncio.CancelledError | None = None
     while not task.done():
         try:
-            await asyncio.shield(task)
+            await asyncio.wait((task,))
         except asyncio.CancelledError as err:
             cancellation = cancellation or err
-        except Exception:
-            break
     try:
         task.result()
     except Exception:

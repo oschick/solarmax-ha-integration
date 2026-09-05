@@ -221,6 +221,29 @@ async def test_reconfigure_without_runtime(
     assert reload.await_count == (disabled is None)
 
 
+async def test_disabled_reconfigure_updates_device_name(
+    hass, configured_entry, reconfigure_io
+):
+    """A disabled endpoint edit still updates the existing device display name."""
+    devices = dr.async_get(hass)
+    device = devices.async_get_or_create(
+        config_entry_id=configured_entry.entry_id,
+        identifiers={(DOMAIN, configured_entry.entry_id)},
+        name="Existing inverter",
+    )
+    object.__setattr__(configured_entry, "disabled_by", ConfigEntryDisabler.USER)
+
+    result = await _submit_reconfigure(
+        hass,
+        configured_entry,
+        host="192.0.2.99",
+        device_name="Garage",
+    )
+
+    assert result["type"] is FlowResultType.ABORT
+    assert devices.async_get(device.id).name == "Garage"
+
+
 @pytest.mark.parametrize(
     "failure", [False, RuntimeError("activation"), OperationNotAllowed("unload")]
 )
@@ -514,9 +537,16 @@ async def test_setup_serializes_concurrent_claims_for_endpoint(
         probe_started.set()
         await release_probe.wait()
 
-    with patch(
-        "custom_components.solarmax.config_flow.validate_connection",
-        side_effect=blocked_probe,
+    with (
+        patch(
+            "custom_components.solarmax.config_flow.validate_connection",
+            side_effect=blocked_probe,
+        ),
+        patch(
+            "custom_components.solarmax.async_setup_entry",
+            new_callable=AsyncMock,
+            return_value=True,
+        ),
     ):
         first_submission = asyncio.create_task(
             _submit_user_flow(hass, host="192.0.2.8", port=12345, address=1)
@@ -790,6 +820,37 @@ async def test_options_form_contains_only_preferences(hass, configured_entry):
     result = await hass.config_entries.options.async_init(configured_entry.entry_id)
 
     assert {str(key) for key in result["data_schema"].schema} == set(OPTION_KEYS)
+
+
+async def test_disabled_v1_options_form_preserves_legacy_values(hass):
+    """Options remain editable before Home Assistant migrates a disabled entry."""
+    legacy_options = {
+        CONF_UPDATE_INTERVAL: 90,
+        CONF_VERIFY_CHECKSUM: False,
+        CONF_TWILIGHT_ELEVATION_THRESHOLD: 3,
+        CONF_NIGHT_KEEP_VALUES: True,
+    }
+    entry = MockConfigEntry(
+        domain=DOMAIN,
+        version=1,
+        minor_version=1,
+        data={
+            CONF_HOST: "192.0.2.10",
+            CONF_PORT: 12345,
+            CONF_ADDRESS: 1,
+            CONF_DEVICE_NAME: "Existing inverter",
+            **legacy_options,
+        },
+        options={},
+    )
+    entry.add_to_hass(hass)
+    object.__setattr__(entry, "disabled_by", ConfigEntryDisabler.USER)
+
+    result = await hass.config_entries.options.async_init(entry.entry_id)
+
+    assert {
+        str(key): key.default() for key in result["data_schema"].schema
+    } == legacy_options
 
 
 async def test_options_save_reloads_without_connection_probe(

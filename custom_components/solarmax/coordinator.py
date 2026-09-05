@@ -301,14 +301,11 @@ class SolarmaxCoordinator(DataUpdateCoordinator[EngineSnapshot]):
                 self._entry.data[CONF_PORT],
                 self._entry.data.get(CONF_ADDRESS, DEFAULT_ADDRESS),
             )
-            replacement_or_restored_runtime = (
-                getattr(self._entry, "runtime_data", None) is None
-                and self._endpoint_unique_id == current_endpoint
-            )
+            current_or_restored_runtime = self._endpoint_unique_id == current_endpoint
             if snapshot.state is EngineState.ONLINE and (
                 pending_endpoint is None
                 or pending_endpoint == self._endpoint_unique_id
-                or replacement_or_restored_runtime
+                or current_or_restored_runtime
             ):
                 self._clear_repair_issue()
             return
