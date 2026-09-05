@@ -370,7 +370,7 @@ class ConnectionEngine:
             try:
                 async with asyncio.timeout(POLL_BUDGET_SECONDS):
                     return await self._poll_inner()
-            except TimeoutError:
+            except (TimeoutError, LinkTimeout, LinkClosed, ProtocolError):
                 return await self._on_failure()
 
     async def close(self) -> None:
@@ -385,18 +385,19 @@ class ConnectionEngine:
             pass
 
     async def _poll_inner(self) -> EngineSnapshot:
-        try:
-            if not self._statics_loaded:
+        if not self._statics_loaded:
+            try:
                 await self._load_static_values()
-                if self._closed:
-                    return self._snapshot(
-                        reconnecting=False, expected_outside_twilight=False
-                    )
-            values = await self._request_with_retry(
-                build_request(self._address, HOT_FIELDS)
-            )
-        except (LinkTimeout, LinkClosed, ProtocolError):
-            return await self._on_failure()
+            except (LinkTimeout, LinkClosed, ProtocolError):
+                # Live telemetry, not optional metadata, decides poll health.
+                pass
+            if self._closed:
+                return self._snapshot(
+                    reconnecting=False, expected_outside_twilight=False
+                )
+        values = await self._request_with_retry(
+            build_request(self._address, HOT_FIELDS)
+        )
         return self._on_success(values)
 
     async def _load_static_values(self) -> None:

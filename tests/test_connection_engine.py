@@ -2,6 +2,8 @@
 
 import asyncio
 
+import pytest
+
 from custom_components.solarmax import connection as connection_module
 from custom_components.solarmax.connection import (
     ARMED_ESCALATION_MIN_FAILURES,
@@ -9,6 +11,8 @@ from custom_components.solarmax.connection import (
     POLL_BUDGET_SECONDS,
     ConnectionEngine,
     EngineState,
+    LinkClosed,
+    LinkTimeout,
     SolarmaxLink,
 )
 from custom_components.solarmax.protocol import calculate_checksum
@@ -78,6 +82,37 @@ class _PartialStaticLink:
         return _response("TYP=50AA" if "PIN" in payload else "PAC=BB8")
 
     async def disconnect(self) -> None:
+        self.connected = False
+
+    async def close(self) -> None:
+        self.connected = False
+
+
+class _ScriptedLink:
+    """Return or raise a fixed sequence of request outcomes."""
+
+    def __init__(
+        self, responses: list[str | Exception], *, disconnect_delay: float = 0.0
+    ) -> None:
+        self.responses = responses
+        self.disconnect_delay = disconnect_delay
+        self.disconnect_calls = 0
+        self.connected = False
+        self.attempts = 0
+        self.reconnects = 0
+        self.timeouts = 0
+
+    async def request(self, _payload: str) -> str:
+        response = self.responses.pop(0)
+        if isinstance(response, Exception):
+            raise response
+        return response
+
+    async def disconnect(self) -> None:
+        self.disconnect_calls += 1
+        if self.disconnect_calls > 1:
+            raise AssertionError("one poll classified the same failure twice")
+        await asyncio.sleep(self.disconnect_delay)
         self.connected = False
 
     async def close(self) -> None:
@@ -279,6 +314,70 @@ async def test_statics_retried_within_the_poll(emulator):
         snapshot = await engine.poll()
         assert snapshot.state is EngineState.ONLINE
         assert "PIN" in snapshot.values
+    finally:
+        await engine.close()
+
+
+@pytest.mark.parametrize(
+    "failure_type",
+    [None, LinkTimeout, LinkClosed],
+    ids=["corrupt", "timeout", "closed"],
+)
+async def test_failed_statics_do_not_block_hot_telemetry(failure_type):
+    """Exhausted static retries defer metadata without failing telemetry."""
+    static_response = _response("TYP=50AA")
+    if failure_type is None:
+        failures = [f"{static_response[:-5]}0000}}"] * 2
+    elif failure_type is LinkClosed:
+        failures = [LinkClosed()]
+    else:
+        failures = [failure_type(), failure_type()]
+    link = _ScriptedLink(
+        [
+            *failures,
+            _response("PAC=BB8"),
+            static_response,
+            _response("PAC=BB8"),
+        ]
+    )
+    engine = ConnectionEngine(
+        link, address=1, sun_below=lambda: False, grace_seconds=0.0
+    )
+    try:
+        first = await engine.poll()
+        assert first.state is EngineState.ONLINE
+        assert "PAC" in first.values
+        assert "TYP" not in first.values
+
+        second = await engine.poll()
+        assert second.state is EngineState.ONLINE
+        assert "TYP" in second.values
+    finally:
+        await engine.close()
+
+
+async def test_poll_budget_expiry_does_not_classify_failure_twice(monkeypatch):
+    """Failure cleanup runs once, outside the request budget."""
+    monkeypatch.setattr(connection_module, "POLL_BUDGET_SECONDS", 0.01)
+    link = _ScriptedLink(
+        [
+            _response("TYP=50AA"),
+            _response("SYS=4E22;PDC=0"),
+            _response("TYP=50AA"),
+            LinkClosed(),
+        ],
+        disconnect_delay=0.05,
+    )
+    engine = ConnectionEngine(
+        link, address=1, sun_below=lambda: False, grace_seconds=0.0
+    )
+    try:
+        online = await engine.poll()
+        assert online.state is EngineState.ONLINE
+        assert online.shutdown_announced is True
+
+        offline = await engine.poll()
+        assert offline.state is EngineState.OFFLINE_EXPECTED
     finally:
         await engine.close()
 

@@ -49,6 +49,8 @@ inverter sleeps.
 - Response handling now allows the MaxComm protocol's three-second response
   window, with a 3.5-second timeout and a 15-second overall poll budget.
 - Valid fields survive when the inverter returns one malformed field.
+- Failed device-information requests no longer block valid live telemetry, and
+  each poll classifies a connection failure only once.
 - Saving integration options no longer opens a competing connection to an
   inverter that accepts one TCP client.
 - Opening a connection repair no longer fails when Home Assistant provides no
