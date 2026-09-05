@@ -120,13 +120,16 @@ class SolarmaxConnectionRepairFlow(RepairsFlow):
             self.hass, host, port, exclude_entry_id=entry.entry_id
         ):
             return self.async_abort(reason="already_configured")
-        issue = ir.async_get(self.hass).async_get_issue(DOMAIN, self.issue_id)
+        registry = ir.async_get(self.hass)
+        issue = registry.async_get_issue(DOMAIN, self.issue_id)
         if issue is None:
             return self.async_abort(reason="issue_missing")
         accepted = False
         marked_pending = False
         try:
             async with validation_handoff(entry):
+                if registry.async_get_issue(DOMAIN, self.issue_id) is None:
+                    return self.async_abort(reason="issue_missing")
                 await validate_connection(
                     host=host,
                     port=port,
@@ -135,6 +138,10 @@ class SolarmaxConnectionRepairFlow(RepairsFlow):
                         entry, CONF_VERIFY_CHECKSUM, DEFAULT_VERIFY_CHECKSUM
                     ),
                 )
+                current_issue = registry.async_get_issue(DOMAIN, self.issue_id)
+                if current_issue is None:
+                    return self.async_abort(reason="issue_missing")
+                issue = current_issue
                 if find_endpoint_conflict(
                     self.hass, host, port, exclude_entry_id=entry.entry_id
                 ):

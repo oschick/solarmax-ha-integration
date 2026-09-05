@@ -13,12 +13,15 @@ from homeassistant.data_entry_flow import FlowResultType
 from homeassistant.helpers import issue_registry as ir
 
 from custom_components.solarmax.configuration import CannotConnect
+from custom_components.solarmax.connection import EngineState
 from custom_components.solarmax.const import DOMAIN, SAL_OPTIONS, SYS_OPTIONS
+from custom_components.solarmax.coordinator import SolarmaxCoordinator
 from custom_components.solarmax.repairs import (
     SolarmaxConnectionRepairFlow,
     async_create_fix_flow,
 )
 from tests.test_config_flow import _configured_endpoint_entry
+from tests.test_coordinator import _snap
 
 _INTEGRATION_DIR = (
     Path(__file__).resolve().parent.parent / "custom_components" / "solarmax"
@@ -301,6 +304,78 @@ async def test_repair_cancel_before_activation_removes_pending(hass, configured_
             await task
     assert configured_entry.data["host"] == "192.0.2.10"
     assert "verification_pending" not in _connection_issue(hass, configured_entry).data
+
+
+async def test_repair_aborts_when_poll_recovers_while_waiting_for_handoff(
+    hass, configured_entry
+):
+    """A real engine poll finishes ahead of repair and clears its stale issue."""
+    coordinator = SolarmaxCoordinator(hass, configured_entry)
+    configured_entry.runtime_data = coordinator
+    polling, release_poll = asyncio.Event(), asyncio.Event()
+
+    async def poll_inner():
+        polling.set()
+        await release_poll.wait()
+        return _snap(EngineState.ONLINE)
+
+    with (
+        patch.object(coordinator.engine, "_poll_inner", side_effect=poll_inner),
+        patch("custom_components.solarmax.repairs.validate_connection") as validate,
+        patch.object(coordinator, "async_request_refresh") as refresh,
+        patch.object(hass.config_entries, "async_reload") as reload,
+    ):
+        poll_task = asyncio.create_task(coordinator._async_update_data())
+        await asyncio.wait_for(polling.wait(), 1)
+        repair_task = asyncio.create_task(
+            _submit_repair(hass, configured_entry, host="192.0.2.10")
+        )
+        await asyncio.sleep(0)
+        assert not repair_task.done()
+        release_poll.set()
+        assert (await poll_task).state is EngineState.ONLINE
+        assert _connection_issue(hass, configured_entry) is None
+        result = await asyncio.wait_for(repair_task, 1)
+        await hass.async_block_till_done()
+
+    assert result["reason"] == "issue_missing"
+    assert _connection_issue(hass, configured_entry) is None
+    assert configured_entry.data["host"] == "192.0.2.10"
+    validate.assert_not_awaited()
+    refresh.assert_not_awaited()
+    reload.assert_not_awaited()
+
+
+async def test_repair_aborts_when_completed_poll_clears_issue_during_probe(
+    hass, configured_entry
+):
+    """An ONLINE snapshot delivered during probing must not be undone."""
+    coordinator = SolarmaxCoordinator(hass, configured_entry)
+    configured_entry.runtime_data = coordinator
+    with patch.object(
+        coordinator.engine, "_poll_inner", return_value=_snap(EngineState.ONLINE)
+    ):
+        recovered = await coordinator.engine.poll()
+
+    async def probe(**kwargs):
+        # The engine already returned this snapshot; handling it needs no lock.
+        await coordinator._async_handle_snapshot(recovered)
+        assert _connection_issue(hass, configured_entry) is None
+
+    with (
+        patch(
+            "custom_components.solarmax.repairs.validate_connection", side_effect=probe
+        ),
+        patch.object(coordinator, "async_request_refresh") as refresh,
+        patch.object(hass.config_entries, "async_reload") as reload,
+    ):
+        result = await _submit_repair(hass, configured_entry, host="192.0.2.20")
+
+    assert result["reason"] == "issue_missing"
+    assert _connection_issue(hass, configured_entry) is None
+    assert configured_entry.data["host"] == "192.0.2.10"
+    refresh.assert_not_awaited()
+    reload.assert_not_awaited()
 
 
 @pytest.mark.parametrize("during_probe", [False, True])
