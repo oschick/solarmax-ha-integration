@@ -181,7 +181,9 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 except EntryReloadError:
                     errors["base"] = "reload_failed"
 
-        values = dict(entry.data) if user_input is None else user_input
+        values = (
+            _DEFAULT_VALUES | dict(entry.data) if user_input is None else user_input
+        )
         return self.async_show_form(
             step_id="reconfigure",
             data_schema=vol.Schema(
@@ -210,7 +212,8 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         name_changed = name != entry.data[CONF_DEVICE_NAME]
         data = dict(entry.data) | values
         if (host, port, address) == tuple(
-            entry.data[key] for key in (CONF_HOST, CONF_PORT, CONF_ADDRESS)
+            entry.data.get(key, _DEFAULT_VALUES[key])
+            for key in (CONF_HOST, CONF_PORT, CONF_ADDRESS)
         ):
             if name_changed:
                 self.hass.config_entries.async_update_entry(

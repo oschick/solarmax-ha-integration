@@ -94,6 +94,7 @@ class SolarmaxCoordinator(DataUpdateCoordinator[EngineSnapshot]):
         )
         self._sun_source = "unknown"
         self._sun_fallback_warned = False
+        self.sensor_setup_complete = False
 
         super().__init__(
             hass,

@@ -78,13 +78,14 @@ class EntrySnapshot:
 
 @asynccontextmanager
 async def validation_handoff(entry: ConfigEntry) -> AsyncIterator[None]:
-    """Release the runtime's connection when a runtime exists."""
-    engine = getattr(getattr(entry, "runtime_data", None), "engine", None)
-    if engine is None:
-        yield
-        return
-    async with engine.validation_handoff():
-        yield
+    """Wait for setup, then release the runtime connection if one exists."""
+    async with entry.setup_lock:
+        engine = getattr(getattr(entry, "runtime_data", None), "engine", None)
+        if engine is None:
+            yield
+            return
+        async with engine.validation_handoff():
+            yield
 
 
 @callback
@@ -211,7 +212,7 @@ async def validate_connection(
     try:
         raw = await link.request(build_request(address, ["PAC"]))
         parse_response(raw, verify_checksum)
-    except (LinkTimeout, LinkClosed, ProtocolError, OSError) as err:
+    except (LinkTimeout, LinkClosed, ProtocolError, OSError, UnicodeError) as err:
         raise CannotConnect from err
     finally:
         await link.close()

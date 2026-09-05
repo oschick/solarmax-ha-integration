@@ -723,6 +723,22 @@ async def test_validate_connection_accepts_not_applicable_pac(
 
 
 @patch(_LINK_REQUEST, new_callable=AsyncMock)
+async def test_invalid_hostname_returns_reconfigure_form(mock_request, hass):
+    """IDNA encoding failures are reported as connection validation errors."""
+    mock_request.side_effect = UnicodeEncodeError(
+        "idna", "a" * 64, 0, 64, "label too long"
+    )
+    entry = _configured_endpoint_entry(host="127.0.0.1", port=12345, address=1)
+    entry.add_to_hass(hass)
+
+    result = await _submit_reconfigure(hass, entry, host="a" * 64 + ".invalid")
+
+    assert result["type"] is FlowResultType.FORM
+    assert result["errors"] == {"base": "cannot_connect"}
+    assert entry.data[CONF_HOST] == "127.0.0.1"
+
+
+@patch(_LINK_REQUEST, new_callable=AsyncMock)
 async def test_update_interval_out_of_range(mock_request, hass: HomeAssistant) -> None:
     """Test that an out-of-range update interval is rejected by the schema."""
     mock_request.return_value = _response("PAC=03E8")
@@ -862,6 +878,35 @@ async def test_disabled_v1_options_form_preserves_legacy_values(hass):
     assert {
         str(key): key.default() for key in result["data_schema"].schema
     } == legacy_options
+
+
+async def test_disabled_v1_reconfigure_defaults_missing_address(hass):
+    """Reconfiguration remains usable before a disabled entry can migrate."""
+    entry = MockConfigEntry(
+        domain=DOMAIN,
+        version=1,
+        data={
+            CONF_HOST: "192.0.2.10",
+            CONF_PORT: 12345,
+            CONF_DEVICE_NAME: "Existing inverter",
+        },
+        options={},
+    )
+    entry.add_to_hass(hass)
+    object.__setattr__(entry, "disabled_by", ConfigEntryDisabler.USER)
+
+    form = await hass.config_entries.flow.async_init(
+        DOMAIN,
+        context={
+            "source": config_entries.SOURCE_RECONFIGURE,
+            "entry_id": entry.entry_id,
+        },
+    )
+    defaults = {str(key): key.default() for key in form["data_schema"].schema}
+
+    assert defaults[CONF_ADDRESS] == 1
+    result = await hass.config_entries.flow.async_configure(form["flow_id"], defaults)
+    assert result["type"] is FlowResultType.ABORT
 
 
 async def test_options_save_reloads_without_connection_probe(

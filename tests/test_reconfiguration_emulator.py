@@ -1,13 +1,14 @@
 """Reconfiguration handoff tests against the single-client emulator."""
 
 import asyncio
+import threading
 from unittest.mock import patch
 
 import pytest
 from homeassistant.config_entries import ConfigEntryDisabler, ConfigEntryState
 from homeassistant.data_entry_flow import FlowResultType
 
-from custom_components.solarmax import async_setup_entry
+from custom_components.solarmax import async_setup_entry, sensor
 from custom_components.solarmax.configuration import validate_connection
 from custom_components.solarmax.connection import (
     ConnectionEngine,
@@ -75,6 +76,100 @@ async def test_reconfigure_emulator_probe_failure(hass, emulator, proposed_emula
         assert entry.data["port"] == emulator.addr[1]
         assert entry.runtime_data.engine is old_engine
         assert (await old_engine.poll()).state is EngineState.ONLINE
+    finally:
+        await hass.config_entries.async_unload(entry.entry_id)
+
+
+async def test_reconfigure_waits_for_startup_connection_owner(hass, emulator):
+    """Validation must not overlap an entry's first refresh connection."""
+    host, port = emulator.addr
+    entry = _configured_endpoint_entry(host=host, port=port, address=1)
+    entry.add_to_hass(hass)
+    response_started = threading.Event()
+    release_response = threading.Event()
+    original_response = emulator._emulator.build_response
+    original_refresh = SolarmaxCoordinator.async_config_entry_first_refresh
+    starting_runtime = None
+    overlaps: list[bool] = []
+
+    def delayed_response(*args, **kwargs):
+        response_started.set()
+        assert release_response.wait(5)
+        return original_response(*args, **kwargs)
+
+    async def wait_for_response() -> None:
+        while not response_started.is_set():
+            await asyncio.sleep(0.001)
+
+    async def first_refresh(coordinator):
+        nonlocal starting_runtime
+        starting_runtime = coordinator
+        await original_refresh(coordinator)
+
+    async def probe(**kwargs):
+        overlaps.append(starting_runtime.engine._link.connected)
+        return await validate_connection(**kwargs)
+
+    try:
+        with (
+            patch.object(
+                emulator._emulator, "build_response", side_effect=delayed_response
+            ),
+            patch.object(
+                SolarmaxCoordinator,
+                "async_config_entry_first_refresh",
+                first_refresh,
+            ),
+            patch(
+                "custom_components.solarmax.config_flow.validate_connection",
+                side_effect=probe,
+            ),
+        ):
+            setup = asyncio.create_task(hass.config_entries.async_setup(entry.entry_id))
+            await asyncio.wait_for(wait_for_response(), 5)
+            reconfigure = asyncio.create_task(
+                _submit_reconfigure(hass, entry, address=2)
+            )
+            await asyncio.sleep(0.05)
+            release_response.set()
+            assert await asyncio.wait_for(setup, 5)
+            await asyncio.wait_for(reconfigure, 5)
+
+        assert overlaps == [False]
+    finally:
+        release_response.set()
+        if entry.state is ConfigEntryState.LOADED:
+            await hass.config_entries.async_unload(entry.entry_id)
+        if starting_runtime is not None:
+            await starting_runtime.async_shutdown()
+            await starting_runtime.engine.close()
+
+
+async def test_sensor_setup_failure_rolls_back_reconfiguration(
+    hass, emulator, proposed_emulator
+):
+    """A platform exception swallowed by HA must still fail the reload."""
+    entry = await _loaded_entry(hass, emulator)
+    old_data = dict(entry.data)
+    original_setup = sensor.async_setup_entry
+
+    async def setup_sensor(hass, current, add_entities):
+        if current.data["port"] == proposed_emulator.addr[1]:
+            raise RuntimeError("sensor initialization failed")
+        return await original_setup(hass, current, add_entities)
+
+    try:
+        with patch.object(sensor, "async_setup_entry", side_effect=setup_sensor):
+            result = await _submit_reconfigure(
+                hass,
+                entry,
+                host=proposed_emulator.addr[0],
+                port=proposed_emulator.addr[1],
+            )
+
+        assert result["type"] is FlowResultType.FORM
+        assert result["errors"] == {"base": "reload_failed"}
+        assert dict(entry.data) == old_data
     finally:
         await hass.config_entries.async_unload(entry.entry_id)
 

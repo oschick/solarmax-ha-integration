@@ -51,6 +51,14 @@ inverter sleeps.
 
 ### Fixed
 
+- Reconfiguration uses the default inverter address for disabled legacy
+  entries that have not migrated yet.
+- Invalid hostnames now return a connection error instead of closing the
+  configuration flow.
+- Reconfiguration waits for an in-progress setup to release the inverter
+  connection and rolls back if the sensor platform fails to initialize.
+- Disabling checksum verification now skips only the CRC comparison; responses
+  must still use valid MaxComm framing.
 - Daily energy cached before midnight can no longer reappear when the first
   new-day response omits that register.
 - Unavailable or unknown `sun.sun` states now use the clock fallback for

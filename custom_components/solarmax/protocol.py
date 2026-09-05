@@ -172,6 +172,7 @@ _FIELD_DIVISOR: dict[str, int] = {
 
 # Frame layout: {<payload>|<CRC>}  — CRC is 4 hex chars immediately before the ETX.
 _CRC_LEN = 4
+_HEX_CHARS = frozenset("0123456789ABCDEFabcdef")
 
 
 def _frame_payload(frame: str) -> str:
@@ -182,6 +183,15 @@ def _frame_payload(frame: str) -> str:
 def _frame_crc(frame: str) -> str:
     """Return the 4-char CRC stated at the end of a frame (just before the ETX)."""
     return frame[-(_CRC_LEN + 1) : -1]
+
+
+def _is_hex(value: str, *, length: int | None = None) -> bool:
+    """Return whether value contains the expected number of hex digits."""
+    return (
+        bool(value)
+        and (length is None or len(value) == length)
+        and all(char in _HEX_CHARS for char in value)
+    )
 
 
 class ProtocolError(Exception):
@@ -327,11 +337,45 @@ def _extract_frame_data(frame: str, *, first: bool) -> str:
     return payload
 
 
+def _has_valid_frame_structure(frame: str, *, first: bool, final: bool) -> bool:
+    """Return whether a frame has a valid MaxComm envelope and header."""
+    if not frame.startswith(PROTO_STX):
+        return False
+    expected_etx = PROTO_ETX if final else ")"
+    if not frame.endswith(expected_etx):
+        return False
+
+    payload = _frame_payload(frame)
+    header, separator, data = payload.partition(PROTO_FRS)
+    if not separator or not data.endswith(PROTO_FRS):
+        return False
+
+    header_fields = header.split(PROTO_FS)
+    if (
+        len(header_fields) != 3
+        or not all(_is_hex(field, length=2) for field in header_fields)
+        or not _is_hex(_frame_crc(frame), length=_CRC_LEN)
+    ):
+        return False
+
+    if not first:
+        return True
+    port, port_separator, _ = data.removesuffix(PROTO_FRS).partition(PROTO_US)
+    return bool(port_separator and _is_hex(port))
+
+
 def _validated_frames(data: str, verify_checksum: bool) -> list[str]:
     """Return complete frames or raise a retryable parse error."""
     frames = split_frames(data)
     if not frames:
         raise RetryableProtocolError("No valid MaxComm frames found in response")
+    if not all(
+        _has_valid_frame_structure(
+            frame, first=index == 0, final=index == len(frames) - 1
+        )
+        for index, frame in enumerate(frames)
+    ):
+        raise RetryableProtocolError("Invalid MaxComm frame structure")
     if verify_checksum and not all(verify_frame_checksum(frame) for frame in frames):
         raise RetryableProtocolError(
             "MaxComm response checksum verification failed: data may be corrupted"
