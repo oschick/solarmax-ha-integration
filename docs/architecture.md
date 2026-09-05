@@ -64,7 +64,17 @@ twilight elevation remains the source of fault classification. Without a
 uses 05:00-20:00. The fallback logs one warning per coordinator instance, and
 diagnostics expose the active sun source.
 
-A fault lasting five minutes creates a Home Assistant repair issue. Recovery or an expected period removes it. Completing the repair flow suppresses the same fault episode for 24 hours.
+A fault lasting five minutes creates a Home Assistant repair issue. An expected
+offline period or a recovered connection removes a standard issue. The repair
+flow lets the user edit the host and port, then probes the proposed endpoint
+during a validation handoff. A successful probe marks the same issue as pending
+verification. The coordinator removes that pending issue only after a complete
+**Online** (`EngineState.ONLINE`) poll.
+
+Home Assistant owns the repair issue's native **Ignore** state. The coordinator
+updates one stable issue ID during a fault episode, and the repair flow preserves
+the issue metadata when it adds the pending marker. A verified recovery deletes
+the issue, so a later fault starts a new issue without the old Ignore state.
 
 The coordinator also exposes device metadata and sends a local-midnight listener update for daily energy rollover.
 
@@ -76,7 +86,31 @@ Entity unique IDs form persistent user data. `_UNIQUE_ID_MIGRATIONS` in `__init_
 
 ### Setup and teardown
 
-The initial config flow uses a short-lived `SolarmaxLink` to request and validate `PAC`. It closes the link in `finally`. The options flow validates the schema and reloads the entry without a second connection because the running engine owns the inverter's single slot.
+Schema version 2 stores host, port, inverter address, and device name in
+`ConfigEntry.data`. It stores the update interval, checksum preference,
+night-value preference, and twilight threshold in `ConfigEntry.options`. The
+migration copies legacy values into that split without changing entity IDs or
+entity unique IDs. A downgrade requires a Home Assistant backup from before the
+migration because older integration versions cannot read the version 2 entry.
+
+The initial config flow uses a short-lived `SolarmaxLink` to request and
+validate `PAC`. It closes the link in `finally`. Native reconfiguration uses the
+same probe when the host, port, or inverter address changes. A device-name-only
+change updates the entry and device registry without probing. The Options flow
+only accepts preference fields and does not probe the inverter.
+
+The domain-scoped `configuration_mutation_lock` serializes setup,
+reconfiguration, Options, and repair mutations across all entries. Endpoint
+checks run again while the caller holds that lock. For a running entry,
+`validation_handoff()` asks the engine to release its persistent socket and
+pause polling while the short-lived probe uses the inverter's single client
+slot.
+
+Endpoint and preference changes use one reload transaction. The transaction
+captures `data`, `options`, title, and config-entry unique ID before applying a
+change. If Home Assistant cannot load the changed entry, the transaction
+restores the snapshot and reloads the prior configuration. Cancellation waits
+for the apply-or-rollback transaction to reach a stable state.
 
 Entry setup stores the coordinator in typed `ConfigEntry.runtime_data`, migrates entity IDs, forwards the sensor platform, and registers the midnight listener. Entry unload closes the engine after platform teardown succeeds.
 

@@ -456,6 +456,48 @@ def test_translation_files_share_issues_and_sys_state_keys():
         ), name
 
 
+def test_translation_files_cover_reconfiguration_and_repair_flows():
+    """Every locale must expose each field and outcome used by the flows."""
+    option_fields = {
+        "update_interval",
+        "verify_checksum",
+        "night_keep_values",
+        "twilight_elevation_threshold",
+    }
+    reconfigure_fields = {"host", "port", "address", "device_name"}
+    repair_abort_keys = {
+        "entry_missing",
+        "already_configured",
+        "repair_pending_verification",
+        "issue_missing",
+    }
+    repair_error_keys = {"cannot_connect", "unknown", "reload_failed"}
+
+    for path in _TRANSLATION_PATHS:
+        content = _load_translation(path)
+        reconfigure = content["config"]["step"]["reconfigure"]
+        assert set(reconfigure["data"]) == reconfigure_fields, path.name
+        assert set(reconfigure["data_description"]) == reconfigure_fields, path.name
+        assert {
+            "reconfigure_successful",
+            "already_configured",
+        } <= set(content["config"]["abort"]), path.name
+        assert {"cannot_connect", "reload_failed"} <= set(content["config"]["error"]), (
+            path.name
+        )
+
+        options = content["options"]
+        assert set(options["step"]["init"]["data"]) == option_fields, path.name
+        assert "{current_" not in options["step"]["init"]["description"], path.name
+        assert set(options["error"]) == {"reload_failed"}, path.name
+
+        repair = content["issues"]["connection_issues"]["fix_flow"]
+        assert set(repair["step"]) == {"init"}, path.name
+        assert set(repair["step"]["init"]["data"]) == {"host", "port"}, path.name
+        assert set(repair["error"]) == repair_error_keys, path.name
+        assert set(repair["abort"]) == repair_abort_keys, path.name
+
+
 def test_sys_state_keys_match_sys_options():
     """Every translation file's `entity.sensor.sys.state` keys must equal
     `SYS_OPTIONS` -- Home Assistant rejects an enum state whose option

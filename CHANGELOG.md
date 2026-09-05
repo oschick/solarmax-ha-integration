@@ -14,6 +14,9 @@ inverter sleeps.
 
 ### Breaking changes
 
+- Existing entries migrate to config-entry schema version 2. The upgrade
+  preserves settings, but downgrading to an older integration requires a Home
+  Assistant backup created before the upgrade.
 - The new connection engine replaces the previous request-per-poll transport.
   Hardware testing covers one SolarMax 7TP2; other inverter models and firmware
   versions may behave differently.
@@ -40,8 +43,11 @@ inverter sleeps.
   fallback, which also logs one warning when activated.
 - An armed daytime **Offline (expected)** (`offline_expected`) state becomes
   **Offline (fault)** (`offline_fault`) after one hour and ten failed probes.
-- Users can dismiss a connection repair for 24 hours during the same fault
-  episode.
+- Home Assistant provides native **Reconfigure** for the host, port, inverter
+  address, and device name. Connection repairs can edit the host and port, test
+  the endpoint, and stay open until a complete online update verifies recovery.
+  Home Assistant's native **Ignore** action remains available. Real-device
+  coverage for these flows remains limited to the maintainer's SolarMax 7TP2.
 
 ### Fixed
 
@@ -60,8 +66,8 @@ inverter sleeps.
   has never reported. Unsupported sensors remain unavailable.
 - Saving integration options no longer opens a competing connection to an
   inverter that accepts one TCP client and now reloads the entry only once.
-- Connection repairs are created once per fault episode, tolerate missing
-  Home Assistant issue data, and stay suppressed for 24 hours after dismissal.
+- Connection repairs tolerate missing Home Assistant issue data and preserve
+  the native Ignore state while an active issue is refreshed.
 - Expected nighttime shutdowns reset fault timers, so an inverter that remains
   offline after dawn starts a new daytime fault episode.
 - Delayed model, firmware, and serial data now refreshes the Home Assistant

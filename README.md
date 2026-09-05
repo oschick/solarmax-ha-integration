@@ -58,6 +58,12 @@ entities for those fields remain unavailable.
 Giving the inverter a fixed DHCP lease is recommended so its address does not
 change after setup.
 
+### Upgrading and downgrading
+
+The schema version 2 upgrade preserves existing connection settings and
+preferences. Older integration releases cannot read the migrated entry. To
+downgrade, restore a Home Assistant backup created before the upgrade.
+
 ## Installation
 
 ### HACS
@@ -114,13 +120,24 @@ an inverter, clear **Verify response checksum**. The setting applies both to
 the setup probe and to normal polling, so the checkbox can explicitly tell the
 integration to ignore response checksums.
 
-### Changing settings
+### Reconfigure connection
 
-Select **Configure** on the integration entry to change any setting. Saving
-reloads the entry and closes the old connection before opening a new one.
-Unlike initial setup, the options form does not start an extra validation
-connection, which avoids competing for the inverter's single client slot. An
-invalid host or port is reported by the connection state after the reload.
+Open the integration entry menu and select **Reconfigure** to change the host,
+port, inverter address, or device name. Home Assistant tests a new host, port,
+or inverter address before saving it, so the inverter must be reachable. A
+device-name-only change does not contact the inverter.
+
+Saving endpoint changes reloads the entry. Home Assistant restores the
+previous settings if it cannot activate the new connection. Sensor entity IDs
+and unique IDs stay stable. Endpoint changes update the config entry's endpoint
+identity.
+
+### Options
+
+Select **Configure** to change the update interval, checksum verification,
+overnight values, or twilight threshold. Preference changes do not probe the
+inverter. Saving a change reloads the entry and restores the previous options
+if the reload fails.
 
 ## Connection and recovery
 
@@ -186,7 +203,10 @@ download reports `sun.sun`, `clock_fallback`, or `unknown` as the active sun
 source.
 
 If a daytime fault lasts five minutes, Home Assistant creates a repair issue.
-The issue clears automatically after communication recovers.
+Open the repair to edit the host or port and test the connection. A successful
+probe saves the connection, but the repair stays visible until a complete
+online inverter update succeeds. Home Assistant's built-in **Ignore** action
+remains available. The issue clears after verified recovery.
 
 ### Diagnostic state attributes
 
