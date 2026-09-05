@@ -101,6 +101,8 @@ async def async_setup_entry(hass: HomeAssistant, entry: SolarmaxConfigEntry) -> 
         entry.runtime_data = coordinator
 
         await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
+        if not coordinator.sensor_setup_complete:
+            raise RuntimeError("Solarmax sensor platform setup failed")
 
         # Register only after platform setup succeeds so failed setup cannot
         # leave callbacks targeting a closed coordinator.

@@ -68,6 +68,7 @@ async def async_setup_entry(
             _make_device_registry_updater(hass, entry, coordinator)
         )
     )
+    coordinator.sensor_setup_complete = True
 
 
 def _make_device_registry_updater(

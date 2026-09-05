@@ -145,6 +145,18 @@ def test_parse_response_invalid_response():
         parse_response("invalid_response")
 
 
+def test_parse_response_rejects_non_maxcomm_frame_without_checksum():
+    """Ignoring CRC must not accept an unrelated brace-delimited payload."""
+    with pytest.raises(RetryableProtocolError, match="frame structure"):
+        parse_response('{"error":"unknown command"}', verify_checksum=False)
+
+
+def test_parse_response_can_ignore_bad_checksum_on_valid_frame():
+    """Ignoring CRC still accepts a structurally valid MaxComm frame."""
+    result = parse_response("{01;FB;18|64:PAC=BB8|0000}", verify_checksum=False)
+    assert result["PAC"]["value"] == 1500.0
+
+
 def test_parse_response_valid_crc():
     """Test response with valid CRC is parsed successfully."""
     # Build a response with correct CRC
