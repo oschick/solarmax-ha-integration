@@ -51,6 +51,10 @@ inverter sleeps.
 
 ### Fixed
 
+- Reconfiguration uses the default inverter address for disabled legacy
+  entries that have not migrated yet.
+- Invalid hostnames now return a connection error instead of closing the
+  configuration flow.
 - Reconfiguration waits for an in-progress setup to release the inverter
   connection and rolls back if the sensor platform fails to initialize.
 - Disabling checksum verification now skips only the CRC comparison; responses

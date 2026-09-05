@@ -212,7 +212,7 @@ async def validate_connection(
     try:
         raw = await link.request(build_request(address, ["PAC"]))
         parse_response(raw, verify_checksum)
-    except (LinkTimeout, LinkClosed, ProtocolError, OSError) as err:
+    except (LinkTimeout, LinkClosed, ProtocolError, OSError, UnicodeError) as err:
         raise CannotConnect from err
     finally:
         await link.close()
