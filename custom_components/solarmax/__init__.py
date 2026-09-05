@@ -110,9 +110,6 @@ async def async_setup_entry(hass: HomeAssistant, entry: SolarmaxConfigEntry) -> 
             )
         )
 
-    # Set up update listener for options changes
-    entry.async_on_unload(entry.add_update_listener(async_update_listener))
-
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
 
     _LOGGER.info(
@@ -121,14 +118,6 @@ async def async_setup_entry(hass: HomeAssistant, entry: SolarmaxConfigEntry) -> 
         entry.data[CONF_PORT],
     )
     return True
-
-
-async def async_update_listener(
-    hass: HomeAssistant, entry: SolarmaxConfigEntry
-) -> None:
-    """Handle options update."""
-    # Reload the integration when options are updated
-    await hass.config_entries.async_reload(entry.entry_id)
 
 
 async def async_unload_entry(hass: HomeAssistant, entry: SolarmaxConfigEntry) -> bool:

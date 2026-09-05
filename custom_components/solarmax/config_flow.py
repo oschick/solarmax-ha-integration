@@ -12,11 +12,16 @@ from homeassistant.core import callback
 
 from .configuration import (
     CannotConnect,
+    EntryReloadError,
+    async_apply_and_reload,
     configuration_mutation_lock,
     endpoint_unique_id,
+    entry_option,
     find_endpoint_conflict,
     split_entry_input,
+    update_device_name,
     validate_connection,
+    validation_handoff,
 )
 from .const import (
     CONF_ADDRESS,
@@ -136,6 +141,87 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             errors=errors,
         )
 
+    async def async_step_reconfigure(
+        self, user_input: dict[str, Any] | None = None
+    ) -> ConfigFlowResult:
+        """Validate and atomically replace connection settings."""
+        entry = self._get_reconfigure_entry()
+        errors: dict[str, str] = {}
+        if user_input is not None:
+            async with configuration_mutation_lock(self.hass):
+                entry = self._get_reconfigure_entry()
+                try:
+                    return await self._async_reconfigure(entry, user_input)
+                except CannotConnect:
+                    errors["base"] = "cannot_connect"
+                except EntryReloadError:
+                    errors["base"] = "reload_failed"
+
+        values = dict(entry.data) if user_input is None else user_input
+        return self.async_show_form(
+            step_id="reconfigure",
+            data_schema=vol.Schema(
+                {
+                    vol.Required(CONF_HOST, default=values[CONF_HOST]): str,
+                    vol.Required(CONF_PORT, default=values[CONF_PORT]): vol.Coerce(int),
+                    vol.Required(CONF_ADDRESS, default=values[CONF_ADDRESS]): vol.All(
+                        vol.Coerce(int), vol.Range(min=1, max=249)
+                    ),
+                    vol.Required(
+                        CONF_DEVICE_NAME, default=values[CONF_DEVICE_NAME]
+                    ): str,
+                }
+            ),
+            errors=errors,
+        )
+
+    async def _async_reconfigure(
+        self, entry: config_entries.ConfigEntry, values: dict[str, Any]
+    ) -> ConfigFlowResult:
+        """Apply a submitted reconfiguration while the mutation lock is held."""
+        host, port, address = (
+            values[key] for key in (CONF_HOST, CONF_PORT, CONF_ADDRESS)
+        )
+        name = values[CONF_DEVICE_NAME]
+        data = dict(entry.data) | values
+        if (host, port, address) == tuple(
+            entry.data[key] for key in (CONF_HOST, CONF_PORT, CONF_ADDRESS)
+        ):
+            if name != entry.data[CONF_DEVICE_NAME]:
+                self.hass.config_entries.async_update_entry(
+                    entry, data=data, title=name
+                )
+                update_device_name(self.hass, entry.entry_id, name)
+            return self.async_abort(reason="reconfigure_successful")
+
+        if find_endpoint_conflict(
+            self.hass, host, port, exclude_entry_id=entry.entry_id
+        ):
+            return self.async_abort(reason="already_configured")
+        async with validation_handoff(entry):
+            await validate_connection(
+                host=host,
+                port=port,
+                address=address,
+                verify_checksum=entry_option(
+                    entry, CONF_VERIFY_CHECKSUM, DEFAULT_VERIFY_CHECKSUM
+                ),
+            )
+        # Release the engine poll lock before unload closes that engine.
+        if find_endpoint_conflict(
+            self.hass, host, port, exclude_entry_id=entry.entry_id
+        ):
+            return self.async_abort(reason="already_configured")
+        await async_apply_and_reload(
+            self.hass,
+            entry,
+            data=data,
+            options=entry.options,
+            title=name,
+            unique_id=endpoint_unique_id(host, port, address),
+        )
+        return self.async_abort(reason="reconfigure_successful")
+
 
 class OptionsFlow(config_entries.OptionsFlow):
     """Handle options flow for Solarmax Inverter."""
@@ -145,11 +231,13 @@ class OptionsFlow(config_entries.OptionsFlow):
     ) -> ConfigFlowResult:
         """Update settings without opening a second inverter connection."""
         if user_input is not None:
-            self.hass.config_entries.async_update_entry(
-                self.config_entry,
-                data=user_input,
-                title=user_input.get(CONF_DEVICE_NAME, self.config_entry.title),
-            )
+            async with configuration_mutation_lock(self.hass):
+                self.hass.config_entries.async_update_entry(
+                    self.config_entry,
+                    data=user_input,
+                    title=user_input.get(CONF_DEVICE_NAME, self.config_entry.title),
+                )
+                await self.hass.config_entries.async_reload(self.config_entry.entry_id)
 
             return self.async_create_entry(title="", data={})
 

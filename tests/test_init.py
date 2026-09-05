@@ -142,6 +142,24 @@ async def test_setup_entry_success(
         mock_forward.assert_called_once_with(mock_config_entry, [Platform.SENSOR])
 
 
+@patch("custom_components.solarmax.SolarmaxCoordinator")
+async def test_entry_update_does_not_reload_implicitly(
+    mock_coordinator_class, hass, mock_config_entry
+):
+    """Submitting flows own reloads, so a title update cannot trigger a second one."""
+    mock_config_entry.add_to_hass(hass)
+    mock_coordinator_class.return_value.async_config_entry_first_refresh = AsyncMock()
+    with (
+        patch.object(hass.config_entries, "async_forward_entry_setups"),
+        patch.object(hass.config_entries, "async_reload") as reload,
+    ):
+        await async_setup_entry(hass, mock_config_entry)
+        hass.config_entries.async_update_entry(mock_config_entry, title="Garage")
+        await hass.async_block_till_done()
+    assert mock_config_entry.title == "Garage"
+    reload.assert_not_awaited()
+
+
 @patch("custom_components.solarmax.async_track_time_change")
 @patch("custom_components.solarmax.SolarmaxCoordinator")
 async def test_setup_entry_registers_midnight_listener_when_night_keep_values_enabled(
