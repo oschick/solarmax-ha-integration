@@ -722,8 +722,12 @@ async def test_validate_connection_accepts_not_applicable_pac(
     )
 
 
-async def test_invalid_hostname_returns_reconfigure_form(hass, socket_enabled):
+@patch(_LINK_REQUEST, new_callable=AsyncMock)
+async def test_invalid_hostname_returns_reconfigure_form(mock_request, hass):
     """IDNA encoding failures are reported as connection validation errors."""
+    mock_request.side_effect = UnicodeEncodeError(
+        "idna", "a" * 64, 0, 64, "label too long"
+    )
     entry = _configured_endpoint_entry(host="127.0.0.1", port=12345, address=1)
     entry.add_to_hass(hass)
 
