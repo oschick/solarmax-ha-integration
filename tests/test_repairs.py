@@ -1,17 +1,24 @@
 """Test repairs for Solarmax integration."""
 
+import asyncio
 import json
+from contextlib import asynccontextmanager
 from pathlib import Path
-from unittest.mock import Mock
+from unittest.mock import AsyncMock, Mock, patch
 
 import pytest
 from homeassistant.components.repairs import ConfirmRepairFlow
+from homeassistant.config_entries import ConfigEntryDisabler
+from homeassistant.data_entry_flow import FlowResultType
+from homeassistant.helpers import issue_registry as ir
 
-from custom_components.solarmax.const import SAL_OPTIONS, SYS_OPTIONS
+from custom_components.solarmax.configuration import CannotConnect
+from custom_components.solarmax.const import DOMAIN, SAL_OPTIONS, SYS_OPTIONS
 from custom_components.solarmax.repairs import (
     SolarmaxConnectionRepairFlow,
     async_create_fix_flow,
 )
+from tests.test_config_flow import _configured_endpoint_entry
 
 _INTEGRATION_DIR = (
     Path(__file__).resolve().parent.parent / "custom_components" / "solarmax"
@@ -45,28 +52,16 @@ def _leaf_key_paths(node: object, prefix: str = "") -> set[str]:
 
 
 @pytest.mark.asyncio
-async def test_connection_repair_flow():
-    """Test connection repair flow."""
-    data = {"host": "192.168.1.100", "port": 12345, "minutes": "5"}
-
-    flow = SolarmaxConnectionRepairFlow(data)
-
-    # Test initial step
+async def test_connection_repair_flow(hass, configured_entry):
+    """Repair offers only the current endpoint fields."""
+    flow = await _repair_flow(hass, configured_entry)
     result = await flow.async_step_init()
     assert result["type"] == "form"
-    assert result["step_id"] == "confirm"
-
-    # Test confirm step
-    result = await flow.async_step_confirm()
-    assert result["type"] == "form"
-    assert result["step_id"] == "confirm"
-    assert "192.168.1.100" in str(result["description_placeholders"]["host"])
-    assert "12345" in str(result["description_placeholders"]["port"])
-    assert "5" in str(result["description_placeholders"]["minutes"])
-
-    # Test confirm with user input
-    result = await flow.async_step_confirm({"confirm": True})
-    assert result["type"] == "create_entry"
+    assert result["step_id"] == "init"
+    assert {str(key): key.default() for key in result["data_schema"].schema} == {
+        "host": "192.0.2.10",
+        "port": 12345,
+    }
 
 
 @pytest.mark.asyncio
@@ -108,28 +103,260 @@ async def test_connection_repair_flow_survives_null_data():
 
 
 @pytest.mark.asyncio
-async def test_connection_repair_fix_flow_renders_confirm_step():
-    """strings.json's fix_flow confirm step must exist and reference every
-    placeholder the flow actually supplies.
-
-    Home Assistant renders the repair dialog from
-    `issues.connection_issues.fix_flow.step.confirm` using the flow's
-    `description_placeholders` -- a missing block or a stale placeholder
-    name renders a literal '{minutes}' (or a blank dialog) to the user.
-    """
-    data = {"host": "192.168.1.100", "port": 12345, "minutes": "7"}
-    flow = SolarmaxConnectionRepairFlow(data)
-
-    result = await flow.async_step_confirm()
+async def test_connection_repair_fix_flow_preserves_placeholders(
+    hass, configured_entry
+):
+    """The editable repair retains the issue's description context."""
+    flow = await _repair_flow(hass, configured_entry)
+    result = await flow.async_step_init()
 
     assert result["type"] == "form"
-    assert result["step_id"] == "confirm"
+    assert result["step_id"] == "init"
 
-    strings = _load_translation(_INTEGRATION_DIR / "strings.json")
-    confirm = strings["issues"]["connection_issues"]["fix_flow"]["step"]["confirm"]
-    assert confirm["title"]
-    for placeholder in result["description_placeholders"]:
-        assert f"{{{placeholder}}}" in confirm["description"]
+    assert result["description_placeholders"] == {
+        "host": "192.0.2.10",
+        "port": "12345",
+        "minutes": "5",
+    }
+
+
+def _connection_issue(hass, entry):
+    return ir.async_get(hass).async_get_issue(
+        DOMAIN, f"connection_issues_{entry.entry_id}"
+    )
+
+
+def _create_connection_issue(hass, entry):
+    context = {
+        "host": entry.data["host"],
+        "port": str(entry.data["port"]),
+        "minutes": "5",
+    }
+    ir.async_create_issue(
+        hass,
+        DOMAIN,
+        f"connection_issues_{entry.entry_id}",
+        is_fixable=True,
+        is_persistent=False,
+        severity=ir.IssueSeverity.ERROR,
+        translation_key="connection_issues",
+        translation_placeholders=context,
+        data=context,
+    )
+
+
+@pytest.fixture
+def configured_entry(hass):
+    entry = _configured_endpoint_entry(host="192.0.2.10", port=12345, address=7)
+    entry.add_to_hass(hass)
+    _create_connection_issue(hass, entry)
+    return entry
+
+
+async def _repair_flow(hass, entry):
+    issue_id = f"connection_issues_{entry.entry_id}"
+    issue = _connection_issue(hass, entry)
+    flow = await async_create_fix_flow(hass, issue_id, issue.data)
+    flow.hass, flow.issue_id, flow.data = hass, issue_id, issue.data
+    return flow
+
+
+async def _submit_repair(hass, entry, *, host, port=None):
+    flow = await _repair_flow(hass, entry)
+    return await flow.async_step_init(
+        {"host": host, "port": port or entry.data["port"]}
+    )
+
+
+@pytest.mark.parametrize(
+    "error,key", [(CannotConnect(), "cannot_connect"), (RuntimeError(), "unknown")]
+)
+async def test_failed_repair_probe_leaves_entry_and_issue_unchanged(
+    hass, configured_entry, error, key
+):
+    with (
+        patch(
+            "custom_components.solarmax.repairs.validate_connection", side_effect=error
+        ),
+        patch.object(hass.config_entries, "async_reload", return_value=True) as reload,
+    ):
+        result = await _submit_repair(hass, configured_entry, host="192.0.2.99")
+    assert result["errors"] == {"base": key}
+    assert configured_entry.data["host"] == "192.0.2.10"
+    assert "verification_pending" not in _connection_issue(hass, configured_entry).data
+    reload.assert_not_awaited()
+
+
+@pytest.mark.parametrize("disabled", [False, True])
+@pytest.mark.parametrize("changed", [False, True])
+async def test_repair_without_runtime_preserves_disabled_state(
+    hass, configured_entry, disabled, changed
+):
+    if disabled:
+        object.__setattr__(configured_entry, "disabled_by", ConfigEntryDisabler.USER)
+    host = "192.0.2.20" if changed else "192.0.2.10"
+    original_options = dict(configured_entry.options)
+    with (
+        patch("custom_components.solarmax.repairs.validate_connection") as validate,
+        patch.object(hass.config_entries, "async_reload", return_value=True) as reload,
+    ):
+        result = await _submit_repair(hass, configured_entry, host=host)
+    assert result["type"] is FlowResultType.ABORT
+    assert result["reason"] == "repair_pending_verification"
+    assert configured_entry.disabled_by is (
+        ConfigEntryDisabler.USER if disabled else None
+    )
+    assert reload.await_count == (0 if disabled else 1)
+    assert configured_entry.data == {
+        "host": host,
+        "port": 12345,
+        "address": 7,
+        "device_name": "Existing inverter",
+    }
+    assert dict(configured_entry.options) == original_options
+    assert _connection_issue(hass, configured_entry).data["verification_pending"] == 1
+    validate.assert_awaited_once_with(
+        host=host, port=12345, address=7, verify_checksum=True
+    )
+
+
+async def test_repair_unchanged_runtime_handoff_and_refresh(hass, configured_entry):
+    handed_off = False
+
+    @asynccontextmanager
+    async def handoff():
+        nonlocal handed_off
+        handed_off = True
+        yield
+        handed_off = False
+
+    runtime = Mock(
+        engine=Mock(validation_handoff=handoff), async_request_refresh=AsyncMock()
+    )
+    configured_entry.runtime_data = runtime
+    hass.config_entries.async_update_entry(
+        configured_entry, options={**configured_entry.options, "verify_checksum": False}
+    )
+
+    async def probe(**kwargs):
+        assert handed_off
+        assert kwargs["verify_checksum"] is False
+
+    with (
+        patch(
+            "custom_components.solarmax.repairs.validate_connection", side_effect=probe
+        ),
+        patch.object(hass.config_entries, "async_reload") as reload,
+    ):
+        result = await _submit_repair(hass, configured_entry, host="192.0.2.10")
+        await hass.async_block_till_done()
+    assert result["type"] is FlowResultType.ABORT
+    reload.assert_not_awaited()
+    runtime.async_request_refresh.assert_awaited_once()
+    assert not handed_off
+
+
+@pytest.mark.parametrize("failure", [False, RuntimeError("reload failed")])
+async def test_repair_reload_failure_restores_entry_and_open_issue(
+    hass, configured_entry, failure
+):
+    with (
+        patch("custom_components.solarmax.repairs.validate_connection"),
+        patch.object(hass.config_entries, "async_reload", side_effect=[failure, True]),
+    ):
+        result = await _submit_repair(hass, configured_entry, host="192.0.2.20")
+    assert result["errors"] == {"base": "reload_failed"}
+    assert configured_entry.data["host"] == "192.0.2.10"
+    assert _connection_issue(hass, configured_entry).data["verification_pending"] == 1
+
+
+async def test_repair_missing_entry_aborts(hass, configured_entry):
+    flow = await _repair_flow(hass, configured_entry)
+    with patch.object(hass.config_entries, "async_get_entry", return_value=None):
+        result = await flow.async_step_init()
+    assert result["reason"] == "entry_missing"
+
+
+async def test_repair_cancel_before_activation_removes_pending(hass, configured_entry):
+    """Cancellation while leaving handoff cannot mark an unaccepted edit pending."""
+    leaving, release = asyncio.Event(), asyncio.Event()
+
+    @asynccontextmanager
+    async def handoff():
+        yield
+        leaving.set()
+        await release.wait()
+
+    configured_entry.runtime_data = Mock(engine=Mock(validation_handoff=handoff))
+    with patch("custom_components.solarmax.repairs.validate_connection"):
+        task = asyncio.create_task(
+            _submit_repair(hass, configured_entry, host="192.0.2.20")
+        )
+        await leaving.wait()
+        assert (
+            _connection_issue(hass, configured_entry).data["verification_pending"] == 1
+        )
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+    assert configured_entry.data["host"] == "192.0.2.10"
+    assert "verification_pending" not in _connection_issue(hass, configured_entry).data
+
+
+@pytest.mark.parametrize("during_probe", [False, True])
+async def test_repair_rejects_endpoint_owned_by_other_address(
+    hass, configured_entry, during_probe
+):
+    other = _configured_endpoint_entry(host="192.0.2.20", port=12345, address=8)
+    if not during_probe:
+        other.add_to_hass(hass)
+
+    async def probe(**kwargs):
+        other.add_to_hass(hass)
+
+    with (
+        patch(
+            "custom_components.solarmax.repairs.validate_connection", side_effect=probe
+        ) as validate,
+        patch.object(hass.config_entries, "async_reload") as reload,
+    ):
+        result = await _submit_repair(hass, configured_entry, host="192.0.2.20")
+    assert result["reason"] == "already_configured"
+    assert validate.await_count == int(during_probe)
+    reload.assert_not_awaited()
+    assert configured_entry.data["host"] == "192.0.2.10"
+    assert "verification_pending" not in _connection_issue(hass, configured_entry).data
+
+
+async def test_overlapping_repairs_serialize_endpoint_ownership(hass, configured_entry):
+    second = _configured_endpoint_entry(host="192.0.2.11", port=12345, address=8)
+    second.add_to_hass(hass)
+    _create_connection_issue(hass, second)
+    started, release = asyncio.Event(), asyncio.Event()
+
+    async def probe(**kwargs):
+        started.set()
+        await release.wait()
+
+    with (
+        patch(
+            "custom_components.solarmax.repairs.validate_connection", side_effect=probe
+        ) as validate,
+        patch.object(hass.config_entries, "async_reload", return_value=True),
+    ):
+        first_task = asyncio.create_task(
+            _submit_repair(hass, configured_entry, host="192.0.2.20")
+        )
+        await started.wait()
+        second_task = asyncio.create_task(
+            _submit_repair(hass, second, host="192.0.2.20")
+        )
+        await asyncio.sleep(0)
+        release.set()
+        first, last = await asyncio.gather(first_task, second_task)
+    assert first["reason"] == "repair_pending_verification"
+    assert last["reason"] == "already_configured"
+    assert validate.await_count == 1
 
 
 def test_translation_files_share_issues_and_sys_state_keys():

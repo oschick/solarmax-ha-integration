@@ -4,6 +4,7 @@ import asyncio
 from unittest.mock import patch
 
 import pytest
+from homeassistant.config_entries import ConfigEntryDisabler
 from homeassistant.data_entry_flow import FlowResultType
 
 from custom_components.solarmax import async_setup_entry
@@ -13,9 +14,15 @@ from custom_components.solarmax.connection import (
     EngineState,
     SolarmaxLink,
 )
+from custom_components.solarmax.coordinator import SolarmaxCoordinator
 from custom_components.solarmax.protocol import build_request, parse_response
 from tests.emulator import EmulatorHandle
 from tests.test_config_flow import _configured_endpoint_entry, _submit_reconfigure
+from tests.test_repairs import (
+    _connection_issue,
+    _create_connection_issue,
+    _submit_repair,
+)
 
 
 @pytest.fixture
@@ -161,3 +168,115 @@ async def test_validation_handoff_releases_single_client_slot(emulator):
 
     assert (await engine.poll()).state is EngineState.ONLINE
     await engine.close()
+
+
+@pytest.mark.parametrize("changed", [False, True])
+async def test_repair_emulator_waits_for_full_poll(
+    hass, emulator, proposed_emulator, changed
+):
+    """Changed and unchanged repairs retain the issue until a real full poll."""
+    entry = await _loaded_entry(hass, emulator)
+    _create_connection_issue(hass, entry)
+    before_poll, release_poll = asyncio.Event(), asyncio.Event()
+    original_update = SolarmaxCoordinator._async_update_data
+
+    async def gated_update(coordinator):
+        before_poll.set()
+        await release_poll.wait()
+        return await original_update(coordinator)
+
+    host, port = (proposed_emulator if changed else emulator).addr
+    try:
+        with patch.object(SolarmaxCoordinator, "_async_update_data", gated_update):
+            task = asyncio.create_task(
+                _submit_repair(hass, entry, host=host, port=port)
+            )
+            await asyncio.wait_for(before_poll.wait(), 5)
+            assert _connection_issue(hass, entry).data["verification_pending"] == 1
+            release_poll.set()
+            result = await asyncio.wait_for(task, 5)
+            await hass.async_block_till_done()
+        assert result["type"] is FlowResultType.ABORT
+        assert entry.data["port"] == port
+        assert entry.runtime_data.data.state is EngineState.ONLINE
+        assert _connection_issue(hass, entry) is None
+    finally:
+        release_poll.set()
+        await hass.config_entries.async_unload(entry.entry_id)
+
+
+async def test_repair_emulator_unreachable_endpoint_stays_open(
+    hass, emulator, unused_tcp_port
+):
+    """A refused probe preserves the entry; only its recovered full poll clears."""
+    entry = await _loaded_entry(hass, emulator)
+    _create_connection_issue(hass, entry)
+    old_runtime = entry.runtime_data
+    try:
+        result = await _submit_repair(
+            hass, entry, host="127.0.0.1", port=unused_tcp_port
+        )
+        assert result["errors"] == {"base": "cannot_connect"}
+        assert entry.data["port"] == emulator.addr[1]
+        assert entry.runtime_data is old_runtime
+        assert _connection_issue(hass, entry) is not None
+        await entry.runtime_data.async_refresh()
+        assert entry.runtime_data.data.state is EngineState.ONLINE
+        assert _connection_issue(hass, entry) is None
+    finally:
+        await hass.config_entries.async_unload(entry.entry_id)
+
+
+async def test_repair_emulator_activation_rollback_full_poll_clears(
+    hass, emulator, proposed_emulator
+):
+    """Rollback's successful full poll verifies recovery and must stay cleared."""
+    entry = await _loaded_entry(hass, emulator)
+    _create_connection_issue(hass, entry)
+    before_restore, release_restore = asyncio.Event(), asyncio.Event()
+    host, port = proposed_emulator.addr
+
+    async def setup(hass, entry):
+        if entry.data["port"] == port:
+            return False
+        before_restore.set()
+        await release_restore.wait()
+        return await async_setup_entry(hass, entry)
+
+    try:
+        with patch("custom_components.solarmax.async_setup_entry", side_effect=setup):
+            task = asyncio.create_task(
+                _submit_repair(hass, entry, host=host, port=port)
+            )
+            await asyncio.wait_for(before_restore.wait(), 5)
+            assert _connection_issue(hass, entry).data["verification_pending"] == 1
+            release_restore.set()
+            result = await asyncio.wait_for(task, 5)
+        assert result["errors"] == {"base": "reload_failed"}
+        assert entry.data["port"] == emulator.addr[1]
+        assert entry.runtime_data.data.state is EngineState.ONLINE
+        assert _connection_issue(hass, entry) is None
+    finally:
+        release_restore.set()
+        await hass.config_entries.async_unload(entry.entry_id)
+
+
+async def test_disabled_repair_emulator_waits_until_enabled(hass, emulator):
+    """A disabled repaired entry stays pending until enabled and polled."""
+    host, port = emulator.addr
+    entry = _configured_endpoint_entry(host="192.0.2.10", port=12345, address=1)
+    entry.add_to_hass(hass)
+    object.__setattr__(entry, "disabled_by", ConfigEntryDisabler.USER)
+    _create_connection_issue(hass, entry)
+    result = await _submit_repair(hass, entry, host=host, port=port)
+    assert result["reason"] == "repair_pending_verification"
+    assert entry.disabled_by is ConfigEntryDisabler.USER
+    assert getattr(entry, "runtime_data", None) is None
+    assert _connection_issue(hass, entry).data["verification_pending"] == 1
+    object.__setattr__(entry, "disabled_by", None)
+    try:
+        assert await hass.config_entries.async_setup(entry.entry_id)
+        assert entry.runtime_data.data.state is EngineState.ONLINE
+        assert _connection_issue(hass, entry) is None
+    finally:
+        await hass.config_entries.async_unload(entry.entry_id)
