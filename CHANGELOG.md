@@ -76,6 +76,8 @@ inverter sleeps.
   candidate, and test.
 - Guided issue forms and separate contributor, architecture, and
   troubleshooting guides make reports and maintenance easier to follow.
+- Removed unused translations and repair code, typed device metadata with Home
+  Assistant's `DeviceInfo`, and added exact alarm-state translation checks.
 
 ## [1.3.3] - 2026-08-11
 
