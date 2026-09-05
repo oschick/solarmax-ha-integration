@@ -180,6 +180,17 @@ async def test_reconfigure_failed_probe(hass, configured_entry, reconfigure_io):
     configured_entry.runtime_data.engine.close.assert_not_awaited()
 
 
+@pytest.mark.parametrize("port", [0, 65536])
+async def test_reconfigure_rejects_out_of_range_port_before_probe(
+    hass, configured_entry, reconfigure_io, port
+):
+    probe, reload = reconfigure_io
+    with pytest.raises(data_entry_flow.InvalidData):
+        await _submit_reconfigure(hass, configured_entry, port=port)
+    probe.assert_not_awaited()
+    reload.assert_not_awaited()
+
+
 @pytest.mark.parametrize("after_probe", [False, True])
 async def test_reconfigure_endpoint_conflict(
     hass, configured_entry, reconfigure_io, after_probe

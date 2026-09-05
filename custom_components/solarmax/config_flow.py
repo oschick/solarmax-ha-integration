@@ -13,6 +13,7 @@ from homeassistant.core import callback
 
 from .configuration import (
     OPTION_DEFAULTS,
+    TCP_PORT_SCHEMA,
     CannotConnect,
     EntryReloadError,
     async_apply_and_reload,
@@ -67,7 +68,7 @@ def _build_schema(values: dict[str, Any]) -> vol.Schema:
             vol.Required(
                 CONF_HOST, description={"suggested_value": values[CONF_HOST]}
             ): str,
-            vol.Required(CONF_PORT, default=values[CONF_PORT]): vol.Coerce(int),
+            vol.Required(CONF_PORT, default=values[CONF_PORT]): TCP_PORT_SCHEMA,
             vol.Optional(CONF_ADDRESS, default=values[CONF_ADDRESS]): vol.All(
                 vol.Coerce(int), vol.Range(min=1, max=249)
             ),
@@ -186,7 +187,7 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             data_schema=vol.Schema(
                 {
                     vol.Required(CONF_HOST, default=values[CONF_HOST]): str,
-                    vol.Required(CONF_PORT, default=values[CONF_PORT]): vol.Coerce(int),
+                    vol.Required(CONF_PORT, default=values[CONF_PORT]): TCP_PORT_SCHEMA,
                     vol.Required(CONF_ADDRESS, default=values[CONF_ADDRESS]): vol.All(
                         vol.Coerce(int), vol.Range(min=1, max=249)
                     ),

@@ -3,6 +3,7 @@
 import asyncio
 
 import pytest
+from freezegun import freeze_time
 
 from custom_components.solarmax import connection as connection_module
 from custom_components.solarmax.connection import (
@@ -256,6 +257,23 @@ async def test_partial_frame_is_online_and_can_arm(emulator):
         snapshot = await engine.poll()
         assert snapshot.state is EngineState.ONLINE
         assert snapshot.shutdown_announced is True
+    finally:
+        await engine.close()
+
+
+async def test_partial_frame_after_midnight_drops_previous_daily_energy(emulator):
+    """A partial new-day response must not restore yesterday's KDY value."""
+    engine = _engine(emulator)
+    try:
+        with freeze_time("2026-09-04 12:00:00"):
+            snapshot = await engine.poll()
+        assert snapshot.values["KDY"]["value"] > 0
+
+        emulator.respond_only(["PAC", "PDC", "SYS"])
+        with freeze_time("2026-09-05 12:00:00"):
+            snapshot = await engine.poll()
+
+        assert "KDY" not in snapshot.values
     finally:
         await engine.close()
 

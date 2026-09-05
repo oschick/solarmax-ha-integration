@@ -51,6 +51,12 @@ inverter sleeps.
 
 ### Fixed
 
+- Daily energy cached before midnight can no longer reappear when the first
+  new-day response omits that register.
+- Unavailable or unknown `sun.sun` states now use the clock fallback for
+  nighttime classification and recovery polling.
+- Setup, reconfiguration, and connection repair reject TCP ports outside
+  `1..65535` before opening a connection.
 - Shutdown waits for active connections, polls, emulator handlers, and sensor
   platform unloads. The engine cannot reopen a socket after closing.
 - Initial setup validates MaxComm frames and respects **Verify response

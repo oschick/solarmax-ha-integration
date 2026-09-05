@@ -18,7 +18,7 @@ import time
 from collections.abc import AsyncIterator, Callable
 from contextlib import asynccontextmanager
 from dataclasses import asdict, dataclass, field
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
 from enum import StrEnum
 
 from .protocol import (
@@ -339,6 +339,7 @@ class ConnectionEngine:
         low_pdc_watts: float = LOW_PDC_WATTS,
         grace_seconds: float = STARTUP_GRACE_SECONDS,
         clock: Callable[[], float] = time.monotonic,
+        today: Callable[[], date] | None = None,
     ) -> None:
         self._link = link
         self._address = address
@@ -346,9 +347,11 @@ class ConnectionEngine:
         self._verify_checksum = verify_checksum
         self._grace_seconds = grace_seconds
         self._clock = clock
+        self._today = today or (lambda: datetime.now(UTC).date())
         self._tracker = ArmingTracker(low_pdc_watts)
         self._diagnostics = EngineDiagnostics()
         self._values: dict[str, dict[str, float | int]] = {}
+        self._values_date: date | None = None
         self._statics_loaded = False
         self._static_fetch_attempts = 0
         self._state = EngineState.UNKNOWN
@@ -434,6 +437,10 @@ class ConnectionEngine:
             return parse_response(raw, self._verify_checksum)
 
     def _on_success(self, values: dict[str, dict[str, float | int]]) -> EngineSnapshot:
+        today = self._today()
+        if self._values_date is not None and today != self._values_date:
+            self._values.pop("KDY", None)
+        self._values_date = today
         # Partial frames update present readings without discarding cached ones.
         self._values.update(values)
 
