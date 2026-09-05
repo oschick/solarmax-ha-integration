@@ -1,6 +1,7 @@
 """Test the Solarmax integration initialization."""
 
 from types import SimpleNamespace
+from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -8,13 +9,22 @@ from homeassistant.const import Platform
 from homeassistant.core import HomeAssistant
 from pytest_homeassistant_custom_component.common import MockConfigEntry
 
-from custom_components.solarmax import async_setup_entry, async_unload_entry
+from custom_components.solarmax import (
+    async_migrate_entry,
+    async_setup_entry,
+    async_unload_entry,
+)
 from custom_components.solarmax.const import (
+    CONF_ADDRESS,
     CONF_DEVICE_NAME,
     CONF_HOST,
     CONF_NIGHT_KEEP_VALUES,
     CONF_PORT,
+    CONF_TWILIGHT_ELEVATION_THRESHOLD,
     CONF_UPDATE_INTERVAL,
+    CONF_VERIFY_CHECKSUM,
+    DEFAULT_ADDRESS,
+    DEFAULT_TWILIGHT_ELEVATION_THRESHOLD,
     DOMAIN,
 )
 from custom_components.solarmax.coordinator import SolarmaxCoordinator
@@ -38,6 +48,88 @@ def mock_config_entry():
     )
 
 
+def _legacy_entry(
+    *,
+    version: int = 1,
+    minor_version: int = 1,
+    data_update: dict[str, Any] | None = None,
+    options: dict[str, Any] | None = None,
+) -> MockConfigEntry:
+    data = {
+        CONF_HOST: "192.0.2.10",
+        CONF_PORT: 12345,
+        CONF_DEVICE_NAME: "Roof",
+        CONF_UPDATE_INTERVAL: 30,
+    }
+    data.update(data_update or {})
+    return MockConfigEntry(
+        domain=DOMAIN,
+        version=version,
+        minor_version=minor_version,
+        unique_id="192.0.2.10:12345",
+        data=data,
+        options=options or {},
+    )
+
+
+async def test_migrate_v1_splits_connection_data_and_options(hass):
+    entry = MockConfigEntry(
+        domain=DOMAIN,
+        version=1,
+        minor_version=1,
+        unique_id="192.0.2.10:12345",
+        data={
+            CONF_HOST: "192.0.2.10",
+            CONF_PORT: 12345,
+            CONF_DEVICE_NAME: "Roof",
+            CONF_UPDATE_INTERVAL: 45,
+            CONF_VERIFY_CHECKSUM: False,
+            CONF_NIGHT_KEEP_VALUES: True,
+        },
+    )
+    entry.add_to_hass(hass)
+
+    assert await async_migrate_entry(hass, entry) is True
+    assert dict(entry.data) == {
+        CONF_HOST: "192.0.2.10",
+        CONF_PORT: 12345,
+        CONF_ADDRESS: DEFAULT_ADDRESS,
+        CONF_DEVICE_NAME: "Roof",
+    }
+    assert dict(entry.options) == {
+        CONF_UPDATE_INTERVAL: 45,
+        CONF_VERIFY_CHECKSUM: False,
+        CONF_TWILIGHT_ELEVATION_THRESHOLD: DEFAULT_TWILIGHT_ELEVATION_THRESHOLD,
+        CONF_NIGHT_KEEP_VALUES: True,
+    }
+    assert entry.unique_id == "192.0.2.10:12345:1"
+    assert (entry.version, entry.minor_version) == (2, 1)
+
+
+async def test_migrate_v1_keeps_existing_option_value(hass):
+    entry = _legacy_entry(
+        data_update={CONF_UPDATE_INTERVAL: 30},
+        options={CONF_UPDATE_INTERVAL: 90},
+    )
+    entry.add_to_hass(hass)
+    assert await async_migrate_entry(hass, entry) is True
+    assert entry.options[CONF_UPDATE_INTERVAL] == 90
+
+
+async def test_migrate_future_major_version_is_rejected(hass):
+    entry = _legacy_entry(version=3)
+    entry.add_to_hass(hass)
+    assert await async_migrate_entry(hass, entry) is False
+    assert entry.version == 3
+
+
+async def test_migrate_future_minor_version_is_rejected(hass):
+    entry = _legacy_entry(version=2, minor_version=2)
+    entry.add_to_hass(hass)
+    assert await async_migrate_entry(hass, entry) is False
+    assert (entry.version, entry.minor_version) == (2, 2)
+
+
 @patch("custom_components.solarmax.SolarmaxCoordinator")
 async def test_setup_entry_success(
     mock_coordinator_class, hass: HomeAssistant, mock_config_entry
@@ -56,6 +148,24 @@ async def test_setup_entry_success(
         assert mock_config_entry.runtime_data == mock_coordinator
         mock_coordinator.async_config_entry_first_refresh.assert_called_once()
         mock_forward.assert_called_once_with(mock_config_entry, [Platform.SENSOR])
+
+
+@patch("custom_components.solarmax.SolarmaxCoordinator")
+async def test_entry_update_does_not_reload_implicitly(
+    mock_coordinator_class, hass, mock_config_entry
+):
+    """Submitting flows own reloads, so a title update cannot trigger a second one."""
+    mock_config_entry.add_to_hass(hass)
+    mock_coordinator_class.return_value.async_config_entry_first_refresh = AsyncMock()
+    with (
+        patch.object(hass.config_entries, "async_forward_entry_setups"),
+        patch.object(hass.config_entries, "async_reload") as reload,
+    ):
+        await async_setup_entry(hass, mock_config_entry)
+        hass.config_entries.async_update_entry(mock_config_entry, title="Garage")
+        await hass.async_block_till_done()
+    assert mock_config_entry.title == "Garage"
+    reload.assert_not_awaited()
 
 
 @patch("custom_components.solarmax.async_track_time_change")
@@ -87,6 +197,32 @@ async def test_setup_entry_registers_midnight_listener_when_night_keep_values_en
     mock_track_time_change.assert_called_once_with(
         hass, mock_coordinator.async_handle_midnight, hour=0, minute=0, second=0
     )
+
+
+@patch("custom_components.solarmax.async_track_time_change")
+@patch("custom_components.solarmax.SolarmaxCoordinator")
+async def test_failed_setup_does_not_register_midnight_listener(
+    mock_coordinator_class, mock_track_time_change, hass: HomeAssistant
+):
+    """A failed platform setup must not leave a midnight callback behind."""
+    entry = _legacy_entry(data_update={CONF_NIGHT_KEEP_VALUES: True})
+    mock_coordinator = MagicMock()
+    mock_coordinator.async_config_entry_first_refresh = AsyncMock()
+    mock_coordinator.async_shutdown = AsyncMock()
+    mock_coordinator.engine.close = AsyncMock()
+    mock_coordinator_class.return_value = mock_coordinator
+
+    with (
+        patch.object(
+            hass.config_entries,
+            "async_forward_entry_setups",
+            side_effect=RuntimeError("platform setup failed"),
+        ),
+        pytest.raises(RuntimeError, match="platform setup failed"),
+    ):
+        await async_setup_entry(hass, entry)
+
+    mock_track_time_change.assert_not_called()
 
 
 @patch("custom_components.solarmax.async_track_time_change")

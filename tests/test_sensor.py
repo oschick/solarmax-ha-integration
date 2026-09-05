@@ -12,7 +12,7 @@ from homeassistant.helpers.entity import EntityCategory
 from homeassistant.util import dt as dt_util
 
 from custom_components.solarmax.connection import EngineSnapshot, EngineState
-from custom_components.solarmax.const import SENSOR_TYPES
+from custom_components.solarmax.const import CONF_NIGHT_KEEP_VALUES, SENSOR_TYPES
 from custom_components.solarmax.coordinator import SolarmaxCoordinator
 from custom_components.solarmax.sensor import SolarmaxSensor
 
@@ -67,6 +67,7 @@ def mock_config_entry():
         "port": 12345,
         "device_name": "Test Inverter",
     }
+    entry.options = {}
     return entry
 
 
@@ -96,6 +97,19 @@ def test_sensor_available_when_online(mock_coordinator, mock_config_entry):
     sensor = _make_sensor(mock_coordinator, mock_config_entry, "PAC")
 
     assert sensor.available is True
+
+
+def test_runtime_option_overrides_legacy_night_preference(
+    mock_coordinator, mock_config_entry
+):
+    """A migrated option must take precedence over legacy entry data."""
+    mock_config_entry.data[CONF_NIGHT_KEEP_VALUES] = False
+    mock_config_entry.options[CONF_NIGHT_KEEP_VALUES] = True
+    _set_night(mock_coordinator)
+
+    sensor = _make_sensor(mock_coordinator, mock_config_entry, "PAC")
+
+    assert sensor.native_value == 0
 
 
 def test_sys_sensor_available_when_offline_fault(mock_coordinator, mock_config_entry):

@@ -17,29 +17,43 @@
         "data_description": {
           "twilight_elevation_threshold": "Sonnenhöhenwinkel, unterhalb dessen eine unangekündigte Verbindungstrennung als erwartet gilt (startet außerdem die schnellere Abfrage in der Dämmerung)."
         }
+      },
+      "reconfigure": {
+        "title": "Wechselrichterverbindung ändern",
+        "description": "Der Wechselrichter muss erreichbar sein, damit Verbindungsänderungen gespeichert werden können.",
+        "data": {
+          "host": "Host",
+          "port": "Port",
+          "address": "Wechselrichter-Adresse (1-249)",
+          "device_name": "Gerätename"
+        },
+        "data_description": {
+          "host": "IP-Adresse oder Hostname des Wechselrichters.",
+          "port": "Vom Wechselrichter verwendeter MaxComm-TCP-Port.",
+          "address": "Dem Wechselrichter zugewiesene MaxComm-Adresse.",
+          "device_name": "In Home Assistant angezeigter Gerätename."
+        }
       }
     },
     "error": {
       "cannot_connect": "Verbindung zum Wechselrichter fehlgeschlagen",
       "invalid_host": "Ungültige Host-Adresse",
       "timeout": "Verbindungszeit überschritten",
-      "unknown": "Unerwarteter Fehler aufgetreten"
+      "unknown": "Unerwarteter Fehler aufgetreten",
+      "reload_failed": "Home Assistant konnte die neue Verbindung nicht aktivieren. Die vorherigen Einstellungen wurden wiederhergestellt."
     },
     "abort": {
-      "already_configured": "Gerät ist bereits konfiguriert"
+      "already_configured": "Gerät ist bereits konfiguriert",
+      "reconfigure_successful": "Die Wechselrichterkonfiguration wurde aktualisiert."
     }
   },
   "options": {
     "step": {
       "init": {
         "title": "Solarmax Wechselrichter Optionen",
-        "description": "Aktualisieren Sie die Konfiguration Ihres Solarmax Wechselrichters. Aktuelle Einstellungen: Host {current_host}:{current_port}",
+        "description": "Ändern Sie die Abfrage- und Sensoreinstellungen.",
         "data": {
-          "host": "Host",
-          "port": "Port",
-          "address": "Wechselrichter-Adresse (1-249)",
           "update_interval": "Aktualisierungsintervall (Sekunden)",
-          "device_name": "Gerätename",
           "verify_checksum": "Antwort-Prüfsumme verifizieren",
           "night_keep_values": "Sensorwerte über Nacht beibehalten",
           "twilight_elevation_threshold": "Dämmerungs-Höhenwinkelschwelle (Grad)"
@@ -50,9 +64,7 @@
       }
     },
     "error": {
-      "invalid_host": "Ungültige Host-Adresse",
-      "timeout": "Verbindungszeit überschritten",
-      "unknown": "Unerwarteter Fehler aufgetreten"
+      "reload_failed": "Home Assistant konnte die neue Verbindung nicht aktivieren. Die vorherigen Einstellungen wurden wiederhergestellt."
     }
   },
   "issues": {
@@ -60,10 +72,25 @@
       "title": "Wechselrichter Verbindungsprobleme",
       "fix_flow": {
         "step": {
-          "confirm": {
-            "title": "Wechselrichter nicht erreichbar",
-            "description": "Der Wechselrichter bei {host}:{port} ist seit {minutes} Minuten tagsüber nicht erreichbar. Überprüfen Sie Stromversorgung, Netzwerk und die DC-Seite und bestätigen Sie anschließend, um dieses Problem zu schließen."
+          "init": {
+            "title": "Wechselrichterverbindung reparieren",
+            "description": "Der Wechselrichter unter {host}:{port} ist seit {minutes} Minuten tagsüber nicht erreichbar. Ändern Sie Host oder Port, um eine andere Verbindung zu prüfen.",
+            "data": {
+              "host": "Host",
+              "port": "Port"
+            }
           }
+        },
+        "error": {
+          "cannot_connect": "Verbindung zum Wechselrichter fehlgeschlagen",
+          "unknown": "Beim Prüfen der Verbindung ist ein unerwarteter Fehler aufgetreten.",
+          "reload_failed": "Home Assistant konnte die neue Verbindung nicht aktivieren. Die vorherigen Einstellungen wurden wiederhergestellt."
+        },
+        "abort": {
+          "entry_missing": "Der Integrationseintrag ist nicht mehr vorhanden.",
+          "already_configured": "Ein anderer Wechselrichtereintrag verwendet diese Verbindung bereits.",
+          "repair_pending_verification": "Verbindung gespeichert. Die Reparatur bleibt geöffnet, bis eine vollständige Wechselrichteraktualisierung erfolgreich war.",
+          "issue_missing": "Das Reparaturproblem ist nicht mehr vorhanden."
         }
       }
     }

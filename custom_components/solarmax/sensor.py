@@ -14,6 +14,7 @@ from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 from homeassistant.util import dt as dt_util
 
+from .configuration import entry_option
 from .connection import EngineState
 from .const import (
     CONF_DEVICE_NAME,
@@ -119,8 +120,8 @@ class SolarmaxSensor(CoordinatorEntity[SolarmaxCoordinator], SensorEntity):
 
         # Snapshot the option: an options-flow change reloads the entry, so a
         # value read at construction time can never go stale.
-        self._night_keep_values: bool = entry.data.get(
-            CONF_NIGHT_KEEP_VALUES, DEFAULT_NIGHT_KEEP_VALUES
+        self._night_keep_values: bool = entry_option(
+            entry, CONF_NIGHT_KEEP_VALUES, DEFAULT_NIGHT_KEEP_VALUES
         )
 
         # No hardware identifier is available, so the unique_id falls back to the

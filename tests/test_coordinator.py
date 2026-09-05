@@ -124,6 +124,23 @@ async def test_interval_follows_state(hass, mock_config_entry):
     )
 
 
+def test_runtime_option_overrides_legacy_update_interval(hass: HomeAssistant):
+    """A migrated option must take precedence over legacy entry data."""
+    entry = MockConfigEntry(
+        domain=DOMAIN,
+        data={
+            CONF_HOST: "192.168.1.100",
+            CONF_PORT: 12345,
+            CONF_UPDATE_INTERVAL: 30,
+        },
+        options={CONF_UPDATE_INTERVAL: 90},
+    )
+
+    coordinator = SolarmaxCoordinator(hass, entry)
+
+    assert coordinator._interval_for(_snap(EngineState.ONLINE)) == timedelta(seconds=90)
+
+
 @pytest.mark.parametrize(
     ("state", "elevation", "rising", "expected_seconds"),
     [
@@ -236,8 +253,8 @@ async def test_repair_issue_payload_has_host_port_minutes(coordinator, hass):
     assert issue.data["minutes"] == "6"  # (300 + 60) // 60
 
 
-async def test_repair_minutes_stay_fixed_for_fault_episode(coordinator, hass):
-    """An existing issue is not recreated during the same fault episode."""
+async def test_repair_minutes_refresh_for_fault_episode(coordinator, hass):
+    """An existing issue reflects the ongoing fault duration."""
     fault_since = dt_util.utcnow() - timedelta(seconds=310)
     await coordinator._async_handle_snapshot(
         _snap(EngineState.OFFLINE_FAULT, fault_since=fault_since)
@@ -252,7 +269,7 @@ async def test_repair_minutes_stay_fixed_for_fault_episode(coordinator, hass):
     )
     issue = ir.async_get(hass).async_get_issue(DOMAIN, coordinator._repair_issue_id)
     assert issue is not None
-    assert issue.data["minutes"] == "5"
+    assert issue.data["minutes"] == "121"
 
 
 # --- state-transition logging: the replacement for the old ERROR spew -----
@@ -551,9 +568,8 @@ async def test_async_handle_midnight_notifies_listeners(hass, mock_config_entry)
 # --- Repair-issue episodes and the dismissal window -------------------------
 
 
-async def test_repair_dismissal_suppresses_recreation_within_24h(coordinator, hass):
-    """Completing the fix flow (issue deleted) while the fault persists must
-    not immediately re-raise the issue on the very next poll."""
+async def test_ignored_fault_issue_stays_ignored_when_refreshed(coordinator, hass):
+    """Native Ignore persists when the same stable issue is refreshed."""
     old = dt_util.utcnow() - timedelta(seconds=FAULT_REPAIR_SECONDS + 60)
     await coordinator._async_handle_snapshot(
         _snap(EngineState.OFFLINE_FAULT, fault_since=old)
@@ -563,37 +579,26 @@ async def test_repair_dismissal_suppresses_recreation_within_24h(coordinator, ha
         is not None
     )
 
-    # User completes the fix flow: HA deletes the issue on CREATE_ENTRY.
-    ir.async_delete_issue(hass, DOMAIN, coordinator._repair_issue_id)
+    ir.async_get(hass).async_ignore(DOMAIN, coordinator._repair_issue_id, True)
 
     # Same fault, further aged, on the next poll.
     older = dt_util.utcnow() - timedelta(seconds=FAULT_REPAIR_SECONDS + 120)
     await coordinator._async_handle_snapshot(
         _snap(EngineState.OFFLINE_FAULT, fault_since=older)
     )
-    assert (
-        ir.async_get(hass).async_get_issue(DOMAIN, coordinator._repair_issue_id) is None
-    )
+    issue = ir.async_get(hass).async_get_issue(DOMAIN, coordinator._repair_issue_id)
+    assert issue is not None
+    assert issue.dismissed_version is not None
 
 
-async def test_repair_recreated_after_24h_dismiss_window_elapses(coordinator, hass):
-    """Past the 24h suppression window, a still-ongoing fault re-raises."""
+async def test_deleted_issue_is_recreated_without_custom_suppression(coordinator, hass):
+    """Deletion is not a substitute for native Ignore."""
     old = dt_util.utcnow() - timedelta(seconds=FAULT_REPAIR_SECONDS + 60)
     await coordinator._async_handle_snapshot(
         _snap(EngineState.OFFLINE_FAULT, fault_since=old)
     )
     ir.async_delete_issue(hass, DOMAIN, coordinator._repair_issue_id)
 
-    # First poll after dismissal is still suppressed (proves the window works).
-    await coordinator._async_handle_snapshot(
-        _snap(EngineState.OFFLINE_FAULT, fault_since=old)
-    )
-    assert (
-        ir.async_get(hass).async_get_issue(DOMAIN, coordinator._repair_issue_id) is None
-    )
-
-    # Simulate >24h elapsed since the dismissal.
-    coordinator._dismissed_at = dt_util.utcnow() - timedelta(hours=24, seconds=1)
     await coordinator._async_handle_snapshot(
         _snap(EngineState.OFFLINE_FAULT, fault_since=old)
     )
@@ -606,31 +611,43 @@ async def test_repair_recreated_after_24h_dismiss_window_elapses(coordinator, ha
 async def test_repair_new_episode_after_recovery_recreates_immediately(
     coordinator, hass
 ):
-    """Recovery (or reclassification via EXPECTED) ends the dismissal
-    suppression — a brand-new fault episode raises immediately."""
+    """Recovery ends the ignored episode and the next fault is visible."""
     old = dt_util.utcnow() - timedelta(seconds=FAULT_REPAIR_SECONDS + 60)
     await coordinator._async_handle_snapshot(
         _snap(EngineState.OFFLINE_FAULT, fault_since=old)
     )
-    ir.async_delete_issue(hass, DOMAIN, coordinator._repair_issue_id)
-    await coordinator._async_handle_snapshot(
-        _snap(EngineState.OFFLINE_FAULT, fault_since=old)
-    )
-    assert (
-        ir.async_get(hass).async_get_issue(DOMAIN, coordinator._repair_issue_id) is None
-    )
+    ir.async_get(hass).async_ignore(DOMAIN, coordinator._repair_issue_id, True)
 
     # Recovery ends the episode and clears the dismissal anchor.
     await coordinator._async_handle_snapshot(_snap(EngineState.ONLINE))
-    assert coordinator._dismissed_at is None
-    assert coordinator._issue_raised is False
 
     # A brand-new fault raises immediately, with no 24h suppression left over.
     new_old = dt_util.utcnow() - timedelta(seconds=FAULT_REPAIR_SECONDS + 10)
     await coordinator._async_handle_snapshot(
         _snap(EngineState.OFFLINE_FAULT, fault_since=new_old)
     )
-    assert (
-        ir.async_get(hass).async_get_issue(DOMAIN, coordinator._repair_issue_id)
-        is not None
+    issue = ir.async_get(hass).async_get_issue(DOMAIN, coordinator._repair_issue_id)
+    assert issue is not None
+    assert issue.dismissed_version is None
+
+
+@pytest.mark.parametrize("state", list(EngineState))
+async def test_pending_repair_clears_only_on_online_snapshot(coordinator, hass, state):
+    """A PAC probe cannot clear the issue before a full ONLINE snapshot."""
+    ir.async_create_issue(
+        hass,
+        DOMAIN,
+        coordinator._repair_issue_id,
+        is_fixable=True,
+        is_persistent=False,
+        severity=ir.IssueSeverity.ERROR,
+        translation_key="connection_issues",
+        data={"verification_pending": 1},
     )
+    await coordinator._async_handle_snapshot(_snap(state))
+    issue = ir.async_get(hass).async_get_issue(DOMAIN, coordinator._repair_issue_id)
+    if state is EngineState.ONLINE:
+        assert issue is None
+    else:
+        assert issue is not None
+        assert issue.data["verification_pending"] == 1

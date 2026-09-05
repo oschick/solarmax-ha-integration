@@ -144,6 +144,46 @@ def test_translation_files_have_the_same_keys() -> None:
         )
 
 
+def test_translations_declare_required_reconfiguration_paths() -> None:
+    """Catalogs must include every native reconfiguration result path."""
+    required_paths = {
+        "config.step.reconfigure.title",
+        "config.step.reconfigure.description",
+        "config.step.reconfigure.data.host",
+        "config.step.reconfigure.data.port",
+        "config.step.reconfigure.data.address",
+        "config.step.reconfigure.data.device_name",
+        "config.step.reconfigure.data_description.host",
+        "config.step.reconfigure.data_description.port",
+        "config.step.reconfigure.data_description.address",
+        "config.step.reconfigure.data_description.device_name",
+        "config.error.cannot_connect",
+        "config.error.reload_failed",
+        "config.abort.reconfigure_successful",
+        "config.abort.already_configured",
+        "options.error.reload_failed",
+        "issues.connection_issues.fix_flow.step.init.data.host",
+        "issues.connection_issues.fix_flow.step.init.data.port",
+        "issues.connection_issues.fix_flow.error.cannot_connect",
+        "issues.connection_issues.fix_flow.error.unknown",
+        "issues.connection_issues.fix_flow.error.reload_failed",
+        "issues.connection_issues.fix_flow.abort.entry_missing",
+        "issues.connection_issues.fix_flow.abort.already_configured",
+        "issues.connection_issues.fix_flow.abort.repair_pending_verification",
+        "issues.connection_issues.fix_flow.abort.issue_missing",
+    }
+
+    for path in [
+        _INTEGRATION / "strings.json",
+        *sorted((_INTEGRATION / "translations").glob("*.json")),
+    ]:
+        actual = _leaf_paths(_load_json(path))
+        assert required_paths <= actual, (
+            f"{path.name}: missing required translation paths "
+            f"{sorted(required_paths - actual)}"
+        )
+
+
 def test_manifest_and_project_versions_match() -> None:
     """Python metadata must represent the manifest's SemVer version."""
     assert _project_version() == parse_release_tag(f"v{_manifest_version()}").project

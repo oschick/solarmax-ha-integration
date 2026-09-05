@@ -17,29 +17,43 @@
         "data_description": {
           "twilight_elevation_threshold": "Sun elevation below which an unannounced disconnect counts as expected (also starts fast dawn polling)."
         }
+      },
+      "reconfigure": {
+        "title": "Change inverter connection",
+        "description": "The inverter must be reachable to save connection changes.",
+        "data": {
+          "host": "Host",
+          "port": "Port",
+          "address": "Inverter address (1-249)",
+          "device_name": "Device name"
+        },
+        "data_description": {
+          "host": "IP address or host name of the inverter.",
+          "port": "MaxComm TCP port used by the inverter.",
+          "address": "MaxComm address assigned to the inverter.",
+          "device_name": "Name shown for the device in Home Assistant."
+        }
       }
     },
     "error": {
       "cannot_connect": "Failed to connect to inverter",
       "invalid_host": "Invalid host address",
       "timeout": "Connection timeout",
-      "unknown": "Unexpected error occurred"
+      "unknown": "Unexpected error occurred",
+      "reload_failed": "Home Assistant could not activate the new connection. The previous settings were restored."
     },
     "abort": {
-      "already_configured": "This inverter is already configured"
+      "already_configured": "This inverter is already configured",
+      "reconfigure_successful": "The inverter configuration was updated."
     }
   },
   "options": {
     "step": {
       "init": {
         "title": "Solarmax Inverter Options",
-        "description": "Update your Solarmax inverter configuration. Current settings: Host {current_host}:{current_port}",
+        "description": "Change polling and sensor preferences.",
         "data": {
-          "host": "Host",
-          "port": "Port",
-          "address": "Inverter address (1-249)",
           "update_interval": "Update interval (seconds)",
-          "device_name": "Device name",
           "verify_checksum": "Verify response checksum",
           "night_keep_values": "Keep sensor values overnight",
           "twilight_elevation_threshold": "Twilight elevation threshold (degrees)"
@@ -50,9 +64,7 @@
       }
     },
     "error": {
-      "invalid_host": "Invalid host address",
-      "timeout": "Connection timeout",
-      "unknown": "Unexpected error occurred"
+      "reload_failed": "Home Assistant could not activate the new connection. The previous settings were restored."
     }
   },
   "issues": {
@@ -60,10 +72,25 @@
       "title": "Inverter Connection Issues",
       "fix_flow": {
         "step": {
-          "confirm": {
-            "title": "Inverter unreachable",
-            "description": "The inverter at {host}:{port} has been unreachable for {minutes} minutes during daytime. Check power, network, and the DC side, then confirm to dismiss."
+          "init": {
+            "title": "Repair inverter connection",
+            "description": "The inverter at {host}:{port} has been unreachable for {minutes} minutes during daytime. Update the host or port to test another connection.",
+            "data": {
+              "host": "Host",
+              "port": "Port"
+            }
           }
+        },
+        "error": {
+          "cannot_connect": "Failed to connect to inverter",
+          "unknown": "An unexpected error occurred while testing the connection.",
+          "reload_failed": "Home Assistant could not activate the new connection. The previous settings were restored."
+        },
+        "abort": {
+          "entry_missing": "The integration entry no longer exists.",
+          "already_configured": "Another inverter entry already uses this connection.",
+          "repair_pending_verification": "Connection saved. The repair stays open until a full inverter update succeeds.",
+          "issue_missing": "The repair issue no longer exists."
         }
       }
     }

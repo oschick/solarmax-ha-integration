@@ -3,15 +3,28 @@
 from __future__ import annotations
 
 import logging
+from collections.abc import Mapping
 from typing import Any
 
 import voluptuous as vol
 from homeassistant import config_entries
 from homeassistant.config_entries import ConfigFlowResult
-from homeassistant.core import HomeAssistant, callback
-from homeassistant.exceptions import HomeAssistantError
+from homeassistant.core import callback
 
-from .connection import LinkClosed, LinkTimeout, SolarmaxLink
+from .configuration import (
+    OPTION_DEFAULTS,
+    CannotConnect,
+    EntryReloadError,
+    async_apply_and_reload,
+    configuration_mutation_lock,
+    endpoint_unique_id,
+    entry_option,
+    find_endpoint_conflict,
+    split_entry_input,
+    update_device_name,
+    validate_connection,
+    validation_handoff,
+)
 from .const import (
     CONF_ADDRESS,
     CONF_DEVICE_NAME,
@@ -30,7 +43,6 @@ from .const import (
     DEFAULT_VERIFY_CHECKSUM,
     DOMAIN,
 )
-from .protocol import ProtocolError, build_request, parse_response
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -77,28 +89,32 @@ def _build_schema(values: dict[str, Any]) -> vol.Schema:
     )
 
 
-async def validate_input(hass: HomeAssistant, data: dict[str, Any]) -> dict[str, Any]:
-    """Validate setup with a short PAC request."""
-    link = SolarmaxLink(data[CONF_HOST], data[CONF_PORT])
-    try:
-        address = data.get(CONF_ADDRESS, DEFAULT_ADDRESS)
-        raw = await link.request(build_request(address, ["PAC"]))
-        parse_response(
-            raw,
-            data.get(CONF_VERIFY_CHECKSUM, DEFAULT_VERIFY_CHECKSUM),
-        )
-    except (LinkTimeout, LinkClosed, ProtocolError, OSError) as err:
-        raise CannotConnect from err
-    finally:
-        await link.close()
-
-    return {"title": data[CONF_DEVICE_NAME]}
+def _build_options_schema(values: Mapping[str, Any]) -> vol.Schema:
+    """Build the preference-only options schema."""
+    return vol.Schema(
+        {
+            vol.Optional(
+                CONF_UPDATE_INTERVAL, default=values[CONF_UPDATE_INTERVAL]
+            ): vol.All(vol.Coerce(int), vol.Range(min=5, max=3600)),
+            vol.Optional(
+                CONF_VERIFY_CHECKSUM, default=values[CONF_VERIFY_CHECKSUM]
+            ): bool,
+            vol.Optional(
+                CONF_TWILIGHT_ELEVATION_THRESHOLD,
+                default=values[CONF_TWILIGHT_ELEVATION_THRESHOLD],
+            ): vol.All(vol.Coerce(float), vol.Range(min=0, max=90)),
+            vol.Optional(
+                CONF_NIGHT_KEEP_VALUES, default=values[CONF_NIGHT_KEEP_VALUES]
+            ): bool,
+        }
+    )
 
 
 class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
     """Handle a config flow for Solarmax Inverter."""
 
-    VERSION = 1
+    VERSION = 2
+    MINOR_VERSION = 1
 
     @staticmethod
     @callback
@@ -113,26 +129,124 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         errors: dict[str, str] = {}
 
         if user_input is not None:
-            await self.async_set_unique_id(
-                f"{user_input[CONF_HOST]}:{user_input[CONF_PORT]}"
-            )
-            self._abort_if_unique_id_configured()
+            data, options = split_entry_input(user_input)
+            host = data[CONF_HOST]
+            port = data[CONF_PORT]
+            address = data[CONF_ADDRESS]
 
-            try:
-                info = await validate_input(self.hass, user_input)
-            except CannotConnect:
-                errors["base"] = "cannot_connect"
-            except Exception:
-                _LOGGER.exception("Unexpected exception")
-                errors["base"] = "unknown"
-            else:
-                return self.async_create_entry(title=info["title"], data=user_input)
+            async with configuration_mutation_lock(self.hass):
+                if find_endpoint_conflict(self.hass, host, port) is not None:
+                    return self.async_abort(reason="already_configured")
+                await self.async_set_unique_id(endpoint_unique_id(host, port, address))
+                self._abort_if_unique_id_configured()
+                try:
+                    await validate_connection(
+                        host=host,
+                        port=port,
+                        address=address,
+                        verify_checksum=options[CONF_VERIFY_CHECKSUM],
+                    )
+                except CannotConnect:
+                    errors["base"] = "cannot_connect"
+                except Exception:
+                    _LOGGER.exception("Unexpected exception")
+                    errors["base"] = "unknown"
+                else:
+                    if find_endpoint_conflict(self.hass, host, port) is not None:
+                        return self.async_abort(reason="already_configured")
+                    return self.async_create_entry(
+                        title=data[CONF_DEVICE_NAME], data=data, options=options
+                    )
 
         return self.async_show_form(
             step_id="user",
             data_schema=_build_schema(_DEFAULT_VALUES),
             errors=errors,
         )
+
+    async def async_step_reconfigure(
+        self, user_input: dict[str, Any] | None = None
+    ) -> ConfigFlowResult:
+        """Validate and atomically replace connection settings."""
+        entry = self._get_reconfigure_entry()
+        errors: dict[str, str] = {}
+        if user_input is not None:
+            async with configuration_mutation_lock(self.hass):
+                entry = self._get_reconfigure_entry()
+                try:
+                    return await self._async_reconfigure(entry, user_input)
+                except CannotConnect:
+                    errors["base"] = "cannot_connect"
+                except EntryReloadError:
+                    errors["base"] = "reload_failed"
+
+        values = dict(entry.data) if user_input is None else user_input
+        return self.async_show_form(
+            step_id="reconfigure",
+            data_schema=vol.Schema(
+                {
+                    vol.Required(CONF_HOST, default=values[CONF_HOST]): str,
+                    vol.Required(CONF_PORT, default=values[CONF_PORT]): vol.Coerce(int),
+                    vol.Required(CONF_ADDRESS, default=values[CONF_ADDRESS]): vol.All(
+                        vol.Coerce(int), vol.Range(min=1, max=249)
+                    ),
+                    vol.Required(
+                        CONF_DEVICE_NAME, default=values[CONF_DEVICE_NAME]
+                    ): str,
+                }
+            ),
+            errors=errors,
+        )
+
+    async def _async_reconfigure(
+        self, entry: config_entries.ConfigEntry, values: dict[str, Any]
+    ) -> ConfigFlowResult:
+        """Apply a submitted reconfiguration while the mutation lock is held."""
+        host, port, address = (
+            values[key] for key in (CONF_HOST, CONF_PORT, CONF_ADDRESS)
+        )
+        name = values[CONF_DEVICE_NAME]
+        name_changed = name != entry.data[CONF_DEVICE_NAME]
+        data = dict(entry.data) | values
+        if (host, port, address) == tuple(
+            entry.data[key] for key in (CONF_HOST, CONF_PORT, CONF_ADDRESS)
+        ):
+            if name_changed:
+                self.hass.config_entries.async_update_entry(
+                    entry, data=data, title=name
+                )
+                update_device_name(self.hass, entry.entry_id, name)
+            return self.async_abort(reason="reconfigure_successful")
+
+        if find_endpoint_conflict(
+            self.hass, host, port, exclude_entry_id=entry.entry_id
+        ):
+            return self.async_abort(reason="already_configured")
+        async with validation_handoff(entry):
+            await validate_connection(
+                host=host,
+                port=port,
+                address=address,
+                verify_checksum=entry_option(
+                    entry, CONF_VERIFY_CHECKSUM, DEFAULT_VERIFY_CHECKSUM
+                ),
+            )
+        # Release the engine poll lock before unload closes that engine.
+        if find_endpoint_conflict(
+            self.hass, host, port, exclude_entry_id=entry.entry_id
+        ):
+            return self.async_abort(reason="already_configured")
+        await async_apply_and_reload(
+            self.hass,
+            entry,
+            data=data,
+            options=entry.options,
+            title=name,
+            unique_id=endpoint_unique_id(host, port, address),
+        )
+        if name_changed:
+            update_device_name(self.hass, entry.entry_id, name)
+        return self.async_abort(reason="reconfigure_successful")
 
 
 class OptionsFlow(config_entries.OptionsFlow):
@@ -142,30 +256,37 @@ class OptionsFlow(config_entries.OptionsFlow):
         self, user_input: dict[str, Any] | None = None
     ) -> ConfigFlowResult:
         """Update settings without opening a second inverter connection."""
+        errors: dict[str, str] = {}
         if user_input is not None:
-            self.hass.config_entries.async_update_entry(
-                self.config_entry,
-                data=user_input,
-                title=user_input.get(CONF_DEVICE_NAME, self.config_entry.title),
-            )
+            async with configuration_mutation_lock(self.hass):
+                entry = self.config_entry
+                data = dict(entry.data)
+                options = dict(entry.options)
+                if user_input == options:
+                    return self.async_create_entry(title="", data=None)  # type: ignore[arg-type]
+                try:
+                    await async_apply_and_reload(
+                        self.hass,
+                        entry,
+                        data=data,
+                        options=user_input,
+                        title=entry.title,
+                        unique_id=entry.unique_id,
+                    )
+                except EntryReloadError:
+                    errors["base"] = "reload_failed"
+                else:
+                    return self.async_create_entry(title="", data=user_input)
 
-            return self.async_create_entry(title="", data={})
-
-        current_data = self.config_entry.data
         values = {
-            key: current_data.get(key, default)
-            for key, default in _DEFAULT_VALUES.items()
+            key: entry_option(self.config_entry, key, default)
+            for key, default in OPTION_DEFAULTS.items()
         }
+        if user_input is not None:
+            values = user_input
 
         return self.async_show_form(
             step_id="init",
-            data_schema=_build_schema(values),
-            description_placeholders={
-                "current_host": current_data.get(CONF_HOST, "Unknown"),
-                "current_port": str(current_data.get(CONF_PORT, DEFAULT_PORT)),
-            },
+            data_schema=_build_options_schema(values),
+            errors=errors,
         )
-
-
-class CannotConnect(HomeAssistantError):
-    """Error to indicate we cannot connect."""

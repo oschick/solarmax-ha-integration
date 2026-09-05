@@ -42,8 +42,9 @@ DAWN_POLL_SECONDS = 60
 FAULT_POLL_SECONDS = 60
 # How long an OFFLINE_FAULT must persist before a repair issue is raised.
 FAULT_REPAIR_SECONDS = 300
-# Avoid immediately recreating a repair issue dismissed during the same fault.
-REPAIR_DISMISS_SUPPRESS_SECONDS = 24 * 60 * 60
+# A repair probe succeeded; only a complete ONLINE poll verifies recovery.
+REPAIR_PENDING = "verification_pending"
+REPAIR_PENDING_ENDPOINT = "verification_endpoint"
 
 # Static device-identification MaxComm keys (queried once for device info)
 DEVICE_KEY_TYPE = "TYP"  # device type / model identifier

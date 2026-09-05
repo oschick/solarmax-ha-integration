@@ -20,6 +20,7 @@ from homeassistant.helpers.issue_registry import (
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator
 from homeassistant.util import dt as dt_util
 
+from .configuration import endpoint_unique_id, entry_option
 from .connection import ConnectionEngine, EngineSnapshot, EngineState, SolarmaxLink
 from .const import (
     CONF_ADDRESS,
@@ -42,7 +43,8 @@ from .const import (
     FAULT_POLL_SECONDS,
     FAULT_REPAIR_SECONDS,
     NIGHT_POLL_SECONDS,
-    REPAIR_DISMISS_SUPPRESS_SECONDS,
+    REPAIR_PENDING,
+    REPAIR_PENDING_ENDPOINT,
 )
 
 _LOGGER = logging.getLogger(__name__)
@@ -66,6 +68,11 @@ class SolarmaxCoordinator(DataUpdateCoordinator[EngineSnapshot]):
     def __init__(self, hass: HomeAssistant, entry: ConfigEntry) -> None:
         """Initialize the coordinator."""
         self._entry = entry
+        self._endpoint_unique_id = endpoint_unique_id(
+            entry.data[CONF_HOST],
+            entry.data[CONF_PORT],
+            entry.data.get(CONF_ADDRESS, DEFAULT_ADDRESS),
+        )
 
         link = SolarmaxLink(
             host=entry.data[CONF_HOST],
@@ -75,13 +82,13 @@ class SolarmaxCoordinator(DataUpdateCoordinator[EngineSnapshot]):
             link,
             address=entry.data.get(CONF_ADDRESS, DEFAULT_ADDRESS),
             sun_below=self.sun_below_threshold,
-            verify_checksum=entry.data.get(
-                CONF_VERIFY_CHECKSUM, DEFAULT_VERIFY_CHECKSUM
+            verify_checksum=entry_option(
+                entry, CONF_VERIFY_CHECKSUM, DEFAULT_VERIFY_CHECKSUM
             ),
         )
 
         self._configured_interval = timedelta(
-            seconds=entry.data.get(CONF_UPDATE_INTERVAL, DEFAULT_UPDATE_INTERVAL)
+            seconds=entry_option(entry, CONF_UPDATE_INTERVAL, DEFAULT_UPDATE_INTERVAL)
         )
         self._sun_source = "unknown"
         self._sun_fallback_warned = False
@@ -96,10 +103,6 @@ class SolarmaxCoordinator(DataUpdateCoordinator[EngineSnapshot]):
         )
 
         self._repair_issue_id = f"connection_issues_{entry.entry_id}"
-        # A dismissed issue stays suppressed for the rest interval unless a
-        # new connection-state episode resets this in-memory bookkeeping.
-        self._issue_raised = False
-        self._dismissed_at: datetime | None = None
 
     @property
     def engine(self) -> ConnectionEngine:
@@ -115,7 +118,8 @@ class SolarmaxCoordinator(DataUpdateCoordinator[EngineSnapshot]):
     def _twilight_elevation_threshold(self) -> float:
         """Return the configured twilight elevation threshold in degrees."""
         return float(
-            self._entry.data.get(
+            entry_option(
+                self._entry,
                 CONF_TWILIGHT_ELEVATION_THRESHOLD,
                 DEFAULT_TWILIGHT_ELEVATION_THRESHOLD,
             )
@@ -286,11 +290,28 @@ class SolarmaxCoordinator(DataUpdateCoordinator[EngineSnapshot]):
     async def _async_handle_snapshot(self, snapshot: EngineSnapshot) -> None:
         """Log transitions and synchronize the connection repair issue."""
         self._log_state_transition(snapshot)
+        issue = async_get_issue_registry(self.hass).async_get_issue(
+            DOMAIN, self._repair_issue_id
+        )
+        issue_data = issue.data or {} if issue is not None else {}
+        if issue_data.get(REPAIR_PENDING) == 1:
+            pending_endpoint = issue_data.get(REPAIR_PENDING_ENDPOINT)
+            current_endpoint = endpoint_unique_id(
+                self._entry.data[CONF_HOST],
+                self._entry.data[CONF_PORT],
+                self._entry.data.get(CONF_ADDRESS, DEFAULT_ADDRESS),
+            )
+            current_or_restored_runtime = self._endpoint_unique_id == current_endpoint
+            if snapshot.state is EngineState.ONLINE and (
+                pending_endpoint is None
+                or pending_endpoint == self._endpoint_unique_id
+                or current_or_restored_runtime
+            ):
+                self._clear_repair_issue()
+            return
         fault_seconds = self._repairable_fault_seconds(snapshot)
         if fault_seconds is None:
             self._clear_repair_issue()
-            return
-        if self._repair_creation_suppressed():
             return
         self._create_repair_issue(fault_seconds)
 
@@ -320,25 +341,6 @@ class SolarmaxCoordinator(DataUpdateCoordinator[EngineSnapshot]):
         fault_seconds = (dt_util.utcnow() - snapshot.fault_since).total_seconds()
         return fault_seconds if fault_seconds >= FAULT_REPAIR_SECONDS else None
 
-    def _repair_creation_suppressed(self) -> bool:
-        """Track user dismissal and decide whether issue creation is suppressed."""
-        if self._issue_raised:
-            issue = async_get_issue_registry(self.hass).async_get_issue(
-                DOMAIN, self._repair_issue_id
-            )
-            if issue is not None:
-                return True
-            self._issue_raised = False
-            self._dismissed_at = dt_util.utcnow()
-
-        if self._dismissed_at is None:
-            return False
-        dismissed_seconds = (dt_util.utcnow() - self._dismissed_at).total_seconds()
-        if dismissed_seconds < REPAIR_DISMISS_SUPPRESS_SECONDS:
-            return True
-        self._dismissed_at = None
-        return False
-
     def _create_repair_issue(self, fault_seconds: float) -> None:
         """Create or refresh the repair issue for the current fault."""
         issue_context: dict[str, str] = {
@@ -358,12 +360,9 @@ class SolarmaxCoordinator(DataUpdateCoordinator[EngineSnapshot]):
             # The repair API's mutable data mapping has a broader value type.
             data=cast("dict[str, str | int | float | None]", issue_context),
         )
-        self._issue_raised = True
 
     def _clear_repair_issue(self) -> None:
         """End repair bookkeeping for a recovered or reclassified episode."""
-        self._issue_raised = False
-        self._dismissed_at = None
         async_delete_issue(self.hass, DOMAIN, self._repair_issue_id)
 
     def _static_raw(self, key: str) -> Any:
