@@ -149,8 +149,6 @@ class OptionsFlow(config_entries.OptionsFlow):
                 title=user_input.get(CONF_DEVICE_NAME, self.config_entry.title),
             )
 
-            await self.hass.config_entries.async_reload(self.config_entry.entry_id)
-
             return self.async_create_entry(title="", data={})
 
         current_data = self.config_entry.data
