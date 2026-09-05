@@ -62,6 +62,7 @@ def _mock_coordinator(**attrs) -> MagicMock:
     coordinator.last_exception = None
     coordinator.update_interval.total_seconds.return_value = 30
     coordinator.device_model = "SolarMax 7TP2"
+    coordinator.sun_source = "sun.sun"
     coordinator.last_successful_update = None
     coordinator.data = _snapshot()
     for key, value in attrs.items():
@@ -98,6 +99,7 @@ async def test_config_entry_diagnostics(hass: HomeAssistant, mock_config_entry):
     assert coordinator_data["state"] == EngineState.ONLINE
     assert coordinator_data["reconnecting"] is False
     assert coordinator_data["fault_since"] is None
+    assert coordinator_data["sun_source"] == "sun.sun"
 
     # Engine counters and transitions are exposed unchanged.
     connection_data = diagnostics["connection"]

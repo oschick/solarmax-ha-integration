@@ -40,6 +40,7 @@ async def async_get_config_entry_diagnostics(
             "update_interval": str(coordinator.update_interval),
             "state": snapshot.state if snapshot else None,
             "reconnecting": snapshot.reconnecting if snapshot else None,
+            "sun_source": coordinator.sun_source,
             "fault_since": (
                 snapshot.fault_since.isoformat()
                 if snapshot and snapshot.fault_since

@@ -8,7 +8,7 @@ from datetime import datetime, timedelta
 from typing import Any, cast
 
 from homeassistant.config_entries import ConfigEntry
-from homeassistant.core import HomeAssistant, callback
+from homeassistant.core import HomeAssistant, State, callback
 from homeassistant.helpers.issue_registry import (
     IssueSeverity,
     async_create_issue,
@@ -47,6 +47,10 @@ from .const import (
 
 _LOGGER = logging.getLogger(__name__)
 
+_DAWN_ELEVATION_THRESHOLD = -6.0
+_CLOCK_DAWN_HOUR = 5
+_CLOCK_NIGHT_HOUR = 20
+
 
 class SolarmaxCoordinator(DataUpdateCoordinator[EngineSnapshot]):
     """Poll a Solarmax inverter through a ConnectionEngine.
@@ -79,6 +83,8 @@ class SolarmaxCoordinator(DataUpdateCoordinator[EngineSnapshot]):
         self._configured_interval = timedelta(
             seconds=entry.data.get(CONF_UPDATE_INTERVAL, DEFAULT_UPDATE_INTERVAL)
         )
+        self._sun_source = "unknown"
+        self._sun_fallback_warned = False
 
         super().__init__(
             hass,
@@ -101,6 +107,11 @@ class SolarmaxCoordinator(DataUpdateCoordinator[EngineSnapshot]):
         return self._engine
 
     @property
+    def sun_source(self) -> str:
+        """Return the source used by the most recent sun check."""
+        return self._sun_source
+
+    @property
     def _twilight_elevation_threshold(self) -> float:
         """Return the configured twilight elevation threshold in degrees."""
         return float(
@@ -113,14 +124,12 @@ class SolarmaxCoordinator(DataUpdateCoordinator[EngineSnapshot]):
     def sun_below_threshold(self) -> bool:
         """Return True when the sun is below the configured twilight threshold.
 
-        Passed to ConnectionEngine as its `sun_below` callback, and also
-        used by the coordinator itself to decide how slowly it can poll
-        while OFFLINE_EXPECTED. Falls back to a fixed 20:00-06:00 clock
-        window when no `sun.sun` entity is available.
+        Passed to ConnectionEngine as its `sun_below` callback. Falls back to
+        a fixed 20:00-06:00 clock window when no `sun.sun` entity is available.
         """
-        try:
-            sun_component = self.hass.states.get("sun.sun")
-            if sun_component:
+        sun_component = self._sun_component()
+        if sun_component is not None:
+            try:
                 if sun_component.state == "below_horizon":
                     return True
                 elevation = sun_component.attributes.get("elevation")
@@ -130,14 +139,51 @@ class SolarmaxCoordinator(DataUpdateCoordinator[EngineSnapshot]):
                 ):
                     return True
                 return False
+            except Exception as e:  # noqa: BLE001 - defensive, must not fail a poll
+                _LOGGER.debug("Error checking sun position: %s", e)
 
-            current_hour = dt_util.now().hour
-            return current_hour >= 20 or current_hour < 6
+        current_hour = self._clock_fallback_hour()
+        return current_hour >= 20 or current_hour < 6
 
+    def _sun_component(self) -> State | None:
+        """Return the sun entity and remember when it is available."""
+        try:
+            sun_component = self.hass.states.get("sun.sun")
         except Exception as e:  # noqa: BLE001 - defensive, must not fail a poll
-            _LOGGER.debug("Error checking sun position: %s", e)
-            current_hour = dt_util.now().hour
-            return current_hour >= 20 or current_hour < 6
+            _LOGGER.debug("Error reading sun.sun: %s", e)
+            return None
+        if sun_component is not None:
+            self._sun_source = "sun.sun"
+        return sun_component
+
+    def _clock_fallback_hour(self) -> int:
+        """Return the current hour and record use of the clock fallback."""
+        self._sun_source = "clock_fallback"
+        if not self._sun_fallback_warned:
+            _LOGGER.warning(
+                "sun.sun is unavailable; using the 20:00-06:00 clock "
+                "fallback with fast polling from 05:00"
+            )
+            self._sun_fallback_warned = True
+        return dt_util.now().hour
+
+    def _fast_expected_polling(self) -> bool:
+        """Return whether an expected outage needs the recovery cadence."""
+        sun_component = self._sun_component()
+        if sun_component is not None:
+            try:
+                elevation = sun_component.attributes.get("elevation")
+                if elevation is None:
+                    return sun_component.state != "below_horizon"
+                return elevation >= self._twilight_elevation_threshold or (
+                    sun_component.attributes.get("rising") is True
+                    and elevation >= _DAWN_ELEVATION_THRESHOLD
+                )
+            except Exception as e:  # noqa: BLE001 - defensive, must not fail a poll
+                _LOGGER.debug("Error checking sun position: %s", e)
+
+        current_hour = self._clock_fallback_hour()
+        return _CLOCK_DAWN_HOUR <= current_hour < _CLOCK_NIGHT_HOUR
 
     @callback
     def async_handle_midnight(self, now: datetime) -> None:
@@ -222,9 +268,12 @@ class SolarmaxCoordinator(DataUpdateCoordinator[EngineSnapshot]):
     def _interval_for(self, snapshot: EngineSnapshot) -> timedelta:
         """Adapt cadence for expected outages and active daytime failures."""
         if snapshot.state is EngineState.OFFLINE_EXPECTED:
-            if self.sun_below_threshold():
-                return timedelta(seconds=NIGHT_POLL_SECONDS)
-            return timedelta(seconds=DAWN_POLL_SECONDS)
+            interval = (
+                DAWN_POLL_SECONDS
+                if self._fast_expected_polling()
+                else NIGHT_POLL_SECONDS
+            )
+            return timedelta(seconds=interval)
         if snapshot.state is EngineState.OFFLINE_FAULT or (
             snapshot.state is EngineState.UNKNOWN and snapshot.reconnecting
         ):
