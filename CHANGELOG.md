@@ -54,9 +54,9 @@ inverter sleeps.
 - Nighttime zero policies no longer create values for registers the inverter
   has never reported. Unsupported sensors remain unavailable.
 - Saving integration options no longer opens a competing connection to an
-  inverter that accepts one TCP client.
-- Opening a connection repair no longer fails when Home Assistant provides no
-  issue data, and dismissing it suppresses the same fault for 24 hours.
+  inverter that accepts one TCP client and now reloads the entry only once.
+- Connection repairs are created once per fault episode, tolerate missing
+  Home Assistant issue data, and stay suppressed for 24 hours after dismissal.
 - Expected nighttime shutdowns reset fault timers, so an inverter that remains
   offline after dawn starts a new daytime fault episode.
 - Delayed model, firmware, and serial data now refreshes the Home Assistant

@@ -277,9 +277,10 @@ class SolarmaxCoordinator(DataUpdateCoordinator[EngineSnapshot]):
             issue = async_get_issue_registry(self.hass).async_get_issue(
                 DOMAIN, self._repair_issue_id
             )
-            if issue is None:
-                self._issue_raised = False
-                self._dismissed_at = dt_util.utcnow()
+            if issue is not None:
+                return True
+            self._issue_raised = False
+            self._dismissed_at = dt_util.utcnow()
 
         if self._dismissed_at is None:
             return False
