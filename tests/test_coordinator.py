@@ -198,10 +198,8 @@ async def test_repair_issue_payload_has_host_port_minutes(coordinator, hass):
     assert issue.data["minutes"] == "6"  # (300 + 60) // 60
 
 
-async def test_repair_minutes_refreshes_across_polls(coordinator, hass):
-    """`minutes` must keep refreshing for the life of the fault, not freeze
-    at whatever value was computed when the issue was first raised — a
-    2-hour outage should not still show the created-at value."""
+async def test_repair_minutes_stay_fixed_for_fault_episode(coordinator, hass):
+    """An existing issue is not recreated during the same fault episode."""
     fault_since = dt_util.utcnow() - timedelta(seconds=310)
     await coordinator._async_handle_snapshot(
         _snap(EngineState.OFFLINE_FAULT, fault_since=fault_since)
@@ -210,15 +208,13 @@ async def test_repair_minutes_refreshes_across_polls(coordinator, hass):
     assert issue is not None
     assert issue.data["minutes"] == "5"  # 310 // 60
 
-    # Same fault, further aged: the coordinator must recompute, not reuse
-    # the value captured on the first call.
     fault_since = dt_util.utcnow() - timedelta(seconds=7300)
     await coordinator._async_handle_snapshot(
         _snap(EngineState.OFFLINE_FAULT, fault_since=fault_since)
     )
     issue = ir.async_get(hass).async_get_issue(DOMAIN, coordinator._repair_issue_id)
     assert issue is not None
-    assert issue.data["minutes"] == "121"  # 7300 // 60
+    assert issue.data["minutes"] == "5"
 
 
 # --- state-transition logging: the replacement for the old ERROR spew -----

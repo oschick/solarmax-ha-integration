@@ -8,6 +8,7 @@ from homeassistant.core import HomeAssistant
 from homeassistant.data_entry_flow import FlowResultType
 from pytest_homeassistant_custom_component.common import MockConfigEntry
 
+from custom_components.solarmax import async_update_listener
 from custom_components.solarmax.config_flow import CannotConnect, validate_input
 from custom_components.solarmax.connection import LinkClosed, LinkTimeout
 from custom_components.solarmax.const import (
@@ -328,11 +329,14 @@ async def test_options_flow(mock_request, hass: HomeAssistant) -> None:
     day, or always at night. The options flow validates the schema only."""
     entry = _make_entry()
     entry.add_to_hass(hass)
+    entry.add_update_listener(async_update_listener)
 
     result = await hass.config_entries.options.async_init(entry.entry_id)
     assert result["type"] == FlowResultType.FORM
 
-    with patch.object(hass.config_entries, "async_reload", return_value=True):
+    with patch.object(
+        hass.config_entries, "async_reload", new_callable=AsyncMock
+    ) as reload_entry:
         result2 = await hass.config_entries.options.async_configure(
             result["flow_id"],
             user_input={
@@ -343,10 +347,12 @@ async def test_options_flow(mock_request, hass: HomeAssistant) -> None:
                 CONF_UPDATE_INTERVAL: 60,
             },
         )
+        await hass.async_block_till_done()
 
     assert result2["type"] == FlowResultType.CREATE_ENTRY
     assert entry.data[CONF_HOST] == "192.168.1.101"
     assert entry.data[CONF_UPDATE_INTERVAL] == 60
+    reload_entry.assert_awaited_once_with(entry.entry_id)
     mock_request.assert_not_awaited()  # no live probe was ever attempted
 
 
