@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+from collections.abc import Mapping
 from typing import Any
 
 import voluptuous as vol
@@ -11,6 +12,7 @@ from homeassistant.config_entries import ConfigFlowResult
 from homeassistant.core import callback
 
 from .configuration import (
+    OPTION_DEFAULTS,
     CannotConnect,
     EntryReloadError,
     async_apply_and_reload,
@@ -83,6 +85,27 @@ def _build_schema(values: dict[str, Any]) -> vol.Schema:
                 CONF_TWILIGHT_ELEVATION_THRESHOLD,
                 default=values[CONF_TWILIGHT_ELEVATION_THRESHOLD],
             ): vol.All(vol.Coerce(float), vol.Range(min=0, max=90)),
+        }
+    )
+
+
+def _build_options_schema(values: Mapping[str, Any]) -> vol.Schema:
+    """Build the preference-only options schema."""
+    return vol.Schema(
+        {
+            vol.Optional(
+                CONF_UPDATE_INTERVAL, default=values[CONF_UPDATE_INTERVAL]
+            ): vol.All(vol.Coerce(int), vol.Range(min=5, max=3600)),
+            vol.Optional(
+                CONF_VERIFY_CHECKSUM, default=values[CONF_VERIFY_CHECKSUM]
+            ): bool,
+            vol.Optional(
+                CONF_TWILIGHT_ELEVATION_THRESHOLD,
+                default=values[CONF_TWILIGHT_ELEVATION_THRESHOLD],
+            ): vol.All(vol.Coerce(float), vol.Range(min=0, max=90)),
+            vol.Optional(
+                CONF_NIGHT_KEEP_VALUES, default=values[CONF_NIGHT_KEEP_VALUES]
+            ): bool,
         }
     )
 
@@ -230,28 +253,34 @@ class OptionsFlow(config_entries.OptionsFlow):
         self, user_input: dict[str, Any] | None = None
     ) -> ConfigFlowResult:
         """Update settings without opening a second inverter connection."""
+        errors: dict[str, str] = {}
         if user_input is not None:
             async with configuration_mutation_lock(self.hass):
-                self.hass.config_entries.async_update_entry(
-                    self.config_entry,
-                    data=user_input,
-                    title=user_input.get(CONF_DEVICE_NAME, self.config_entry.title),
-                )
-                await self.hass.config_entries.async_reload(self.config_entry.entry_id)
+                entry = self.config_entry
+                data = dict(entry.data)
+                options = dict(entry.options)
+                if user_input == options:
+                    return self.async_create_entry(title="", data=None)  # type: ignore[arg-type]
+                try:
+                    await async_apply_and_reload(
+                        self.hass,
+                        entry,
+                        data=data,
+                        options=user_input,
+                        title=entry.title,
+                        unique_id=entry.unique_id,
+                    )
+                except EntryReloadError:
+                    errors["base"] = "reload_failed"
+                else:
+                    return self.async_create_entry(title="", data=user_input)
 
-            return self.async_create_entry(title="", data={})
-
-        current_data = self.config_entry.data
-        values = {
-            key: current_data.get(key, default)
-            for key, default in _DEFAULT_VALUES.items()
-        }
+        values = OPTION_DEFAULTS | dict(self.config_entry.options)
+        if user_input is not None:
+            values = user_input
 
         return self.async_show_form(
             step_id="init",
-            data_schema=_build_schema(values),
-            description_placeholders={
-                "current_host": current_data.get(CONF_HOST, "Unknown"),
-                "current_port": str(current_data.get(CONF_PORT, DEFAULT_PORT)),
-            },
+            data_schema=_build_options_schema(values),
+            errors=errors,
         )

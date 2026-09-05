@@ -23,6 +23,7 @@ from pytest_homeassistant_custom_component.common import MockConfigEntry
 
 from custom_components.solarmax.configuration import (
     OPTION_DEFAULTS,
+    OPTION_KEYS,
     CannotConnect,
     EntryReloadError,
     async_apply_and_reload,
@@ -84,6 +85,37 @@ async def _submit_reconfigure(hass, entry, **changes):
     )
     return await hass.config_entries.flow.async_configure(
         form["flow_id"], dict(entry.data) | changes
+    )
+
+
+async def _submit_options(
+    hass: HomeAssistant,
+    entry: config_entries.ConfigEntry,
+    *,
+    update_interval: int | None = None,
+    verify_checksum: bool | None = None,
+    twilight_elevation_threshold: float | None = None,
+    night_keep_values: bool | None = None,
+) -> ConfigFlowResult:
+    """Submit the current preferences with selected overrides."""
+    values = {
+        CONF_UPDATE_INTERVAL: entry.options[CONF_UPDATE_INTERVAL],
+        CONF_VERIFY_CHECKSUM: entry.options[CONF_VERIFY_CHECKSUM],
+        CONF_TWILIGHT_ELEVATION_THRESHOLD: entry.options[
+            CONF_TWILIGHT_ELEVATION_THRESHOLD
+        ],
+        CONF_NIGHT_KEEP_VALUES: entry.options[CONF_NIGHT_KEEP_VALUES],
+    }
+    overrides = {
+        CONF_UPDATE_INTERVAL: update_interval,
+        CONF_VERIFY_CHECKSUM: verify_checksum,
+        CONF_TWILIGHT_ELEVATION_THRESHOLD: twilight_elevation_threshold,
+        CONF_NIGHT_KEEP_VALUES: night_keep_values,
+    }
+    values.update({key: value for key, value in overrides.items() if value is not None})
+    form = await hass.config_entries.options.async_init(entry.entry_id)
+    return await hass.config_entries.options.async_configure(
+        form["flow_id"], user_input=values
     )
 
 
@@ -753,83 +785,116 @@ async def test_duplicate_entry_prevention(mock_request, hass: HomeAssistant) -> 
     assert result4["reason"] == "already_configured"
 
 
-def _make_entry() -> MockConfigEntry:
-    """Create a mock config entry for options flow tests."""
-    return MockConfigEntry(
-        domain=DOMAIN,
-        title="Test Inverter",
-        data={
-            CONF_HOST: "192.168.1.100",
-            CONF_PORT: 12345,
-            CONF_ADDRESS: 1,
-            CONF_DEVICE_NAME: "Test Inverter",
-            CONF_UPDATE_INTERVAL: 30,
-        },
-        unique_id="192.168.1.100:12345",
+async def test_options_form_contains_only_preferences(hass, configured_entry):
+    """Connection identity must remain exclusive to native reconfiguration."""
+    result = await hass.config_entries.options.async_init(configured_entry.entry_id)
+
+    assert {str(key) for key in result["data_schema"].schema} == set(OPTION_KEYS)
+
+
+async def test_options_save_reloads_without_connection_probe(
+    hass, configured_entry, reconfigure_io
+):
+    """Preference changes reload through the existing transaction without probing."""
+    validate, reload_entry = reconfigure_io
+
+    result = await _submit_options(
+        hass,
+        configured_entry,
+        update_interval=90,
+        verify_checksum=False,
+        twilight_elevation_threshold=4,
+        night_keep_values=True,
     )
 
-
-@patch(_LINK_REQUEST, new_callable=AsyncMock)
-async def test_options_flow(mock_request, hass: HomeAssistant) -> None:
-    """Test options flow saves without probing the inverter (finding 1/13):
-    the running engine already holds the device's single client slot, so a
-    second connection here always fails — cannot_connect at any time of
-    day, or always at night. The options flow validates the schema only."""
-    entry = _make_entry()
-    entry.add_to_hass(hass)
-
-    result = await hass.config_entries.options.async_init(entry.entry_id)
-    assert result["type"] == FlowResultType.FORM
-
-    with patch.object(
-        hass.config_entries, "async_reload", new_callable=AsyncMock
-    ) as reload_entry:
-        result2 = await hass.config_entries.options.async_configure(
-            result["flow_id"],
-            user_input={
-                CONF_HOST: "192.168.1.101",
-                CONF_PORT: 12346,
-                CONF_ADDRESS: 2,
-                CONF_DEVICE_NAME: "Updated Inverter",
-                CONF_UPDATE_INTERVAL: 60,
-            },
-        )
-        await hass.async_block_till_done()
-
-    assert result2["type"] == FlowResultType.CREATE_ENTRY
-    assert entry.data[CONF_HOST] == "192.168.1.101"
-    assert entry.data[CONF_UPDATE_INTERVAL] == 60
-    reload_entry.assert_awaited_once_with(entry.entry_id)
-    mock_request.assert_not_awaited()  # no live probe was ever attempted
+    assert result["type"] is FlowResultType.CREATE_ENTRY
+    assert configured_entry.options == {
+        CONF_UPDATE_INTERVAL: 90,
+        CONF_VERIFY_CHECKSUM: False,
+        CONF_TWILIGHT_ELEVATION_THRESHOLD: 4,
+        CONF_NIGHT_KEEP_VALUES: True,
+    }
+    validate.assert_not_awaited()
+    configured_entry.runtime_data.engine.validation_handoff.assert_not_called()
+    reload_entry.assert_awaited_once_with(configured_entry.entry_id)
 
 
-@patch(_LINK_REQUEST, new_callable=AsyncMock)
-async def test_options_flow_saves_even_when_a_probe_would_fail(
-    mock_request, hass: HomeAssistant
-) -> None:
-    """Saving options must not compete for the inverter's client slot."""
-    mock_request.side_effect = LinkTimeout("no response")
+async def test_options_reload_failure_restores_old_options(
+    hass, configured_entry, reconfigure_io
+):
+    """A rejected activation cannot leave the submitted preferences persisted."""
+    _, reload_entry = reconfigure_io
+    reload_entry.side_effect = [False, True]
 
-    entry = _make_entry()
-    entry.add_to_hass(hass)
+    result = await _submit_options(hass, configured_entry, update_interval=90)
 
-    result = await hass.config_entries.options.async_init(entry.entry_id)
-    assert result["type"] == FlowResultType.FORM
+    assert result["type"] is FlowResultType.FORM
+    assert result["errors"] == {"base": "reload_failed"}
+    assert configured_entry.options[CONF_UPDATE_INTERVAL] == 30
 
-    with patch.object(hass.config_entries, "async_reload", return_value=True):
-        result2 = await hass.config_entries.options.async_configure(
-            result["flow_id"],
-            user_input={
-                CONF_HOST: "192.168.1.101",
-                CONF_PORT: 12345,
-                CONF_ADDRESS: 1,
-                CONF_DEVICE_NAME: "Test Inverter",
-                CONF_UPDATE_INTERVAL: 30,
-            },
-        )
 
-    assert result2["type"] == FlowResultType.CREATE_ENTRY
-    mock_request.assert_not_awaited()
+async def test_options_wait_for_connection_transaction(
+    hass, configured_entry, reconfigure_io
+):
+    """An option save cannot race a failing endpoint change and its rollback."""
+    _, reload_entry = reconfigure_io
+    reload_started = asyncio.Event()
+    release_reload = asyncio.Event()
+
+    async def reload_in_order(entry_id: str) -> bool:
+        if reload_entry.await_count == 1:
+            reload_started.set()
+            await release_reload.wait()
+            return False
+        return True
+
+    reload_entry.side_effect = reload_in_order
+    connection_change = asyncio.create_task(
+        _submit_reconfigure(hass, configured_entry, host="192.0.2.99")
+    )
+    await reload_started.wait()
+    option_change = asyncio.create_task(
+        _submit_options(hass, configured_entry, update_interval=90)
+    )
+    await asyncio.sleep(0)
+    assert not option_change.done()
+    release_reload.set()
+    await connection_change
+    await option_change
+
+    assert configured_entry.data[CONF_HOST] == "192.0.2.10"
+    assert configured_entry.options[CONF_UPDATE_INTERVAL] == 90
+
+
+async def test_options_noop_does_not_update_or_reload(
+    hass, configured_entry, reconfigure_io
+):
+    """Resubmitting identical preferences has no persistence side effects."""
+    validate, reload_entry = reconfigure_io
+    with patch.object(hass.config_entries, "async_update_entry") as update:
+        result = await _submit_options(hass, configured_entry)
+
+    assert result["type"] is FlowResultType.CREATE_ENTRY
+    update.assert_not_called()
+    reload_entry.assert_not_awaited()
+    validate.assert_not_awaited()
+    configured_entry.runtime_data.engine.validation_handoff.assert_not_called()
+
+
+async def test_options_disabled_entry_saves_without_reload(
+    hass, configured_entry, reconfigure_io
+):
+    """Preference changes persist without enabling a disabled entry."""
+    validate, reload_entry = reconfigure_io
+    object.__setattr__(configured_entry, "disabled_by", ConfigEntryDisabler.USER)
+
+    result = await _submit_options(hass, configured_entry, update_interval=90)
+
+    assert result["type"] is FlowResultType.CREATE_ENTRY
+    assert configured_entry.options[CONF_UPDATE_INTERVAL] == 90
+    assert configured_entry.disabled_by is ConfigEntryDisabler.USER
+    reload_entry.assert_not_awaited()
+    validate.assert_not_awaited()
 
 
 async def test_night_keep_values_defaults_to_disabled(hass):
