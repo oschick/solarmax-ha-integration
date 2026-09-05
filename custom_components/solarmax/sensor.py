@@ -9,7 +9,7 @@ from typing import Any
 from homeassistant.components.sensor import SensorEntity, SensorEntityDescription
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers import device_registry as dr
-from homeassistant.helpers.entity import generate_entity_id
+from homeassistant.helpers.entity import DeviceInfo, generate_entity_id
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 from homeassistant.util import dt as dt_util
@@ -138,14 +138,14 @@ class SolarmaxSensor(CoordinatorEntity[SolarmaxCoordinator], SensorEntity):
 
         # Model/firmware/serial are resolved by the coordinator's first refresh,
         # which runs before the sensor platform is set up.
-        self._attr_device_info = {
-            "identifiers": {(DOMAIN, entry.entry_id)},
-            "name": device_name,
-            "manufacturer": "Solarmax",
-            "model": coordinator.device_model or "Inverter",
-            "sw_version": coordinator.sw_version,
-            "serial_number": coordinator.serial_number,
-        }
+        self._attr_device_info = DeviceInfo(
+            identifiers={(DOMAIN, entry.entry_id)},
+            name=device_name,
+            manufacturer="Solarmax",
+            model=coordinator.device_model or "Inverter",
+            sw_version=coordinator.sw_version,
+            serial_number=coordinator.serial_number,
+        )
 
     @staticmethod
     def _decode_sal_alarms(value: int) -> list[str]:

@@ -5,10 +5,10 @@ from pathlib import Path
 from unittest.mock import Mock
 
 import pytest
+from homeassistant.components.repairs import ConfirmRepairFlow
 
-from custom_components.solarmax.const import SYS_OPTIONS
+from custom_components.solarmax.const import SAL_OPTIONS, SYS_OPTIONS
 from custom_components.solarmax.repairs import (
-    SolarmaxConfigurationRepairFlow,
     SolarmaxConnectionRepairFlow,
     async_create_fix_flow,
 )
@@ -70,28 +70,6 @@ async def test_connection_repair_flow():
 
 
 @pytest.mark.asyncio
-async def test_configuration_repair_flow():
-    """Test configuration repair flow."""
-    data = {"host": "192.168.1.100", "issue": "Invalid port configuration"}
-
-    flow = SolarmaxConfigurationRepairFlow(data)
-
-    # Test initial step
-    result = await flow.async_step_init()
-    assert result["type"] == "form"
-    assert result["step_id"] == "confirm"
-
-    # Test confirm step
-    result = await flow.async_step_confirm()
-    assert result["type"] == "form"
-    assert result["step_id"] == "confirm"
-    assert "192.168.1.100" in str(result["description_placeholders"]["host"])
-    assert "Invalid port configuration" in str(
-        result["description_placeholders"]["issue"]
-    )
-
-
-@pytest.mark.asyncio
 async def test_async_create_fix_flow():
     """Test fix flow creation."""
     hass = Mock()
@@ -100,15 +78,14 @@ async def test_async_create_fix_flow():
     flow = await async_create_fix_flow(hass, "connection_issues_test", {"host": "test"})
     assert isinstance(flow, SolarmaxConnectionRepairFlow)
 
-    # Test configuration issue flow
+    # Legacy and unknown issue IDs use Home Assistant's generic fallback.
     flow = await async_create_fix_flow(
         hass, "configuration_issue_test", {"issue": "test"}
     )
-    assert isinstance(flow, SolarmaxConfigurationRepairFlow)
+    assert isinstance(flow, ConfirmRepairFlow)
 
-    # Test unknown issue (fallback)
     flow = await async_create_fix_flow(hass, "unknown_issue", {})
-    assert flow is not None  # Should return ConfirmRepairFlow
+    assert isinstance(flow, ConfirmRepairFlow)
 
 
 @pytest.mark.asyncio
@@ -128,17 +105,6 @@ async def test_connection_repair_flow_survives_null_data():
     assert placeholders["host"] == "unknown"
     assert placeholders["port"] == "unknown"
     assert placeholders["minutes"] == "?"
-
-
-@pytest.mark.asyncio
-async def test_configuration_repair_flow_survives_null_data():
-    """Same null-data path for the configuration repair flow."""
-    flow = SolarmaxConfigurationRepairFlow({})
-    flow.data = None
-
-    placeholders = flow._placeholders()
-
-    assert placeholders["host"] == "unknown"
 
 
 @pytest.mark.asyncio
@@ -196,6 +162,14 @@ def test_sys_state_keys_match_sys_options():
         content = _load_translation(path)
         sys_state_keys = set(content["entity"]["sensor"]["sys"]["state"])
         assert sys_state_keys == set(SYS_OPTIONS), path.name
+
+
+def test_sal_state_keys_match_sal_options():
+    """Every alarm translation must declare exactly the supported options."""
+    for path in _TRANSLATION_PATHS:
+        content = _load_translation(path)
+        sal_state_keys = set(content["entity"]["sensor"]["sal"]["state"])
+        assert sal_state_keys == set(SAL_OPTIONS), path.name
 
 
 def test_translation_files_share_data_description_keys():
