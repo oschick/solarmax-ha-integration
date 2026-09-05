@@ -292,17 +292,17 @@ def test_zero_policy_sensor_reads_zero_at_night(mock_coordinator, night_entry):
     assert sensor.native_value == 0
 
 
-def test_zero_policy_sensor_reads_zero_without_prior_data(
+def test_zero_policy_sensor_is_unavailable_without_prior_data(
     mock_coordinator, night_entry
 ):
-    """A zero needs no history — it is true whether or not we ever polled."""
+    """A never-reported register must not become a synthetic zero."""
     mock_coordinator.data = _make_snapshot(values={})
     _set_night(mock_coordinator)
 
     sensor = _make_sensor(mock_coordinator, night_entry, "PAC")
 
-    assert sensor.available is True
-    assert sensor.native_value == 0
+    assert sensor.available is False
+    assert sensor.native_value is None
 
 
 def test_hold_policy_sensor_keeps_last_value_at_night(mock_coordinator, night_entry):
@@ -396,16 +396,18 @@ def test_kdy_reads_zero_after_midnight(mock_coordinator, night_entry):
     assert sensor.native_value == 0
 
 
-def test_kdy_after_midnight_needs_no_held_value(mock_coordinator, night_entry):
-    """Once the day has rolled over the 0 is synthetic, not derived."""
+def test_kdy_after_midnight_is_unavailable_without_prior_data(
+    mock_coordinator, night_entry
+):
+    """A timestamp alone does not prove that the inverter supports KDY."""
     mock_coordinator.data = _make_snapshot(values={})
     mock_coordinator.last_successful_update = dt_util.now() - timedelta(days=1)
     _set_night(mock_coordinator)
 
     sensor = _make_sensor(mock_coordinator, night_entry, "KDY")
 
-    assert sensor.available is True
-    assert sensor.native_value == 0
+    assert sensor.available is False
+    assert sensor.native_value is None
 
 
 def test_kdy_unavailable_when_never_polled(mock_coordinator, night_entry):
@@ -430,16 +432,16 @@ def test_night_value_source_reports_zero(mock_coordinator, night_entry):
     assert attributes["raw_value"] == 0
 
 
-def test_night_value_source_present_without_coordinator_data(
+def test_night_value_source_reports_unavailable_without_prior_data(
     mock_coordinator, night_entry
 ):
-    """The attribute must survive the empty-data early return."""
+    """Expose why a never-reported night sensor has no value."""
     mock_coordinator.data = _make_snapshot(values={})
     _set_night(mock_coordinator)
 
     sensor = _make_sensor(mock_coordinator, night_entry, "PAC")
 
-    assert sensor.extra_state_attributes["night_value_source"] == "zero"
+    assert sensor.extra_state_attributes["night_value_source"] == "unavailable"
 
 
 def test_night_value_source_reports_hold(mock_coordinator, night_entry):
