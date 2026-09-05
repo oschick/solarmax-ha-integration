@@ -124,6 +124,23 @@ async def test_interval_follows_state(hass, mock_config_entry):
     )
 
 
+def test_runtime_option_overrides_legacy_update_interval(hass: HomeAssistant):
+    """A migrated option must take precedence over legacy entry data."""
+    entry = MockConfigEntry(
+        domain=DOMAIN,
+        data={
+            CONF_HOST: "192.168.1.100",
+            CONF_PORT: 12345,
+            CONF_UPDATE_INTERVAL: 30,
+        },
+        options={CONF_UPDATE_INTERVAL: 90},
+    )
+
+    coordinator = SolarmaxCoordinator(hass, entry)
+
+    assert coordinator._interval_for(_snap(EngineState.ONLINE)) == timedelta(seconds=90)
+
+
 @pytest.mark.parametrize(
     ("state", "elevation", "rising", "expected_seconds"),
     [

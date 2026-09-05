@@ -9,10 +9,13 @@ from homeassistant.core import HomeAssistant
 from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers.event import async_track_time_change
 
+from .configuration import OPTION_DEFAULTS, endpoint_unique_id, entry_option
 from .const import (
+    CONF_ADDRESS,
     CONF_HOST,
     CONF_NIGHT_KEEP_VALUES,
     CONF_PORT,
+    DEFAULT_ADDRESS,
     DEFAULT_NIGHT_KEEP_VALUES,
     DOMAIN,
 )
@@ -26,6 +29,33 @@ PLATFORMS: list[Platform] = [Platform.SENSOR]
 _UNIQUE_ID_MIGRATIONS = {
     "kdl": "kld",  # v1.2.1: Energy Yesterday key fix (KDL → KLD)
 }
+
+
+async def async_migrate_entry(hass: HomeAssistant, entry: SolarmaxConfigEntry) -> bool:
+    """Migrate a legacy config entry to split data and options storage."""
+    if entry.version > 2:
+        return False
+    if entry.version == 2:
+        return True
+
+    data = dict(entry.data)
+    data.setdefault(CONF_ADDRESS, DEFAULT_ADDRESS)
+    options = dict(entry.options)
+    for key, default in OPTION_DEFAULTS.items():
+        options.setdefault(key, data.get(key, default))
+        data.pop(key, None)
+
+    hass.config_entries.async_update_entry(
+        entry,
+        data=data,
+        options=options,
+        unique_id=endpoint_unique_id(
+            data[CONF_HOST], data[CONF_PORT], data[CONF_ADDRESS]
+        ),
+        version=2,
+        minor_version=1,
+    )
+    return True
 
 
 def _migrate_unique_ids(hass: HomeAssistant, entry: SolarmaxConfigEntry) -> None:
@@ -73,7 +103,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: SolarmaxConfigEntry) -> 
     # When night_keep_values is on, sensors keep showing yesterday's held
     # values overnight — Energy Day has to notice the day boundary itself.
     # Registering nothing by default keeps the common path free.
-    if entry.data.get(CONF_NIGHT_KEEP_VALUES, DEFAULT_NIGHT_KEEP_VALUES):
+    if entry_option(entry, CONF_NIGHT_KEEP_VALUES, DEFAULT_NIGHT_KEEP_VALUES):
         entry.async_on_unload(
             async_track_time_change(
                 hass, coordinator.async_handle_midnight, hour=0, minute=0, second=0

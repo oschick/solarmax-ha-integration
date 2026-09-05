@@ -10,6 +10,7 @@ from pytest_homeassistant_custom_component.common import MockConfigEntry
 
 from custom_components.solarmax import async_update_listener
 from custom_components.solarmax.config_flow import CannotConnect, validate_input
+from custom_components.solarmax.configuration import split_entry_input
 from custom_components.solarmax.connection import LinkClosed, LinkTimeout
 from custom_components.solarmax.const import (
     CONF_ADDRESS,
@@ -28,6 +29,35 @@ from custom_components.solarmax.protocol import build_request, calculate_checksu
 
 _LINK_REQUEST = "custom_components.solarmax.config_flow.SolarmaxLink.request"
 _LINK_CLOSE = "custom_components.solarmax.config_flow.SolarmaxLink.close"
+
+
+def test_split_entry_input_separates_connection_data_from_options() -> None:
+    """Config entry values are partitioned by their canonical ownership."""
+    data, options = split_entry_input(
+        {
+            CONF_HOST: "192.0.2.10",
+            CONF_PORT: 12345,
+            CONF_ADDRESS: 7,
+            CONF_DEVICE_NAME: "Roof",
+            CONF_UPDATE_INTERVAL: 45,
+            CONF_VERIFY_CHECKSUM: False,
+            CONF_TWILIGHT_ELEVATION_THRESHOLD: 4.5,
+            CONF_NIGHT_KEEP_VALUES: True,
+        }
+    )
+
+    assert data == {
+        CONF_HOST: "192.0.2.10",
+        CONF_PORT: 12345,
+        CONF_ADDRESS: 7,
+        CONF_DEVICE_NAME: "Roof",
+    }
+    assert options == {
+        CONF_UPDATE_INTERVAL: 45,
+        CONF_VERIFY_CHECKSUM: False,
+        CONF_TWILIGHT_ELEVATION_THRESHOLD: 4.5,
+        CONF_NIGHT_KEEP_VALUES: True,
+    }
 
 
 def _response(data: str, *, checksum: str | None = None) -> str:

@@ -98,7 +98,8 @@ async def validate_input(hass: HomeAssistant, data: dict[str, Any]) -> dict[str,
 class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
     """Handle a config flow for Solarmax Inverter."""
 
-    VERSION = 1
+    VERSION = 2
+    MINOR_VERSION = 1
 
     @staticmethod
     @callback

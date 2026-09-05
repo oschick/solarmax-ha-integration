@@ -20,6 +20,7 @@ from homeassistant.helpers.issue_registry import (
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator
 from homeassistant.util import dt as dt_util
 
+from .configuration import entry_option
 from .connection import ConnectionEngine, EngineSnapshot, EngineState, SolarmaxLink
 from .const import (
     CONF_ADDRESS,
@@ -75,13 +76,13 @@ class SolarmaxCoordinator(DataUpdateCoordinator[EngineSnapshot]):
             link,
             address=entry.data.get(CONF_ADDRESS, DEFAULT_ADDRESS),
             sun_below=self.sun_below_threshold,
-            verify_checksum=entry.data.get(
-                CONF_VERIFY_CHECKSUM, DEFAULT_VERIFY_CHECKSUM
+            verify_checksum=entry_option(
+                entry, CONF_VERIFY_CHECKSUM, DEFAULT_VERIFY_CHECKSUM
             ),
         )
 
         self._configured_interval = timedelta(
-            seconds=entry.data.get(CONF_UPDATE_INTERVAL, DEFAULT_UPDATE_INTERVAL)
+            seconds=entry_option(entry, CONF_UPDATE_INTERVAL, DEFAULT_UPDATE_INTERVAL)
         )
         self._sun_source = "unknown"
         self._sun_fallback_warned = False
@@ -115,7 +116,8 @@ class SolarmaxCoordinator(DataUpdateCoordinator[EngineSnapshot]):
     def _twilight_elevation_threshold(self) -> float:
         """Return the configured twilight elevation threshold in degrees."""
         return float(
-            self._entry.data.get(
+            entry_option(
+                self._entry,
                 CONF_TWILIGHT_ELEVATION_THRESHOLD,
                 DEFAULT_TWILIGHT_ELEVATION_THRESHOLD,
             )
