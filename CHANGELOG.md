@@ -51,6 +51,8 @@ inverter sleeps.
 - Valid fields survive when the inverter returns one malformed field.
 - Failed device-information requests no longer block valid live telemetry, and
   each poll classifies a connection failure only once.
+- Nighttime zero policies no longer create values for registers the inverter
+  has never reported. Unsupported sensors remain unavailable.
 - Saving integration options no longer opens a competing connection to an
   inverter that accepts one TCP client.
 - Opening a connection repair no longer fails when Home Assistant provides no

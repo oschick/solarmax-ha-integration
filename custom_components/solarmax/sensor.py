@@ -170,12 +170,14 @@ class SolarmaxSensor(CoordinatorEntity[SolarmaxCoordinator], SensorEntity):
     def _night_value_source(self, policy: NightPolicy) -> str:
         """Resolve a policy in force to the value it produces right now."""
         if policy is NightPolicy.ZERO:
+            if self._sensor_data() is None:
+                return "unavailable"
             # A shutdown inferred while the sun is up is not an honest zero.
             if self._anomalous_expected():
                 return "unavailable"
             return "zero"
         if policy is NightPolicy.HOLD_UNTIL_MIDNIGHT and self._is_new_day():
-            return "zero"
+            return "zero" if self._sensor_data() is not None else "unavailable"
         return "hold"
 
     def _anomalous_expected(self) -> bool:
