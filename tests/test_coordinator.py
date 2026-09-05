@@ -130,6 +130,7 @@ async def test_interval_follows_state(hass, mock_config_entry):
         ("below_horizon", -6.1, True, NIGHT_POLL_SECONDS),
         ("below_horizon", -6.0, True, DAWN_POLL_SECONDS),
         ("above_horizon", 4.0, True, DAWN_POLL_SECONDS),
+        ("above_horizon", None, True, DAWN_POLL_SECONDS),
         ("below_horizon", -5.0, False, NIGHT_POLL_SECONDS),
         ("above_horizon", 6.0, False, DAWN_POLL_SECONDS),
     ],
@@ -422,6 +423,38 @@ def test_sun_below_threshold_fallback(coordinator):
 
         mock_time.hour = 5
         assert coordinator.sun_below_threshold() is True
+
+
+def test_invalid_sun_elevation_uses_clock_fallback(coordinator):
+    """Malformed sun attributes must not break classification or scheduling."""
+    coordinator.hass.states.async_set(
+        "sun.sun",
+        "above_horizon",
+        {"elevation": "invalid", "rising": True},
+    )
+
+    with patch("custom_components.solarmax.coordinator.dt_util.now") as mock_now:
+        mock_now.return_value.hour = 5
+        assert coordinator.sun_below_threshold() is True
+        assert coordinator._interval_for(
+            _snap(EngineState.OFFLINE_EXPECTED)
+        ) == timedelta(seconds=DAWN_POLL_SECONDS)
+
+
+def test_sun_read_error_uses_clock_fallback(coordinator):
+    """A failed state lookup must use the safe clock fallback."""
+    with (
+        patch.object(
+            type(coordinator.hass.states),
+            "get",
+            side_effect=RuntimeError("state machine unavailable"),
+        ),
+        patch("custom_components.solarmax.coordinator.dt_util.now") as mock_now,
+    ):
+        mock_now.return_value.hour = 22
+        assert coordinator.sun_below_threshold() is True
+
+    assert coordinator.sun_source == "clock_fallback"
 
 
 def test_sun_source_tracks_active_input(coordinator):
