@@ -128,7 +128,7 @@ async def test_reconfigure_waits_for_startup_connection_owner(hass, emulator):
             setup = asyncio.create_task(hass.config_entries.async_setup(entry.entry_id))
             await asyncio.wait_for(wait_for_response(), 5)
             reconfigure = asyncio.create_task(
-                _submit_reconfigure(hass, entry, host="localhost")
+                _submit_reconfigure(hass, entry, address=2)
             )
             await asyncio.sleep(0.05)
             release_response.set()
