@@ -51,6 +51,8 @@ inverter sleeps.
 - Valid fields survive when the inverter returns one malformed field.
 - Failed device-information requests no longer block valid live telemetry, and
   each poll classifies a connection failure only once.
+- Nighttime zero policies no longer create values for registers the inverter
+  has never reported. Unsupported sensors remain unavailable.
 - Saving integration options no longer opens a competing connection to an
   inverter that accepts one TCP client and now reloads the entry only once.
 - Connection repairs are created once per fault episode, tolerate missing
@@ -59,6 +61,8 @@ inverter sleeps.
   offline after dawn starts a new daytime fault episode.
 - Delayed model, firmware, and serial data now refreshes the Home Assistant
   device registry after the inverter becomes available.
+- Partial device-information polls no longer clear firmware or serial data
+  already stored in Home Assistant.
 - Diagnostics no longer expose the inverter serial number.
 - HACS installs the same `solarmax.zip` archive that the release workflow tests
   and attests.

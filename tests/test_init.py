@@ -240,6 +240,51 @@ def test_device_registry_updater_uses_config_entry_lookup(
     )
 
 
+@pytest.mark.parametrize(
+    ("sw_version", "serial_number", "expected_metadata"),
+    [
+        (None, None, {"model": "SolarMax 7TP2"}),
+        ("40", None, {"model": "SolarMax 7TP2", "sw_version": "40"}),
+        (
+            None,
+            "118767",
+            {"model": "SolarMax 7TP2", "serial_number": "118767"},
+        ),
+    ],
+)
+def test_device_registry_updater_omits_unreported_metadata(
+    hass,
+    mock_config_entry,
+    sw_version,
+    serial_number,
+    expected_metadata,
+) -> None:
+    """Partial static data must not clear existing device metadata."""
+
+    class RecordingDeviceRegistry:
+        def __init__(self) -> None:
+            self.updated = None
+
+        def async_get_device_by_identifier(self, *_args):
+            return SimpleNamespace(id="device-id")
+
+        def async_update_device(self, device_id, **changes):
+            self.updated = (device_id, changes)
+
+    registry = RecordingDeviceRegistry()
+    coordinator = SimpleNamespace(
+        device_model="SolarMax 7TP2",
+        sw_version=sw_version,
+        serial_number=serial_number,
+    )
+
+    with patch("custom_components.solarmax.sensor.dr.async_get", return_value=registry):
+        updater = _make_device_registry_updater(hass, mock_config_entry, coordinator)
+        updater()
+
+    assert registry.updated == ("device-id", expected_metadata)
+
+
 async def test_device_registry_updates_when_statics_arrive_later(
     hass, emulator, monkeypatch
 ):

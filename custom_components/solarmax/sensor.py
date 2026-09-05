@@ -90,12 +90,12 @@ def _make_device_registry_updater(
             device = device_registry.async_get_device(identifiers={identifier})
         if device is None:
             return
-        device_registry.async_update_device(
-            device.id,
-            model=model,
-            sw_version=coordinator.sw_version,
-            serial_number=coordinator.serial_number,
-        )
+        metadata: dict[str, Any] = {"model": model}
+        if coordinator.sw_version is not None:
+            metadata["sw_version"] = coordinator.sw_version
+        if coordinator.serial_number is not None:
+            metadata["serial_number"] = coordinator.serial_number
+        device_registry.async_update_device(device.id, **metadata)
 
     return _update_device_registry
 
@@ -170,12 +170,14 @@ class SolarmaxSensor(CoordinatorEntity[SolarmaxCoordinator], SensorEntity):
     def _night_value_source(self, policy: NightPolicy) -> str:
         """Resolve a policy in force to the value it produces right now."""
         if policy is NightPolicy.ZERO:
+            if self._sensor_data() is None:
+                return "unavailable"
             # A shutdown inferred while the sun is up is not an honest zero.
             if self._anomalous_expected():
                 return "unavailable"
             return "zero"
         if policy is NightPolicy.HOLD_UNTIL_MIDNIGHT and self._is_new_day():
-            return "zero"
+            return "zero" if self._sensor_data() is not None else "unavailable"
         return "hold"
 
     def _anomalous_expected(self) -> bool:

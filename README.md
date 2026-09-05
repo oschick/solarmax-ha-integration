@@ -223,9 +223,10 @@ policy sensors stay unavailable until darkness because the integration cannot
 yet assume production has stopped. Hold policy sensors may retain their last
 value.
 
-After a Home Assistant restart at night, zero-policy sensors can report `0`
-immediately. Hold-policy sensors need at least one successful poll after
-startup before the integration has a value to retain.
+After a Home Assistant restart at night, a sensor remains unavailable until
+the integration has received that register at least once. This prevents an
+unsupported register from appearing as `0`. Once observed, zero-policy sensors
+can report `0`, and hold-policy sensors can retain their last value.
 
 ## Sensor catalog
 
