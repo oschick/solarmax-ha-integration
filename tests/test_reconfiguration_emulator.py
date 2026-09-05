@@ -17,7 +17,11 @@ from custom_components.solarmax.connection import (
 from custom_components.solarmax.coordinator import SolarmaxCoordinator
 from custom_components.solarmax.protocol import build_request, parse_response
 from tests.emulator import EmulatorHandle
-from tests.test_config_flow import _configured_endpoint_entry, _submit_reconfigure
+from tests.test_config_flow import (
+    _configured_endpoint_entry,
+    _submit_options,
+    _submit_reconfigure,
+)
 from tests.test_repairs import (
     _connection_issue,
     _create_connection_issue,
@@ -73,6 +77,109 @@ async def test_reconfigure_emulator_probe_failure(hass, emulator, proposed_emula
         assert (await old_engine.poll()).state is EngineState.ONLINE
     finally:
         await hass.config_entries.async_unload(entry.entry_id)
+
+
+@pytest.mark.parametrize("same_endpoint", [False, True])
+async def test_failed_setup_closes_connection_before_restoration(
+    hass, emulator, proposed_emulator, same_endpoint
+):
+    """A platform setup error releases the client slot before rollback reloads."""
+    entry = await _loaded_entry(hass, emulator)
+    old_runtime = entry.runtime_data
+    old_data, old_options = dict(entry.data), dict(entry.options)
+    failed_runtime = None
+    forward = hass.config_entries.async_forward_entry_setups
+
+    async def fail_first_forward(entry, platforms):
+        nonlocal failed_runtime
+        if failed_runtime is None:
+            failed_runtime = entry.runtime_data
+            assert failed_runtime is not old_runtime
+            assert failed_runtime.data.state is EngineState.ONLINE
+            assert failed_runtime.engine._link.connected
+            raise RuntimeError("platform forwarding failed after first refresh")
+        assert not failed_runtime.engine._link.connected
+        await forward(entry, platforms)
+
+    try:
+        with patch.object(
+            hass.config_entries,
+            "async_forward_entry_setups",
+            side_effect=fail_first_forward,
+        ):
+            if same_endpoint:
+                result = await _submit_options(hass, entry, update_interval=90)
+            else:
+                host, port = proposed_emulator.addr
+                result = await _submit_reconfigure(hass, entry, host=host, port=port)
+        assert result["errors"] == {"base": "reload_failed"}
+        assert failed_runtime is not None
+        assert not failed_runtime.engine._link.connected
+        assert dict(entry.data) == old_data
+        assert dict(entry.options) == old_options
+        assert entry.runtime_data is not old_runtime
+        assert entry.runtime_data is not failed_runtime
+        assert entry.runtime_data.data.state is EngineState.ONLINE
+        assert (await entry.runtime_data.engine.poll()).state is EngineState.ONLINE
+    finally:
+        await hass.config_entries.async_unload(entry.entry_id)
+        # Also clean up on RED, so the assertion remains the failure signal.
+        if failed_runtime is not None:
+            await failed_runtime.engine.close()
+    for handle in (emulator, proposed_emulator):
+        for thread in tuple(handle._emulator._client_threads):
+            await asyncio.to_thread(thread.join, 5)
+            assert not thread.is_alive()
+
+
+@pytest.mark.parametrize("during_refresh", [False, True])
+async def test_cancelled_setup_closes_open_connection(hass, emulator, during_refresh):
+    """Cancellation releases a connected setup with or without runtime_data."""
+    host, port = emulator.addr
+    entry = _configured_endpoint_entry(host=host, port=port, address=1)
+    entry.add_to_hass(hass)
+    connected = asyncio.Event()
+    runtime = None
+    first_refresh = SolarmaxCoordinator.async_config_entry_first_refresh
+
+    async def refresh(coordinator):
+        nonlocal runtime
+        runtime = coordinator
+        await first_refresh(coordinator)
+        if during_refresh:
+            connected.set()
+            await asyncio.Event().wait()
+
+    async def forward(entry, platforms):
+        assert entry.runtime_data is runtime
+        connected.set()
+        await asyncio.Event().wait()
+
+    try:
+        with (
+            patch.object(
+                SolarmaxCoordinator, "async_config_entry_first_refresh", refresh
+            ),
+            patch.object(
+                hass.config_entries, "async_forward_entry_setups", side_effect=forward
+            ),
+        ):
+            setup = asyncio.create_task(hass.config_entries.async_setup(entry.entry_id))
+            await asyncio.wait_for(connected.wait(), 5)
+            assert runtime.engine._link.connected
+            setup.cancel()
+            with pytest.raises(asyncio.CancelledError):
+                await setup
+        assert not runtime.engine._link.connected
+        # The inverter's only slot is available immediately after cancellation.
+        await validate_connection(host=host, port=port, address=1, verify_checksum=True)
+    finally:
+        if runtime is not None:
+            await runtime.async_shutdown()
+            await runtime.engine.close()
+    for thread in tuple(emulator._emulator._client_threads):
+        await asyncio.to_thread(thread.join, 5)
+        assert not thread.is_alive()
 
 
 async def test_reconfigure_emulator_cancel_validation(

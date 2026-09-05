@@ -92,31 +92,37 @@ async def async_setup_entry(hass: HomeAssistant, entry: SolarmaxConfigEntry) -> 
 
     coordinator = SolarmaxCoordinator(hass, entry)
 
-    # The coordinator's _async_update_data() never raises (see its class
-    # docstring), so this can never fail and never needs ConfigEntryNotReady:
-    # entities exist immediately even against a dark inverter, engine UNKNOWN.
-    await coordinator.async_config_entry_first_refresh()
+    try:
+        # A dark inverter still produces a snapshot, so entities can be created
+        # immediately without ConfigEntryNotReady.
+        await coordinator.async_config_entry_first_refresh()
 
-    # Use runtime_data instead of hass.data
-    entry.runtime_data = coordinator
+        # Use runtime_data instead of hass.data
+        entry.runtime_data = coordinator
 
-    # When night_keep_values is on, sensors keep showing yesterday's held
-    # values overnight — Energy Day has to notice the day boundary itself.
-    # Registering nothing by default keeps the common path free.
-    if entry_option(entry, CONF_NIGHT_KEEP_VALUES, DEFAULT_NIGHT_KEEP_VALUES):
-        entry.async_on_unload(
-            async_track_time_change(
-                hass, coordinator.async_handle_midnight, hour=0, minute=0, second=0
+        # When night_keep_values is on, sensors keep showing yesterday's held
+        # values overnight — Energy Day has to notice the day boundary itself.
+        # Registering nothing by default keeps the common path free.
+        if entry_option(entry, CONF_NIGHT_KEEP_VALUES, DEFAULT_NIGHT_KEEP_VALUES):
+            entry.async_on_unload(
+                async_track_time_change(
+                    hass, coordinator.async_handle_midnight, hour=0, minute=0, second=0
+                )
             )
+
+        await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
+
+        _LOGGER.info(
+            "Successfully set up Solarmax inverter at %s:%s",
+            entry.data[CONF_HOST],
+            entry.data[CONF_PORT],
         )
-
-    await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
-
-    _LOGGER.info(
-        "Successfully set up Solarmax inverter at %s:%s",
-        entry.data[CONF_HOST],
-        entry.data[CONF_PORT],
-    )
+    except BaseException:
+        # HA skips integration unload after failed setup. Release this setup's
+        # client slot before rollback, including when setup was cancelled.
+        await coordinator.async_shutdown()
+        await coordinator.engine.close()
+        raise
     return True
 
 
