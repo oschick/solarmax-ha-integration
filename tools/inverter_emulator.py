@@ -374,7 +374,7 @@ class SolarmaxEmulator:
         self._lock = threading.Lock()
         # Behaviour measured on a live 7TP2 (2026-09-01 probe):
         self.bound_port: int | None = None  # set after bind (supports port=0)
-        self.idle_timeout: float = 100.0  # peer-closes idle conns ~90-120s
+        self._idle_timeout = 100.0  # peer-closes idle conns ~90-120s
         self.dark = False  # powered off: swallow everything, answer nothing
         self._active_client = False  # the real device serves ONE TCP client
         self._inject: str | None = None  # one-shot failure injection
@@ -385,6 +385,17 @@ class SolarmaxEmulator:
         self._client_threads: set[threading.Thread] = set()
         self._timer_thread: threading.Thread | None = None
         self._stop_event = threading.Event()  # interrupts a pending dark timer
+
+    @property
+    def idle_timeout(self) -> float:
+        """Return the current client idle window in seconds."""
+        return self._idle_timeout
+
+    @idle_timeout.setter
+    def idle_timeout(self, value: float) -> None:
+        if value <= 0:
+            raise ValueError("idle timeout must be positive")
+        self._idle_timeout = value
 
     def calculate_checksum(self, data: str) -> str:
         """Calculate the Solarmax protocol checksum."""
@@ -538,19 +549,19 @@ class SolarmaxEmulator:
         """Handle a single client connection."""
         _LOGGER.info(f"Client connected: {client_addr[0]}:{client_addr[1]}")
         try:
-            idle_deadline = time.monotonic() + self.idle_timeout
+            last_activity = time.monotonic()
             client_socket.settimeout(min(self.idle_timeout, 0.25))
             while self.running:
                 try:
                     data = client_socket.recv(1024).decode("utf-8", errors="ignore")
                 except TimeoutError:
-                    if time.monotonic() < idle_deadline:
+                    if time.monotonic() - last_activity < self.idle_timeout:
                         continue
                     _LOGGER.debug(f"Idle window elapsed for {client_addr} -> FIN")
                     break
                 if not data:
                     break  # client closed
-                idle_deadline = time.monotonic() + self.idle_timeout
+                last_activity = time.monotonic()
                 if self.dark:
                     continue  # powered off: swallow silently, never answer
                 fields = self.parse_request(data)

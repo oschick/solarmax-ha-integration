@@ -13,6 +13,8 @@ from pathlib import Path
 from urllib.parse import unquote, urlsplit
 
 import yaml
+from packaging.requirements import Requirement
+from packaging.version import Version
 
 from script.release_common import parse_release_tag
 
@@ -47,6 +49,27 @@ def _manifest_version() -> str:
     return _load_json(_INTEGRATION / "manifest.json")["version"]
 
 
+def _active_requirement(path: str, name: str, python_version: str) -> Requirement:
+    matches = []
+    for line in (_ROOT / path).read_text(encoding="utf-8").splitlines():
+        if not line or line.startswith(("#", "-r ")):
+            continue
+        requirement = Requirement(line)
+        if requirement.name == name and (
+            requirement.marker is None
+            or requirement.marker.evaluate({"python_version": python_version})
+        ):
+            matches.append(requirement)
+    assert len(matches) == 1
+    return matches[0]
+
+
+def _exact_version(requirement: Requirement) -> Version:
+    pins = [item.version for item in requirement.specifier if item.operator == "=="]
+    assert len(pins) == 1
+    return Version(pins[0])
+
+
 def _copy_release_fixture(tmp_path: Path) -> Path:
     """Copy the files consumed by the release checker."""
     root = tmp_path / "repository"
@@ -68,13 +91,13 @@ def _write_release_archive(
 ) -> None:
     """Write a minimal release archive with optional extra entries."""
     with zipfile.ZipFile(path, "w") as archive:
-        archive.writestr("solarmax/__init__.py", "")
+        archive.writestr("__init__.py", "")
         archive.writestr(
-            "solarmax/manifest.json",
+            "manifest.json",
             json.dumps({"version": _manifest_version()}),
         )
         if include_strings:
-            archive.writestr("solarmax/strings.json", "{}")
+            archive.writestr("strings.json", "{}")
         for extra_path in extra_paths:
             archive.writestr(extra_path, "unexpected")
 
@@ -127,10 +150,11 @@ def test_manifest_and_project_versions_match() -> None:
 
 
 def test_hacs_zip_settings_are_coherent() -> None:
-    """A named HACS release asset must opt into ZIP releases."""
+    """HACS must install the same archive that the release workflow validates."""
     hacs = _load_json(_ROOT / "hacs.json")
 
-    assert "filename" not in hacs or hacs.get("zip_release") is True
+    assert hacs.get("zip_release") is True
+    assert hacs.get("filename") == "solarmax.zip"
 
 
 def test_hassfest_step_does_not_pass_unsupported_inputs() -> None:
@@ -165,10 +189,57 @@ def test_release_workflow_prepares_changes_through_a_pull_request() -> None:
     assert "script/prepare-release" in prepare_commands
     assert "git push" in prepare_commands
     assert "compare/main..." in prepare_commands
+    assert "git remote set-url" not in prepare_commands
+    assert "x-access-token" not in prepare_commands
+    assert "GIT_CONFIG_KEY_0=http.https://github.com/.extraheader" in prepare_commands
 
     release = workflow["jobs"]["release"]
     assert release["needs"] == "prepare"
     assert "needs.prepare.outputs.ready" in release["if"]
+    release_commands = "\n".join(
+        step["run"] for step in release["steps"] if "run" in step
+    )
+    assert "--prefix=solarmax/" not in release_commands
+    assert '"$RELEASE_ROOT/solarmax"' in release_commands
+
+
+def test_supported_python_versions_use_distinct_home_assistant_stacks() -> None:
+    """Minimum, current, and newest Python lanes must not collapse together."""
+    minimum = _active_requirement(
+        "requirements_min.txt", "pytest-homeassistant-custom-component", "3.12"
+    )
+    current = _active_requirement(
+        "requirements_test.txt", "pytest-homeassistant-custom-component", "3.13"
+    )
+    newest = _active_requirement(
+        "requirements_test.txt", "pytest-homeassistant-custom-component", "3.14"
+    )
+
+    assert _exact_version(minimum) < _exact_version(current) < _exact_version(newest)
+
+
+def test_quality_chardet_constraint_matches_requests() -> None:
+    """Quality tooling may use chardet 5 but must exclude unsupported major 6+."""
+    requirement = _active_requirement("requirements_quality.txt", "chardet", "3.14")
+
+    assert requirement.specifier.contains("5.2.0")
+    assert not requirement.specifier.contains("6.0.0")
+
+
+def test_actionlint_runs_once_in_validation() -> None:
+    """The dedicated workflow job owns actionlint in CI."""
+    workflow = yaml.safe_load(
+        (_ROOT / ".github" / "workflows" / "validate.yml").read_text()
+    )
+    workflow_lint = workflow["jobs"]["workflow-lint"]
+    assert any("actionlint" in step.get("run", "") for step in workflow_lint["steps"])
+
+    quality_check = next(
+        step
+        for step in workflow["jobs"]["quality"]["steps"]
+        if step.get("run") == "script/check"
+    )
+    assert "actionlint" in quality_check.get("env", {}).get("SKIP", "").split(",")
 
 
 def test_agent_guides_are_identical() -> None:
@@ -351,7 +422,7 @@ def test_release_checker_rejects_missing_changelog_section(tmp_path: Path) -> No
 
 
 def test_release_checker_accepts_expected_archive_layout(tmp_path: Path) -> None:
-    """A release archive with the integration at its root must pass."""
+    """HACS-ready archives contain integration files directly at their root."""
     archive = tmp_path / "solarmax.zip"
     _write_release_archive(archive)
 
@@ -362,10 +433,29 @@ def test_release_checker_accepts_expected_archive_layout(tmp_path: Path) -> None
     assert result.returncode == 0, result.stderr
 
 
+def test_release_checker_rejects_nested_integration_directory(tmp_path: Path) -> None:
+    """A wrapped archive would install as solarmax/solarmax through HACS."""
+    archive = tmp_path / "solarmax.zip"
+    with zipfile.ZipFile(archive, "w") as packaged:
+        packaged.writestr("solarmax/__init__.py", "")
+        packaged.writestr(
+            "solarmax/manifest.json",
+            json.dumps({"version": _manifest_version()}),
+        )
+        packaged.writestr("solarmax/strings.json", "{}")
+
+    result = _run_release_checker(
+        _ROOT, f"v{_manifest_version()}", "--archive", archive
+    )
+
+    assert result.returncode != 0
+    assert "archive contains forbidden path: solarmax/__init__.py" in result.stderr
+
+
 def test_release_checker_rejects_forbidden_archive_path(tmp_path: Path) -> None:
     """Caches and bytecode must not enter a public release asset."""
     archive = tmp_path / "solarmax.zip"
-    _write_release_archive(archive, "solarmax/__pycache__/const.cpython-314.pyc")
+    _write_release_archive(archive, "__pycache__/const.cpython-314.pyc")
 
     result = _run_release_checker(
         _ROOT, f"v{_manifest_version()}", "--archive", archive
@@ -385,19 +475,17 @@ def test_release_checker_requires_complete_archive_layout(tmp_path: Path) -> Non
     )
 
     assert result.returncode != 0
-    assert "archive is missing required files: solarmax/strings.json" in result.stderr
+    assert "archive is missing required files: strings.json" in result.stderr
 
 
 def test_release_checker_rejects_invalid_packaged_json(tmp_path: Path) -> None:
     """Malformed translation JSON must fail before the archive is tagged."""
     archive = tmp_path / "solarmax.zip"
-    _write_release_archive(archive, "solarmax/translations/en.json")
+    _write_release_archive(archive, "translations/en.json")
 
     result = _run_release_checker(
         _ROOT, f"v{_manifest_version()}", "--archive", archive
     )
 
     assert result.returncode != 0
-    assert (
-        "archive contains invalid JSON: solarmax/translations/en.json" in result.stderr
-    )
+    assert "archive contains invalid JSON: translations/en.json" in result.stderr

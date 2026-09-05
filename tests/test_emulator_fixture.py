@@ -9,6 +9,8 @@ import socket
 import threading
 import time
 
+import pytest
+
 from tests.emulator import EmulatorHandle, build_request, parse_values
 
 
@@ -65,6 +67,23 @@ def test_idle_timeout_closes_with_fin(emulator):
         time.sleep(1.5)
         sock.settimeout(2)
         assert sock.recv(1024) == b""  # clean FIN, like the real device
+
+
+def test_idle_timeout_change_applies_to_live_connection(emulator):
+    """Scenario controls can shorten an existing connection's idle window."""
+    emulator.idle_timeout = 10.0
+    with socket.create_connection(emulator.addr, timeout=2) as sock:
+        _poll(sock)
+        emulator.idle_timeout = 0.1
+        time.sleep(0.4)
+        sock.settimeout(1)
+        assert sock.recv(1024) == b""
+
+
+def test_idle_timeout_must_be_positive(emulator):
+    """Zero must not turn the client socket into a nonblocking socket."""
+    with pytest.raises(ValueError, match="positive"):
+        emulator.idle_timeout = 0
 
 
 def test_second_client_hangs_not_refused(emulator):

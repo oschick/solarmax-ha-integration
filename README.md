@@ -75,9 +75,9 @@ HACS handles updates after the custom repository has been added.
 
 1. Download `solarmax.zip` from the latest
    [GitHub release](https://github.com/oschick/solarmax-ha-integration/releases/).
-2. Extract it into Home Assistant's `custom_components` directory.
-3. Confirm that the final path is `custom_components/solarmax` and contains
-   `manifest.json`.
+2. Create `custom_components/solarmax` in the Home Assistant configuration
+   directory and extract the archive there.
+3. Confirm that `custom_components/solarmax/manifest.json` exists.
 4. Restart Home Assistant.
 
 ## Configuration

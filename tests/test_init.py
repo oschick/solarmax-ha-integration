@@ -1,5 +1,6 @@
 """Test the Solarmax integration initialization."""
 
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -17,6 +18,7 @@ from custom_components.solarmax.const import (
     DOMAIN,
 )
 from custom_components.solarmax.coordinator import SolarmaxCoordinator
+from custom_components.solarmax.sensor import _make_device_registry_updater
 
 
 @pytest.fixture
@@ -191,6 +193,51 @@ async def test_setup_while_dark_creates_entities(hass, emulator):
         status = hass.states.get("sensor.e2e_inverter_sys")
         assert status is not None
         assert status.state == "offline_expected"
+
+
+def test_device_registry_updater_uses_config_entry_lookup(
+    hass, mock_config_entry
+) -> None:
+    """Newer HA registries receive the config entry needed for disambiguation."""
+
+    class FutureDeviceRegistry:
+        def __init__(self) -> None:
+            self.lookup = None
+            self.updated = None
+
+        def async_get_device_by_identifier(self, identifier, config_entry_id):
+            self.lookup = (identifier, config_entry_id)
+            return SimpleNamespace(id="device-id")
+
+        def async_get_device(self, **_kwargs):
+            raise AssertionError("deprecated registry lookup used")
+
+        def async_update_device(self, device_id, **changes):
+            self.updated = (device_id, changes)
+
+    registry = FutureDeviceRegistry()
+    coordinator = SimpleNamespace(
+        device_model="SolarMax 7TP2",
+        sw_version="40",
+        serial_number="118767",
+    )
+
+    with patch("custom_components.solarmax.sensor.dr.async_get", return_value=registry):
+        updater = _make_device_registry_updater(hass, mock_config_entry, coordinator)
+        updater()
+
+    assert registry.lookup == (
+        (DOMAIN, mock_config_entry.entry_id),
+        mock_config_entry.entry_id,
+    )
+    assert registry.updated == (
+        "device-id",
+        {
+            "model": "SolarMax 7TP2",
+            "sw_version": "40",
+            "serial_number": "118767",
+        },
+    )
 
 
 async def test_device_registry_updates_when_statics_arrive_later(

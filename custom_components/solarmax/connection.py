@@ -5,12 +5,8 @@ to a 1-2W residual) before it leaves the network. Arming reflects the
 evidence seen on the LAST successful poll; a disconnect while armed (or with
 the sun below the twilight threshold) is expected rather than a fault.
 
-The state-machine primitives below (EngineState, ArmingTracker,
-classify_disconnect, EngineDiagnostics, EngineSnapshot) are pure — no
-sockets, no I/O. SolarmaxLink is the async transport added on top of them;
-it owns the one real TCP connection to the device. Later tasks add
-orchestration (ConnectionEngine) to this same module; do not rename or
-restructure the names defined here.
+The state-machine data types and arming tracker are pure. SolarmaxLink owns
+the TCP connection, while ConnectionEngine coordinates polling and state.
 """
 
 from __future__ import annotations
@@ -396,35 +392,35 @@ class ConnectionEngine:
                     return self._snapshot(
                         reconnecting=False, expected_outside_twilight=False
                     )
-            raw = await self._request_with_retry(
+            values = await self._request_with_retry(
                 build_request(self._address, HOT_FIELDS)
             )
-            values = parse_response(raw, self._verify_checksum)
         except (LinkTimeout, LinkClosed, ProtocolError):
             return await self._on_failure()
         return self._on_success(values)
 
     async def _load_static_values(self) -> None:
         fields = STATIC_FIELDS + DEVICE_FIELDS
-        raw = await self._request_with_retry(build_request(self._address, fields))
-        values = parse_response(raw, self._verify_checksum)
+        values = await self._request_with_retry(build_request(self._address, fields))
         self._values.update(values)
         self._static_fetch_attempts += 1
         self._statics_loaded = all(field in values for field in fields) or (
             self._static_fetch_attempts >= STATIC_FETCH_MAX_ATTEMPTS
         )
 
-    async def _request_with_retry(self, payload: str) -> str:
+    async def _request_with_retry(
+        self, payload: str
+    ) -> dict[str, dict[str, float | int]]:
         """Fetch a payload, retrying once for timeout or corrupt data."""
         try:
             raw = await self._link.request(payload)
         except LinkTimeout:
-            return await self._link.request(payload)
+            raw = await self._link.request(payload)
         try:
-            parse_response(raw, self._verify_checksum)
+            return parse_response(raw, self._verify_checksum)
         except RetryableProtocolError:
             raw = await self._link.request(payload)
-        return raw
+            return parse_response(raw, self._verify_checksum)
 
     def _on_success(self, values: dict[str, dict[str, float | int]]) -> EngineSnapshot:
         # Partial frames update present readings without discarding cached ones.
