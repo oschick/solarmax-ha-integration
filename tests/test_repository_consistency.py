@@ -402,6 +402,10 @@ def test_release_checker_reports_prerelease_to_github(tmp_path: Path) -> None:
         manifest_version="1.4.0-rc.1",
         project_version="1.4.0.dev0+rc.1",
     )
+    (root / "CHANGELOG.md").write_text(
+        "# Changelog\n\n## [Unreleased]\n\n- Preview release note.\n",
+        encoding="utf-8",
+    )
     output = tmp_path / "github-output"
 
     result = _run_release_checker(

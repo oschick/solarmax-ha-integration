@@ -7,106 +7,113 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-We rebuilt inverter communication around one TCP session and added optional
-overnight sensor values. Home Assistant uses separate states for normal dusk
-shutdowns and daytime faults, adapts its polling rate, and can start while the
-inverter sleeps.
+## [1.4.0] - 2026-09-06
 
-### Breaking changes
+This release adds optional sensor values while the inverter is off at night.
+It also rebuilds connection handling for normal operation, daytime outages,
+and overnight shutdowns.
 
-- Existing entries migrate to config-entry schema version 2. The upgrade
-  preserves settings, but downgrading to an older integration requires a Home
-  Assistant backup created before the upgrade.
-- The new connection engine replaces the previous request-per-poll transport.
-  Hardware testing covers one SolarMax 7TP2; other inverter models and firmware
-  versions may behave differently.
-- The Status Code entity now shows **Offline (expected)** (`offline_expected`)
-  instead of **Offline (Night)** (`offline_night`), and **Offline (fault)**
-  (`offline_fault`) instead of **Connection failed** (`connection_failed`).
-  Update automations and dashboards that match the old raw values.
-- The integration now requires Home Assistant 2024.12.0 or newer and Python
-  3.12 or newer.
+### New: useful sensor values at night
 
-### Added
+Many SolarMax inverters shut down their network connection after production
+ends. To keep useful values available, open **Settings → Devices & services**,
+find **Solarmax Inverter**, select **Configure**, and enable **Keep sensor
+values overnight**:
 
-- **Keep sensor values overnight** can show zero for production, retain
-  cumulative and static values, and reset daily energy at local midnight. Grid
-  and temperature readings remain unavailable. Synthetic readings identify
-  their source through `night_value_source`.
-- The connection engine reuses one TCP connection, limits each poll to 15
-  seconds, and changes its polling interval based on inverter state. Home
-  Assistant can create entities while the inverter sleeps.
-- Expected-offline polling accelerates at civil dawn (-6° while rising), while
-  the configured twilight threshold remains responsible for classifying
-  faults. The clock fallback starts faster polling at 05:00.
-- Diagnostics report whether sun calculations use `sun.sun` or the clock
-  fallback, which also logs one warning when activated.
-- An armed daytime **Offline (expected)** (`offline_expected`) state becomes
-  **Offline (fault)** (`offline_fault`) after one hour and ten failed probes.
-- Home Assistant provides native **Reconfigure** for the host, port, inverter
-  address, and device name. Connection repairs can edit the host and port, test
-  the endpoint, and stay open until a complete online update verifies recovery.
-  Home Assistant's native **Ignore** action remains available. Real-device
-  coverage for these flows remains limited to the maintainer's SolarMax 7TP2.
+- Active production readings show `0`.
+- Energy totals and other cumulative or static values keep their last reading.
+- **Energy today** keeps its last reading until midnight, then changes to `0`.
+- Grid and temperature readings remain unavailable because there is no live
+  measurement.
 
-### Fixed
+Every synthetic state includes `night_value_source`, so automations can tell
+it apart from live inverter data. The option is disabled by default.
 
-- Reconfiguration uses the default inverter address for disabled legacy
-  entries that have not migrated yet.
-- Invalid hostnames now return a connection error instead of closing the
-  configuration flow.
-- Reconfiguration waits for an in-progress setup to release the inverter
-  connection and rolls back if the sensor platform fails to initialize.
-- Disabling checksum verification now skips only the CRC comparison; responses
-  must still use valid MaxComm framing.
-- Daily energy cached before midnight can no longer reappear when the first
-  new-day response omits that register.
-- Unavailable or unknown `sun.sun` states now use the clock fallback for
-  nighttime classification and recovery polling.
-- Setup, reconfiguration, and connection repair reject TCP ports outside
-  `1..65535` before opening a connection.
-- Shutdown waits for active connections, polls, emulator handlers, and sensor
-  platform unloads. The engine cannot reopen a socket after closing.
-- Initial setup validates MaxComm frames and respects **Verify response
-  checksum**, including the option to ignore checksums. Runtime polling retries
-  once after lost responses, corrupt frames, peer closes, or partial static
-  data.
-- Response handling now allows the MaxComm protocol's three-second response
-  window, with a 3.5-second timeout and a 15-second overall poll budget.
-- Valid fields survive when the inverter returns one malformed field.
-- Failed device-information requests no longer block valid live telemetry, and
-  each poll classifies a connection failure only once.
-- Nighttime zero policies no longer create values for registers the inverter
-  has never reported. Unsupported sensors remain unavailable.
-- Saving integration options no longer opens a competing connection to an
-  inverter that accepts one TCP client and now reloads the entry only once.
-- Connection repairs tolerate missing Home Assistant issue data and preserve
-  the native Ignore state while an active issue is refreshed.
-- Expected nighttime shutdowns reset fault timers, so an inverter that remains
-  offline after dawn starts a new daytime fault episode.
-- Delayed model, firmware, and serial data now refreshes the Home Assistant
-  device registry after the inverter becomes available.
-- Partial device-information polls no longer clear firmware or serial data
-  already stored in Home Assistant.
-- Diagnostics no longer expose the inverter serial number.
-- HACS installs the same `solarmax.zip` archive that the release workflow tests
-  and attests.
+### Other highlights
 
-### Maintenance
+- Home Assistant now keeps one connection to the inverter and recovers faster
+  from daytime outages without polling heavily all night.
+- Normal night shutdowns and unexpected daytime failures have distinct,
+  translated states.
+- Connection settings can be changed and tested from Home Assistant.
+  Persistent daytime failures create a repair issue.
 
-- CI uses one required merge gate, tests Python 3.12 through 3.14, checks changed
-  lines for coverage, and validates workflows with actionlint and zizmor.
-- CodeQL scans pull requests, while a weekly canary checks the newest compatible
-  Home Assistant test stack.
-- Releases now start manually from `main`, validate the packaged integration,
-  attest the ZIP, and create a draft for review before publication.
-- The release workflow now prepares a review branch when source versions need
-  updating. It supports SemVer prerelease suffixes such as alpha, beta, release
-  candidate, and test.
-- Guided issue forms and separate contributor, architecture, and
-  troubleshooting guides make reports and maintenance easier to follow.
-- Removed unused translations and repair code, typed device metadata with Home
-  Assistant's `DeviceInfo`, and added exact alarm-state translation checks.
+### Before upgrading
+
+- The connection engine is a complete rewrite. It has been tested with a
+  SolarMax 7TP2, but other models and firmware may respond differently.
+- The Status Code entity now uses **Offline (expected)**
+  (`offline_expected`) instead of **Offline (Night)** (`offline_night`), and
+  **Offline (fault)** (`offline_fault`) instead of **Connection failed**
+  (`connection_failed`). Update automations or dashboards that match the old
+  raw values.
+- Existing entries migrate to config-entry schema version 2 without losing
+  settings. Older integration releases cannot read the migrated entry; restore
+  a Home Assistant backup made before the upgrade if you need to downgrade.
+- The minimum versions are now Home Assistant 2024.12.0 and Python 3.12.
+
+### Technical details
+
+#### Connection and protocol
+
+- Runtime polling now reuses one persistent TCP connection. Initial setup uses
+  a short validation connection. Each poll has a 15-second budget, individual
+  responses allow the MaxComm three-second window, and transient connection or
+  frame failures receive one retry.
+- Home Assistant can restart an existing entry and create its entities while
+  the inverter is sleeping. Adding a new inverter still requires an online
+  validation response. The engine closes cleanly during reload or shutdown and
+  cannot reopen afterward.
+- Initial setup and runtime polling validate MaxComm frame structure.
+  **Verify response checksum** controls only the CRC comparison, so inverters
+  with non-standard checksums remain supported without accepting malformed
+  responses.
+- A malformed field no longer discards other valid values. Missing or partial
+  device information does not block live telemetry or erase metadata that was
+  already discovered.
+- A poll records at most one connection failure, even when more than one
+  request fails.
+
+#### Daylight, outages, and overnight values
+
+- The Status Code entity distinguishes startup uncertainty, an expected
+  shutdown, and an unexplained daytime fault. An early expected shutdown
+  becomes a fault after one hour and at least ten failed probes.
+- Expected-offline polling slows to 15 minutes during full night, then returns
+  to 60 seconds from civil dawn at -6° while rising. Daytime faults also retry
+  at least every 60 seconds.
+- When `sun.sun` is missing, unavailable, or unknown, the integration logs one
+  warning and uses the local clock for classification and recovery polling.
+  Diagnostics report which source is active.
+- **Keep sensor values overnight** can zero production, retain cumulative and
+  static values, and reset daily energy at local midnight. Grid and temperature
+  readings remain unavailable. Synthetic values expose their policy through
+  `night_value_source`.
+- The integration creates synthetic values only for registers the inverter has
+  reported before. Cached daily energy cannot reappear after midnight when the
+  first new-day response omits that register.
+- Expected shutdowns reset fault timing. An inverter that stays offline after
+  dawn starts a new daytime fault episode.
+
+#### Configuration, repairs, and device data
+
+- Native **Reconfigure** changes the host, port, inverter address, or device
+  name. Endpoint changes are tested before saving and roll back if the new
+  runtime or sensor platform cannot start. A name-only change does not contact
+  the inverter.
+- Setup, reconfiguration, and repair reject ports outside `1..65535`.
+  Invalid hostnames return a connection error, and disabled legacy entries use
+  the default inverter address when necessary.
+- Validation waits for startup to release its connection. Saving options no
+  longer opens a competing connection or reloads the entry twice.
+- A connection repair can change the host or port and test the endpoint. The
+  issue remains open until a complete online update confirms recovery, while
+  Home Assistant's native **Ignore** action remains available.
+- Device metadata discovered after startup updates the Home Assistant device
+  registry. Diagnostics no longer expose the inverter serial number.
+- Real-device testing of the connection engine and reconfiguration currently
+  covers the maintainer's SolarMax 7TP2. Emulator tests cover the remaining
+  flows.
 
 ## [1.3.3] - 2026-08-11
 
@@ -305,7 +312,8 @@ inverter sleeps.
 - Translation support
 - HACS compatibility
 
-[Unreleased]: https://github.com/oschick/solarmax-ha-integration/compare/v1.3.3...HEAD
+[Unreleased]: https://github.com/oschick/solarmax-ha-integration/compare/v1.4.0...HEAD
+[1.4.0]: https://github.com/oschick/solarmax-ha-integration/compare/v1.3.3...v1.4.0
 [1.3.3]: https://github.com/oschick/solarmax-ha-integration/compare/v1.3.2...v1.3.3
 [1.3.2]: https://github.com/oschick/solarmax-ha-integration/compare/v1.3.1...v1.3.2
 [1.3.1]: https://github.com/oschick/solarmax-ha-integration/compare/v1.3.0...v1.3.1
