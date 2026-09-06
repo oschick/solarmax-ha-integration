@@ -6,31 +6,21 @@
 [![GitHub license](https://img.shields.io/github/license/oschick/solarmax-ha-integration.svg)](LICENSE)
 
 Solarmax Inverter connects Home Assistant directly to a SolarMax inverter over
-the local MaxComm TCP protocol. It reads live production, energy counters,
-operating status, alarms, and diagnostic measurements without a cloud service.
+the MaxComm TCP protocol on your local network. It reads production, energy
+totals, operating status, alarms, and diagnostic measurements without a cloud
+account.
 
-## Highlights
+## At a glance
 
 - Local, read-only communication with no cloud account
-- One persistent connection instead of a new socket for every poll
-- Faster retries after daytime failures and slower polling while the inverter sleeps
-- Separate states for an expected shutdown and an unexpected connection fault
-- Optional synthetic night values for useful dashboards and energy statistics
-- English, German, and French entity, status, alarm, and repair translations
-- A built-in repair issue when an unexplained daytime outage persists
+- Optional night values for dashboards and energy statistics
+- One persistent inverter connection with automatic recovery
+- Faster checks after daytime failures and quiet polling overnight
+- Clear states for normal shutdowns and unexpected connection faults
+- Native reconfiguration and repair flows in Home Assistant
+- English, German, and French translations
 
-## Contents
-
-- [Requirements and compatibility](#requirements-and-compatibility)
-- [Installation](#installation)
-- [Configuration](#configuration)
-- [Connection and recovery](#connection-and-recovery)
-- [Night-time sensor behavior](#night-time-sensor-behavior)
-- [Sensor catalog](#sensor-catalog)
-- [Troubleshooting and support](#troubleshooting-and-support)
-- [Development](#development)
-
-## Requirements and compatibility
+## Before you install
 
 You need:
 
@@ -38,7 +28,7 @@ You need:
 - A SolarMax inverter that exposes the MaxComm protocol over TCP
 - Network access from Home Assistant to the inverter, normally on port `12345`
 
-### Inverter models
+### Supported inverters
 
 | Compatibility | Models or protocol |
 | --- | --- |
@@ -55,16 +45,10 @@ entities for those fields remain unavailable.
 > vendor software, test scripts, or another Home Assistant instance before
 > setting up the integration.
 
-Giving the inverter a fixed DHCP lease is recommended so its address does not
+Give the inverter a fixed DHCP lease if possible, so its address does not
 change after setup.
 
-### Upgrading and downgrading
-
-The schema version 2 upgrade preserves existing connection settings and
-preferences. Older integration releases cannot read the migrated entry. To
-downgrade, restore a Home Assistant backup created before the upgrade.
-
-## Installation
+## Install
 
 ### HACS
 
@@ -86,19 +70,19 @@ HACS handles updates after the custom repository has been added.
 3. Confirm that `custom_components/solarmax/manifest.json` exists.
 4. Restart Home Assistant.
 
-## Configuration
+## Set up and configure
 
 After installation:
 
 1. Open **Settings → Devices & services**.
 2. Select **Add integration**.
 3. Search for **Solarmax Inverter**.
-4. Enter the inverter connection and polling settings.
+4. Enter the inverter details and polling settings.
 
-The initial setup opens a short connection and validates a `PAC` response. A
-successful probe creates one device and its sensor entities.
+Home Assistant briefly connects to the inverter before saving the entry. After
+a successful check, the integration creates one device and its sensor entities.
 
-### Settings
+### Connection and polling settings
 
 | Setting | Default | Description |
 | --- | ---: | --- |
@@ -111,42 +95,61 @@ successful probe creates one device and its sensor entities.
 | Keep sensor values overnight | Off | Apply the synthetic night policies described below |
 | Twilight elevation threshold | `5°` | Sun elevation below which an offline inverter is expected |
 
+### Change settings later
+
+The integration menu offers two actions:
+
+| Action | Use it for |
+| --- | --- |
+| **Reconfigure** | Host, port, inverter address, or device name |
+| **Configure** | Update interval, checksum verification, night values, or twilight threshold |
+
+Home Assistant tests a changed host, port, or inverter address before saving
+it, so the inverter must be reachable. It then reloads the integration and
+restores the previous connection if the new one cannot start. Entity IDs and
+unique IDs stay unchanged. Changing only the device name does not contact the
+inverter.
+
+Options do not require a connection test. Home Assistant reloads the
+integration after saving them and restores the previous options if that reload
+fails.
+
 ### Checksum verification
 
-Checksum verification protects against damaged or malformed responses and
-should normally remain enabled. Some firmware returns otherwise valid frames
-with a non-standard checksum. If logs repeatedly show checksum errors for such
-an inverter, clear **Verify response checksum**. The setting applies both to
-the setup probe and to normal polling, so the checkbox can explicitly tell the
-integration to ignore response checksums.
+Leave **Verify response checksum** enabled unless your inverter is known to
+return valid MaxComm data with a non-standard checksum. If its logs repeatedly
+show checksum errors, turn the option off. The integration will then ignore the
+CRC value but will still reject malformed responses.
 
-### Reconfigure connection
+### Upgrading and downgrading
 
-Open the integration entry menu and select **Reconfigure** to change the host,
-port, inverter address, or device name. Home Assistant tests a new host, port,
-or inverter address before saving it, so the inverter must be reachable. A
-device-name-only change does not contact the inverter.
+`v1.4.0` migrates existing entries to configuration schema version 2 while
+preserving their connection settings and preferences. After migration,
+`v1.3.3` and older releases cannot read the entry. To downgrade from `v1.4.0`,
+restore a Home Assistant backup made before you installed the update.
 
-Saving endpoint changes reloads the entry. Home Assistant restores the
-previous settings if it cannot activate the new connection. Sensor entity IDs
-and unique IDs stay stable. Endpoint changes update the config entry's endpoint
-identity.
-
-### Options
-
-Select **Configure** to change the update interval, checksum verification,
-overnight values, or twilight threshold. Preference changes do not probe the
-inverter. Saving a change reloads the entry and restores the previous options
-if the reload fails.
-
-## Connection and recovery
+## Connection, outages, and recovery
 
 The integration owns one persistent TCP connection and reuses it across polls.
-Static device information and live telemetry are requested separately. This
-keeps normal polls small and allows an inverter to omit unsupported registers
-without losing all sensor updates.
+It requests device information separately from live measurements, so a missing
+optional value does not discard an otherwise valid update.
 
-### Connection states
+### Architecture in brief
+
+- The protocol layer builds and validates MaxComm frames, checks checksums when
+  enabled, and converts raw register values to Home Assistant units.
+- `SolarmaxLink` owns the inverter's single TCP connection and serializes
+  requests so two exchanges cannot overlap.
+- `ConnectionEngine` caches values, applies the 15-second poll budget and
+  retry policy, and turns connection or protocol failures into an
+  `EngineSnapshot`.
+- `SolarmaxCoordinator` schedules the next poll from that snapshot and
+  supplies the resulting state to sensors, diagnostics, and repairs.
+
+See [the architecture guide](docs/architecture.md) for the full component and
+state model.
+
+### What the Status Code means
 
 The **Status Code** entity shows the inverter's translated `SYS` state while it
 is online. If the inverter cannot be reached, it reports one of these
@@ -161,17 +164,16 @@ integration states:
 The normal online condition is represented by the live inverter status rather
 than a synthetic `online` value.
 
-### How an offline state is classified
+### How Home Assistant classifies an outage
 
-The integration combines inverter data with Home Assistant's sun position:
+The integration uses the last valid inverter data together with Home
+Assistant's sun position:
 
 1. A successful poll arms an expected shutdown when `SYS` reports `20002` or
    DC power (`PDC`) falls below 25 W.
-2. The next disconnect is classified as **Offline (expected)**
-   (`offline_expected`) when that evidence exists or the sun is below the
-   configured twilight threshold.
-3. An unexplained daytime disconnect is classified as **Offline (fault)**
-   (`offline_fault`).
+2. The next disconnect is **Offline (expected)** when that evidence exists or
+   the sun is below the configured twilight threshold.
+3. An unexplained daytime disconnect is **Offline (fault)**.
 4. A shutdown that starts unusually early is allowed one hour and at least ten
    failed probes before it escalates to a fault.
 
@@ -179,7 +181,7 @@ At daytime startup, the integration keeps the state **Unknown** (`unknown`)
 during a 150-second reconnect window. This avoids raising a fault while the
 inverter or network is still becoming available.
 
-### Polling cadence and retries
+### Polling and recovery
 
 | Condition | Poll interval |
 | --- | --- |
@@ -202,13 +204,15 @@ classification, with faster recovery polling starting at 05:00. A diagnostic
 download reports `sun.sun`, `clock_fallback`, or `unknown` as the active sun
 source.
 
-If a daytime fault lasts five minutes, Home Assistant creates a repair issue.
-Open the repair to edit the host or port and test the connection. A successful
-probe saves the connection, but the repair stays visible until a complete
-online inverter update succeeds. Home Assistant's built-in **Ignore** action
-remains available. The issue clears after verified recovery.
+### Connection repairs
 
-### Diagnostic state attributes
+After five minutes of a daytime fault, Home Assistant creates a repair issue.
+Open it to change the host or port and test the connection. A successful test
+saves the new connection, but the issue remains visible until the inverter
+completes a full online update. You can also use Home Assistant's **Ignore**
+action.
+
+### Automations and diagnostics
 
 When relevant, the Status Code entity exposes:
 
@@ -220,21 +224,26 @@ When relevant, the Status Code entity exposes:
 | `expected_outside_twilight` | Whether shutdown evidence occurred above the twilight threshold |
 | `code` and `raw_value` | Raw status or offline details for diagnostics |
 
-Automations created with an older release must replace **Offline (Night)**
+Automations created with an older version must replace **Offline (Night)**
 (`offline_night`) with **Offline (expected)** (`offline_expected`), and
 **Connection failed** (`connection_failed`) with **Offline (fault)**
 (`offline_fault`). Automations match the raw values shown in parentheses.
 
-## Night-time sensor behavior
+## Sensor values at night
 
 Many SolarMax inverters turn off their network interface when production ends.
 That is normal, but it leaves Home Assistant without a live value until the
 next successful poll.
 
-With **Keep sensor values overnight** disabled, measurement entities become
-unavailable while the inverter is offline. Enable the option if dashboards or
-automations need predictable night values. The integration then applies a
-policy suited to each register:
+To enable night values:
+
+1. Open **Settings → Devices & services**.
+2. Find **Solarmax Inverter** and select **Configure**.
+3. Enable **Keep sensor values overnight** and save.
+
+With this option disabled, measurement entities become unavailable while the
+inverter is offline. When enabled, the integration applies a policy suited to
+each register:
 
 | Policy | Sensors | Value while expected offline |
 | --- | --- | --- |
@@ -256,7 +265,7 @@ the integration has received that register at least once. This prevents an
 unsupported register from appearing as `0`. Once observed, zero-policy sensors
 can report `0`, and hold-policy sensors can retain their last value.
 
-## Sensor catalog
+## Available sensors
 
 Entity names are translated in Home Assistant. The MaxComm register is shown
 in parentheses to make protocol logs and diagnostics easier to interpret.
@@ -328,7 +337,7 @@ Include the Home Assistant and integration versions, inverter model, connection
 state, relevant settings, diagnostics, and logs. Remove credentials or network
 details that you do not want to publish.
 
-## Development
+## Contributing and development
 
 [CONTRIBUTING.md](CONTRIBUTING.md) covers local setup, checks, translations,
 pull requests, and releases. [docs/architecture.md](docs/architecture.md)
@@ -340,6 +349,13 @@ Run the same validation used by CI with:
 ```bash
 script/check
 ```
+
+## Disclaimer
+
+This is an independent, community-maintained project. It is not affiliated
+with, endorsed by, sponsored by, or supported by SolarMax or any related
+company, distributor, installer, or rights holder. Product and company names
+are trademarks of their respective owners.
 
 ## License
 
