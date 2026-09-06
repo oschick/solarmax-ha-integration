@@ -47,9 +47,10 @@ it apart from live inverter data. The option is disabled by default.
   **Offline (fault)** (`offline_fault`) instead of **Connection failed**
   (`connection_failed`). Update automations or dashboards that match the old
   raw values.
-- Existing entries migrate to config-entry schema version 2 without losing
-  settings. Older integration releases cannot read the migrated entry; restore
-  a Home Assistant backup made before the upgrade if you need to downgrade.
+- Upgrading to `v1.4.0` migrates existing entries to config-entry schema
+  version 2 without losing their settings. After migration, `v1.3.3` and older
+  releases cannot read the entry. To downgrade from `v1.4.0`, restore a Home
+  Assistant backup made before you installed the update.
 - The minimum versions are now Home Assistant 2024.12.0 and Python 3.12.
 
 ### Technical details

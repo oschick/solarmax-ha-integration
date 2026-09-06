@@ -123,9 +123,10 @@ CRC value but will still reject malformed responses.
 
 ### Upgrading and downgrading
 
-The version 2 configuration migration keeps existing connection settings and
-preferences. Older integration versions cannot read a migrated entry. Restore
-a Home Assistant backup made before the upgrade if you need to downgrade.
+`v1.4.0` migrates existing entries to configuration schema version 2 while
+preserving their connection settings and preferences. After migration,
+`v1.3.3` and older releases cannot read the entry. To downgrade from `v1.4.0`,
+restore a Home Assistant backup made before you installed the update.
 
 ## Connection, outages, and recovery
 
