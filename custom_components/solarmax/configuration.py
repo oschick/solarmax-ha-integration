@@ -33,6 +33,8 @@ from .const import (
     DEFAULT_UPDATE_INTERVAL,
     DEFAULT_VERIFY_CHECKSUM,
     DOMAIN,
+    MAX_RESPONSE_TIMEOUT,
+    MIN_RESPONSE_TIMEOUT,
     SUBENTRY_TYPE_INVERTER,
 )
 from .protocol import ProtocolError, build_request, parse_response
@@ -41,18 +43,20 @@ _CONFIGURATION_LOCK = "configuration_mutation_lock"
 _LOGGER = logging.getLogger(__name__)
 
 TCP_PORT_SCHEMA = vol.All(vol.Coerce(int), vol.Range(min=1, max=65535))
-CONNECTION_KEYS = (CONF_HOST, CONF_PORT, CONF_ADDRESS, CONF_DEVICE_NAME)
+RESPONSE_TIMEOUT_SCHEMA = vol.All(
+    vol.Coerce(float), vol.Range(min=MIN_RESPONSE_TIMEOUT, max=MAX_RESPONSE_TIMEOUT)
+)
+ADDRESS_SCHEMA = vol.All(vol.Coerce(int), vol.Range(min=1, max=249))
+CONNECTION_KEYS = (CONF_HOST, CONF_PORT)
 OPTION_KEYS = (
     CONF_UPDATE_INTERVAL,
     CONF_VERIFY_CHECKSUM,
-    CONF_TWILIGHT_ELEVATION_THRESHOLD,
-    CONF_NIGHT_KEEP_VALUES,
+    CONF_RESPONSE_TIMEOUT,
 )
 OPTION_DEFAULTS = {
     CONF_UPDATE_INTERVAL: DEFAULT_UPDATE_INTERVAL,
     CONF_VERIFY_CHECKSUM: DEFAULT_VERIFY_CHECKSUM,
-    CONF_TWILIGHT_ELEVATION_THRESHOLD: DEFAULT_TWILIGHT_ELEVATION_THRESHOLD,
-    CONF_NIGHT_KEEP_VALUES: DEFAULT_NIGHT_KEEP_VALUES,
+    CONF_RESPONSE_TIMEOUT: DEFAULT_RESPONSE_TIMEOUT,
 }
 INVERTER_KEYS = (
     CONF_ADDRESS,
@@ -248,11 +252,12 @@ async def validate_connection(
 
 def split_entry_input(
     values: Mapping[str, Any],
-) -> tuple[dict[str, Any], dict[str, Any]]:
-    """Split config entry input into connection data and preference options."""
+) -> tuple[dict[str, Any], dict[str, Any], dict[str, Any]]:
+    """Split setup input into endpoint data, global options, and inverter data."""
     return (
         {key: values[key] for key in CONNECTION_KEYS},
         {key: values[key] for key in OPTION_KEYS},
+        {key: values[key] for key in INVERTER_KEYS},
     )
 
 

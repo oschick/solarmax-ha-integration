@@ -1,8 +1,6 @@
 """Test the Solarmax config flow."""
 
 import asyncio
-from collections.abc import AsyncIterator
-from contextlib import asynccontextmanager
 from types import SimpleNamespace
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -17,10 +15,14 @@ from homeassistant.config_entries import (
 )
 from homeassistant.core import HomeAssistant
 from homeassistant.data_entry_flow import FlowResultType
-from homeassistant.helpers import device_registry as dr
-from homeassistant.helpers import entity_registry as er
 from pytest_homeassistant_custom_component.common import MockConfigEntry
 
+# Import the flow module at collection time so its `validate_connection` name is
+# bound to the real function before any fixture patches
+# `configuration.validate_connection`. Otherwise Home Assistant's lazy first
+# import of the flow module, if it happens inside a patched flow, binds the mock
+# and leaks it into later tests.
+from custom_components.solarmax import config_flow  # noqa: F401
 from custom_components.solarmax.configuration import (
     OPTION_DEFAULTS,
     OPTION_KEYS,
@@ -28,48 +30,71 @@ from custom_components.solarmax.configuration import (
     EntryReloadError,
     async_apply_and_reload,
     configuration_mutation_lock,
-    endpoint_unique_id,
     split_entry_input,
     validate_connection,
 )
-from custom_components.solarmax.connection import LinkClosed, LinkTimeout, SolarmaxLink
+from custom_components.solarmax.connection import (
+    EngineState,
+    LinkClosed,
+    LinkTimeout,
+    SolarmaxLink,
+)
 from custom_components.solarmax.const import (
     CONF_ADDRESS,
     CONF_DEVICE_NAME,
     CONF_HOST,
     CONF_NIGHT_KEEP_VALUES,
     CONF_PORT,
+    CONF_RESPONSE_TIMEOUT,
     CONF_TWILIGHT_ELEVATION_THRESHOLD,
     CONF_UPDATE_INTERVAL,
     CONF_VERIFY_CHECKSUM,
+    DEFAULT_NIGHT_KEEP_VALUES,
+    DEFAULT_RESPONSE_TIMEOUT,
+    DEFAULT_TWILIGHT_ELEVATION_THRESHOLD,
+    DEFAULT_UPDATE_INTERVAL,
+    DEFAULT_VERIFY_CHECKSUM,
     DOMAIN,
+    SUBENTRY_TYPE_INVERTER,
 )
 from custom_components.solarmax.protocol import build_request, calculate_checksum
+from tests.helpers import endpoint_entry
 
 _LINK_REQUEST = "custom_components.solarmax.configuration.SolarmaxLink.request"
 _LINK_CLOSE = "custom_components.solarmax.configuration.SolarmaxLink.close"
 
 
-@asynccontextmanager
-async def _open_handoff() -> AsyncIterator[None]:
-    yield
+def _online_runtime(subentry_ids, *, faulted=()) -> MagicMock:
+    """A coordinator-shaped runtime stub: async handoff and a snapshot map."""
+    runtime = MagicMock()
+    handoff = MagicMock()
+    handoff.return_value.__aenter__ = AsyncMock()
+    handoff.return_value.__aexit__ = AsyncMock(return_value=False)
+    runtime.validation_handoff = handoff
+    runtime.async_refresh_repair_issue = MagicMock()
+    runtime.data = {
+        subentry_id: SimpleNamespace(
+            state=EngineState.OFFLINE_FAULT
+            if subentry_id in faulted
+            else EngineState.ONLINE
+        )
+        for subentry_id in subentry_ids
+    }
+    return runtime
 
 
 @pytest.fixture
 def configured_entry(hass):
-    entry = _configured_endpoint_entry(host="192.0.2.10", port=12345, address=1)
-    engine = MagicMock()
-    engine.validation_handoff.side_effect = _open_handoff
-    engine.close = AsyncMock()
-    entry.runtime_data = SimpleNamespace(engine=engine)
+    entry = endpoint_entry(host="192.0.2.10", port=12345, inverters=(1,))
     entry.add_to_hass(hass)
+    entry.runtime_data = _online_runtime(set(entry.subentries))
     return entry
 
 
 @pytest.fixture
 def reconfigure_io(hass):
     with (
-        patch("custom_components.solarmax.config_flow.validate_connection") as probe,
+        patch("custom_components.solarmax.configuration.validate_connection") as probe,
         patch.object(hass.config_entries, "async_reload", return_value=True) as reload,
     ):
         yield probe, reload
@@ -94,56 +119,24 @@ async def _submit_options(
     *,
     update_interval: int | None = None,
     verify_checksum: bool | None = None,
-    twilight_elevation_threshold: float | None = None,
-    night_keep_values: bool | None = None,
+    response_timeout: float | None = None,
 ) -> ConfigFlowResult:
     """Submit the current preferences with selected overrides."""
     values = {
         CONF_UPDATE_INTERVAL: entry.options[CONF_UPDATE_INTERVAL],
         CONF_VERIFY_CHECKSUM: entry.options[CONF_VERIFY_CHECKSUM],
-        CONF_TWILIGHT_ELEVATION_THRESHOLD: entry.options[
-            CONF_TWILIGHT_ELEVATION_THRESHOLD
-        ],
-        CONF_NIGHT_KEEP_VALUES: entry.options[CONF_NIGHT_KEEP_VALUES],
+        CONF_RESPONSE_TIMEOUT: entry.options[CONF_RESPONSE_TIMEOUT],
     }
     overrides = {
         CONF_UPDATE_INTERVAL: update_interval,
         CONF_VERIFY_CHECKSUM: verify_checksum,
-        CONF_TWILIGHT_ELEVATION_THRESHOLD: twilight_elevation_threshold,
-        CONF_NIGHT_KEEP_VALUES: night_keep_values,
+        CONF_RESPONSE_TIMEOUT: response_timeout,
     }
     values.update({key: value for key, value in overrides.items() if value is not None})
     form = await hass.config_entries.options.async_init(entry.entry_id)
     return await hass.config_entries.options.async_configure(
         form["flow_id"], user_input=values
     )
-
-
-async def test_reconfigure_name_only_preserves_entities(
-    hass, configured_entry, reconfigure_io
-):
-    probe, reload = reconfigure_io
-    devices = dr.async_get(hass)
-    device = devices.async_get_or_create(
-        config_entry_id=configured_entry.entry_id,
-        identifiers={(DOMAIN, configured_entry.entry_id)},
-        name="Existing inverter",
-    )
-    entities = er.async_get(hass)
-    entity = entities.async_get_or_create(
-        "sensor",
-        DOMAIN,
-        f"{configured_entry.entry_id}-pac",
-        config_entry=configured_entry,
-        device_id=device.id,
-    )
-    result = await _submit_reconfigure(hass, configured_entry, device_name="Garage")
-    assert result["type"] is FlowResultType.ABORT
-    assert configured_entry.title == configured_entry.data[CONF_DEVICE_NAME] == "Garage"
-    assert devices.async_get(device.id).name == "Garage"
-    assert entities.async_get(entity.entity_id) == entity
-    probe.assert_not_awaited()
-    reload.assert_not_awaited()
 
 
 async def test_reconfigure_noop(hass, configured_entry, reconfigure_io):
@@ -157,17 +150,69 @@ async def test_reconfigure_noop(hass, configured_entry, reconfigure_io):
 
 async def test_reconfigure_endpoint_success(hass, configured_entry, reconfigure_io):
     probe, reload = reconfigure_io
-    result = await _submit_reconfigure(
-        hass, configured_entry, host="192.0.2.99", address=7
-    )
+    result = await _submit_reconfigure(hass, configured_entry, host="192.0.2.99")
     assert result["type"] is FlowResultType.ABORT
     assert configured_entry.unique_id == "192.0.2.99:12345"
     assert configured_entry.options == OPTION_DEFAULTS
     probe.assert_awaited_once_with(
-        host="192.0.2.99", port=12345, address=7, verify_checksum=True
+        host="192.0.2.99",
+        port=12345,
+        address=1,
+        verify_checksum=True,
+        response_timeout=DEFAULT_RESPONSE_TIMEOUT,
     )
-    configured_entry.runtime_data.engine.validation_handoff.assert_called_once()
+    configured_entry.runtime_data.validation_handoff.assert_called_once()
     reload.assert_awaited_once_with(configured_entry.entry_id)
+
+
+async def test_reconfigure_probes_every_inverter(hass, reconfigure_io):
+    """The endpoint probe verifies every inverter behind the shared bus."""
+    probe, reload = reconfigure_io
+    entry = endpoint_entry(host="192.0.2.10", port=12345, inverters=(1, 2))
+    entry.add_to_hass(hass)
+    entry.runtime_data = _online_runtime(set(entry.subentries))
+
+    result = await _submit_reconfigure(hass, entry, host="192.0.2.99")
+
+    assert result["type"] is FlowResultType.ABORT
+    assert result["reason"] == "reconfigure_successful"
+    assert probe.await_count == 2
+    assert sorted(call.kwargs["address"] for call in probe.await_args_list) == [1, 2]
+    reload.assert_awaited_once_with(entry.entry_id)
+
+
+async def test_reconfigure_fails_when_a_healthy_inverter_is_silent(
+    hass, reconfigure_io
+):
+    """A non-faulted inverter that stops answering blocks the endpoint change."""
+    probe, reload = reconfigure_io
+    probe.side_effect = [None, CannotConnect]
+    entry = endpoint_entry(host="192.0.2.10", port=12345, inverters=(1, 2))
+    entry.add_to_hass(hass)
+    entry.runtime_data = _online_runtime(set(entry.subentries))
+
+    result = await _submit_reconfigure(hass, entry, host="192.0.2.99")
+
+    assert result["type"] is FlowResultType.FORM
+    assert result["errors"] == {"base": "cannot_connect"}
+    assert entry.data[CONF_HOST] == "192.0.2.10"
+    reload.assert_not_awaited()
+
+
+async def test_reconfigure_tolerates_a_faulted_inverter(hass, reconfigure_io):
+    """A dead sibling must not make the endpoint uneditable during recovery."""
+    probe, reload = reconfigure_io
+    probe.side_effect = [None, CannotConnect]
+    entry = endpoint_entry(host="192.0.2.10", port=12345, inverters=(1, 2))
+    entry.add_to_hass(hass)
+    faulted = {s.subentry_id for s in entry.subentries.values() if s.unique_id == "2"}
+    entry.runtime_data = _online_runtime(set(entry.subentries), faulted=faulted)
+
+    result = await _submit_reconfigure(hass, entry, host="192.0.2.99")
+
+    assert result["type"] is FlowResultType.ABORT
+    assert result["reason"] == "reconfigure_successful"
+    reload.assert_awaited_once_with(entry.entry_id)
 
 
 async def test_reconfigure_failed_probe(hass, configured_entry, reconfigure_io):
@@ -177,7 +222,6 @@ async def test_reconfigure_failed_probe(hass, configured_entry, reconfigure_io):
     assert result["errors"] == {"base": "cannot_connect"}
     assert configured_entry.data[CONF_HOST] == "192.0.2.10"
     reload.assert_not_awaited()
-    configured_entry.runtime_data.engine.close.assert_not_awaited()
 
 
 @pytest.mark.parametrize("port", [0, 65536])
@@ -232,29 +276,6 @@ async def test_reconfigure_without_runtime(
     assert reload.await_count == (disabled is None)
 
 
-async def test_disabled_reconfigure_updates_device_name(
-    hass, configured_entry, reconfigure_io
-):
-    """A disabled endpoint edit still updates the existing device display name."""
-    devices = dr.async_get(hass)
-    device = devices.async_get_or_create(
-        config_entry_id=configured_entry.entry_id,
-        identifiers={(DOMAIN, configured_entry.entry_id)},
-        name="Existing inverter",
-    )
-    object.__setattr__(configured_entry, "disabled_by", ConfigEntryDisabler.USER)
-
-    result = await _submit_reconfigure(
-        hass,
-        configured_entry,
-        host="192.0.2.99",
-        device_name="Garage",
-    )
-
-    assert result["type"] is FlowResultType.ABORT
-    assert devices.async_get(device.id).name == "Garage"
-
-
 @pytest.mark.parametrize(
     "failure", [False, RuntimeError("activation"), OperationNotAllowed("unload")]
 )
@@ -263,7 +284,6 @@ async def test_reconfigure_reload_failure_rolls_back(
     hass, configured_entry, reconfigure_io, failure, runtime_survives
 ):
     _, reload = reconfigure_io
-    previous_runtime = configured_entry.runtime_data
     previous_data = dict(configured_entry.data)
     previous_options = dict(configured_entry.options)
     previous_title = configured_entry.title
@@ -284,16 +304,13 @@ async def test_reconfigure_reload_failure_rolls_back(
         return failure
 
     reload.side_effect = activate
-    result = await _submit_reconfigure(
-        hass, configured_entry, host="192.0.2.99", device_name="New"
-    )
+    result = await _submit_reconfigure(hass, configured_entry, host="192.0.2.99")
     assert result["errors"] == {"base": "reload_failed"}
     assert dict(configured_entry.data) == previous_data
     assert dict(configured_entry.options) == previous_options
     assert configured_entry.title == previous_title
     assert configured_entry.unique_id == previous_id
     assert reload.await_count == (1 if runtime_survives else 2)
-    previous_runtime.engine.close.assert_not_awaited()
 
 
 async def test_reconfigure_retry_after_failed_unload(
@@ -379,45 +396,9 @@ async def test_reconfigure_repeated_cancellation_finishes_transaction(
     assert not configuration_mutation_lock(hass).locked()
 
 
-async def test_reconfigure_rollback_cannot_overwrite_overlapping_rename(
-    hass, configured_entry, reconfigure_io
-):
-    _, reload = reconfigure_io
-    started, release = asyncio.Event(), asyncio.Event()
-    rename_form = await hass.config_entries.flow.async_init(
-        DOMAIN,
-        context={
-            "source": config_entries.SOURCE_RECONFIGURE,
-            "entry_id": configured_entry.entry_id,
-        },
-    )
-    rename_data = dict(configured_entry.data) | {CONF_DEVICE_NAME: "Garage"}
-
-    async def fail(entry_id):
-        started.set()
-        await release.wait()
-        return False
-
-    reload.side_effect = fail
-    connection = asyncio.create_task(
-        _submit_reconfigure(hass, configured_entry, host="192.0.2.99")
-    )
-    await asyncio.wait_for(started.wait(), 2)
-    rename = asyncio.create_task(
-        hass.config_entries.flow.async_configure(rename_form["flow_id"], rename_data)
-    )
-    await asyncio.sleep(0)
-    assert not rename.done()
-    release.set()
-    await connection
-    await rename
-    assert configured_entry.data[CONF_HOST] == "192.0.2.10"
-    assert configured_entry.data[CONF_DEVICE_NAME] == configured_entry.title == "Garage"
-
-
 def test_split_entry_input_separates_connection_data_from_options() -> None:
-    """Config entry values are partitioned by their canonical ownership."""
-    data, options = split_entry_input(
+    """Setup values are partitioned into endpoint data, options, and inverter."""
+    data, options, inverter = split_entry_input(
         {
             CONF_HOST: "192.0.2.10",
             CONF_PORT: 12345,
@@ -425,20 +406,21 @@ def test_split_entry_input_separates_connection_data_from_options() -> None:
             CONF_DEVICE_NAME: "Roof",
             CONF_UPDATE_INTERVAL: 45,
             CONF_VERIFY_CHECKSUM: False,
+            CONF_RESPONSE_TIMEOUT: 4.5,
             CONF_TWILIGHT_ELEVATION_THRESHOLD: 4.5,
             CONF_NIGHT_KEEP_VALUES: True,
         }
     )
 
-    assert data == {
-        CONF_HOST: "192.0.2.10",
-        CONF_PORT: 12345,
-        CONF_ADDRESS: 7,
-        CONF_DEVICE_NAME: "Roof",
-    }
+    assert data == {CONF_HOST: "192.0.2.10", CONF_PORT: 12345}
     assert options == {
         CONF_UPDATE_INTERVAL: 45,
         CONF_VERIFY_CHECKSUM: False,
+        CONF_RESPONSE_TIMEOUT: 4.5,
+    }
+    assert inverter == {
+        CONF_ADDRESS: 7,
+        CONF_DEVICE_NAME: "Roof",
         CONF_TWILIGHT_ELEVATION_THRESHOLD: 4.5,
         CONF_NIGHT_KEEP_VALUES: True,
     }
@@ -455,21 +437,8 @@ def _response(data: str, *, address: int = 1, checksum: str | None = None) -> st
 def _configured_endpoint_entry(
     *, host: str, port: int, address: int
 ) -> MockConfigEntry:
-    """Create a current-version entry for one inverter endpoint."""
-    return MockConfigEntry(
-        domain=DOMAIN,
-        title="Existing inverter",
-        data={
-            CONF_HOST: host,
-            CONF_PORT: port,
-            CONF_ADDRESS: address,
-            CONF_DEVICE_NAME: "Existing inverter",
-        },
-        options=dict(OPTION_DEFAULTS),
-        unique_id=endpoint_unique_id(host, port),
-        version=2,
-        minor_version=1,
-    )
+    """A version 3 endpoint entry with a single inverter subentry at `address`."""
+    return endpoint_entry(host=host, port=port, inverters=(address,))
 
 
 async def _submit_user_flow(
@@ -486,7 +455,11 @@ async def _submit_user_flow(
             CONF_PORT: port,
             CONF_ADDRESS: address,
             CONF_DEVICE_NAME: "New inverter",
-            **OPTION_DEFAULTS,
+            CONF_UPDATE_INTERVAL: DEFAULT_UPDATE_INTERVAL,
+            CONF_VERIFY_CHECKSUM: DEFAULT_VERIFY_CHECKSUM,
+            CONF_RESPONSE_TIMEOUT: DEFAULT_RESPONSE_TIMEOUT,
+            CONF_NIGHT_KEEP_VALUES: DEFAULT_NIGHT_KEEP_VALUES,
+            CONF_TWILIGHT_ELEVATION_THRESHOLD: DEFAULT_TWILIGHT_ELEVATION_THRESHOLD,
         },
     )
 
@@ -523,18 +496,28 @@ async def test_setup_uses_endpoint_unique_id(
 async def test_setup_creates_split_data_and_options(
     mock_request: AsyncMock, hass: HomeAssistant
 ) -> None:
-    """Connection identity and preferences use their canonical stores."""
-    mock_request.return_value = _response("PAC=03E8", address=3)
+    """Connection identity, options, and the first inverter use their stores."""
+    mock_request.return_value = _response("PAC=03E8")
 
-    result = await _submit_user_flow(hass, host="192.0.2.7", port=12345, address=3)
+    result = await _submit_user_flow(hass, host="192.0.2.7", port=12345, address=1)
 
-    assert result["data"] == {
-        CONF_HOST: "192.0.2.7",
-        CONF_PORT: 12345,
-        CONF_ADDRESS: 3,
-        CONF_DEVICE_NAME: "New inverter",
+    entry = result["result"]
+    assert entry.data == {CONF_HOST: "192.0.2.7", CONF_PORT: 12345}
+    assert entry.options == OPTION_DEFAULTS
+    assert entry.title == "192.0.2.7"
+    subentries = [
+        subentry
+        for subentry in entry.subentries.values()
+        if subentry.subentry_type == SUBENTRY_TYPE_INVERTER
+    ]
+    assert len(subentries) == 1
+    assert subentries[0].unique_id == "1"
+    assert set(subentries[0].data) == {
+        CONF_ADDRESS,
+        CONF_DEVICE_NAME,
+        CONF_TWILIGHT_ELEVATION_THRESHOLD,
+        CONF_NIGHT_KEEP_VALUES,
     }
-    assert result["options"] == OPTION_DEFAULTS
 
 
 async def test_setup_serializes_concurrent_claims_for_endpoint(
@@ -608,13 +591,8 @@ async def test_form_successful_connection(mock_request, hass: HomeAssistant) -> 
     )
 
     assert result2["type"] == FlowResultType.CREATE_ENTRY
-    assert result2["title"] == "Test Inverter"
-    assert result2["data"] == {
-        CONF_HOST: "192.168.1.100",
-        CONF_PORT: 12345,
-        CONF_ADDRESS: 1,
-        CONF_DEVICE_NAME: "Test Inverter",
-    }
+    assert result2["title"] == "192.168.1.100"
+    assert result2["data"] == {CONF_HOST: "192.168.1.100", CONF_PORT: 12345}
     assert result2["options"] == OPTION_DEFAULTS
 
 
@@ -849,6 +827,22 @@ async def test_options_form_contains_only_preferences(hass, configured_entry):
     assert {str(key) for key in result["data_schema"].schema} == set(OPTION_KEYS)
 
 
+@pytest.mark.parametrize("value", [0.1, 11])
+async def test_options_response_timeout_out_of_range(hass, configured_entry, value):
+    """The response timeout option is bounded by its schema."""
+    form = await hass.config_entries.options.async_init(configured_entry.entry_id)
+
+    with pytest.raises(data_entry_flow.InvalidData):
+        await hass.config_entries.options.async_configure(
+            form["flow_id"],
+            {
+                CONF_UPDATE_INTERVAL: 30,
+                CONF_VERIFY_CHECKSUM: True,
+                CONF_RESPONSE_TIMEOUT: value,
+            },
+        )
+
+
 async def test_disabled_v1_options_form_preserves_legacy_values(hass):
     """Options remain editable before Home Assistant migrates a disabled entry."""
     legacy_options = {
@@ -875,12 +869,14 @@ async def test_disabled_v1_options_form_preserves_legacy_values(hass):
 
     result = await hass.config_entries.options.async_init(entry.entry_id)
 
-    assert {
-        str(key): key.default() for key in result["data_schema"].schema
-    } == legacy_options
+    assert {str(key): key.default() for key in result["data_schema"].schema} == {
+        CONF_UPDATE_INTERVAL: 90,
+        CONF_VERIFY_CHECKSUM: False,
+        CONF_RESPONSE_TIMEOUT: DEFAULT_RESPONSE_TIMEOUT,
+    }
 
 
-async def test_disabled_v1_reconfigure_defaults_missing_address(hass):
+async def test_disabled_v1_reconfigure_remains_usable(hass):
     """Reconfiguration remains usable before a disabled entry can migrate."""
     entry = MockConfigEntry(
         domain=DOMAIN,
@@ -904,7 +900,7 @@ async def test_disabled_v1_reconfigure_defaults_missing_address(hass):
     )
     defaults = {str(key): key.default() for key in form["data_schema"].schema}
 
-    assert defaults[CONF_ADDRESS] == 1
+    assert set(defaults) == {CONF_HOST, CONF_PORT}
     result = await hass.config_entries.flow.async_configure(form["flow_id"], defaults)
     assert result["type"] is FlowResultType.ABORT
 
@@ -920,19 +916,17 @@ async def test_options_save_reloads_without_connection_probe(
         configured_entry,
         update_interval=90,
         verify_checksum=False,
-        twilight_elevation_threshold=4,
-        night_keep_values=True,
+        response_timeout=5.0,
     )
 
     assert result["type"] is FlowResultType.CREATE_ENTRY
     assert configured_entry.options == {
         CONF_UPDATE_INTERVAL: 90,
         CONF_VERIFY_CHECKSUM: False,
-        CONF_TWILIGHT_ELEVATION_THRESHOLD: 4,
-        CONF_NIGHT_KEEP_VALUES: True,
+        CONF_RESPONSE_TIMEOUT: 5.0,
     }
     validate.assert_not_awaited()
-    configured_entry.runtime_data.engine.validation_handoff.assert_not_called()
+    configured_entry.runtime_data.validation_handoff.assert_not_called()
     reload_entry.assert_awaited_once_with(configured_entry.entry_id)
 
 
@@ -995,7 +989,7 @@ async def test_options_noop_does_not_update_or_reload(
     update.assert_not_called()
     reload_entry.assert_not_awaited()
     validate.assert_not_awaited()
-    configured_entry.runtime_data.engine.validation_handoff.assert_not_called()
+    configured_entry.runtime_data.validation_handoff.assert_not_called()
 
 
 async def test_options_disabled_entry_saves_without_reload(
