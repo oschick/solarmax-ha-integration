@@ -11,7 +11,7 @@ from homeassistant.config_entries import ConfigSubentry
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers import device_registry as dr
 from homeassistant.helpers.entity import DeviceInfo, generate_entity_id
-from homeassistant.helpers.entity_platform import AddEntitiesCallback
+from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 from homeassistant.util import dt as dt_util
 
@@ -52,7 +52,7 @@ _SYS_OFFLINE_STATE_MAP: dict[EngineState, str] = {
 async def async_setup_entry(
     hass: HomeAssistant,
     entry: SolarmaxConfigEntry,
-    async_add_entities: AddEntitiesCallback,
+    async_add_entities: AddConfigEntryEntitiesCallback,
 ) -> None:
     """Set up one sensor set per inverter subentry."""
     coordinator: SolarmaxCoordinator = entry.runtime_data
@@ -62,7 +62,7 @@ async def async_setup_entry(
                 SolarmaxSensor(coordinator, subentry, description)
                 for description in SENSOR_TYPES
             ],
-            config_subentry_id=subentry_id,  # type: ignore[call-arg]
+            config_subentry_id=subentry_id,
         )
         entry.async_on_unload(
             coordinator.async_add_listener(
