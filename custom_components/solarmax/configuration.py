@@ -316,25 +316,27 @@ def find_address_conflict(
 async def validate_endpoint(entry: ConfigEntry, host: str, port: int) -> None:
     """Probe a candidate endpoint with the entry's inverters.
 
-    Every inverter that is not confirmed to be in fault must answer, because
-    those prove the new host and port reach the same bus. With no runtime
-    snapshot for an inverter, it is not confirmed faulted, so it must answer
-    too. Inverters already confirmed in fault are what the caller is trying
-    to recover; a dead one must not make the endpoint uneditable, so their
-    silence is tolerated, provided at least one inverter overall answers.
+    Every inverter that is not currently in fault must answer, because those
+    prove the new host and port reach the same bus. Inverters already in
+    fault are what the caller is trying to recover; a dead one must not make
+    the endpoint uneditable, so their silence is tolerated. When every
+    inverter is in fault, or no runtime exists, at least one must answer.
     Raises CannotConnect otherwise.
     """
     subentries = inverter_subentries(entry)
     if not subentries:
         return
     runtime = getattr(entry, "runtime_data", None)
-    snapshots = getattr(runtime, "data", None) or {}
-    healthy = {
-        subentry_id
-        for subentry_id in subentries
-        if snapshots.get(subentry_id) is None
-        or snapshots[subentry_id].state is not EngineState.OFFLINE_FAULT
-    }
+    snapshots = getattr(runtime, "data", None)
+    if snapshots is None:
+        healthy: set[str] = set()
+    else:
+        healthy = {
+            subentry_id
+            for subentry_id in subentries
+            if subentry_id not in snapshots
+            or snapshots[subentry_id].state is not EngineState.OFFLINE_FAULT
+        }
     verify_checksum = entry_option(entry, CONF_VERIFY_CHECKSUM, DEFAULT_VERIFY_CHECKSUM)
     response_timeout = entry_option(
         entry, CONF_RESPONSE_TIMEOUT, DEFAULT_RESPONSE_TIMEOUT

@@ -113,13 +113,18 @@ async def test_validate_endpoint_needs_one_answer_when_all_faulted(hass):
         await validate_endpoint(entry, "192.0.2.20", 12345)
 
 
-async def test_validate_endpoint_without_runtime_requires_all(hass):
+async def test_validate_endpoint_without_runtime_needs_one_answer(hass):
     entry = endpoint_entry(host="192.0.2.10", port=12345, inverters=(1, 2))
     entry.add_to_hass(hass)
+    with patch(
+        "custom_components.solarmax.configuration.validate_connection",
+        side_effect=[None, CannotConnect],
+    ):
+        await validate_endpoint(entry, "192.0.2.20", 12345)
     with (
         patch(
             "custom_components.solarmax.configuration.validate_connection",
-            side_effect=[None, CannotConnect],
+            side_effect=[CannotConnect, CannotConnect],
         ),
         pytest.raises(CannotConnect),
     ):
