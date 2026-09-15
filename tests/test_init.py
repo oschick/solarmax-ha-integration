@@ -102,7 +102,7 @@ async def test_migrate_v1_splits_connection_data_and_options(hass):
         CONF_TWILIGHT_ELEVATION_THRESHOLD: DEFAULT_TWILIGHT_ELEVATION_THRESHOLD,
         CONF_NIGHT_KEEP_VALUES: True,
     }
-    assert entry.unique_id == "192.0.2.10:12345:1"
+    assert entry.unique_id == "192.0.2.10:12345"
     assert (entry.version, entry.minor_version) == (2, 1)
 
 

@@ -123,7 +123,7 @@ class SolarmaxConnectionRepairFlow(RepairsFlow):
     ) -> data_entry_flow.FlowResult:
         """Serialize probing and activation with all other configuration flows."""
         host, port = values[CONF_HOST], values[CONF_PORT]
-        target_endpoint = endpoint_unique_id(host, port, entry.data[CONF_ADDRESS])
+        target_endpoint = endpoint_unique_id(host, port)
         if find_endpoint_conflict(
             self.hass, host, port, exclude_entry_id=entry.entry_id
         ):

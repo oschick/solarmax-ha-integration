@@ -10,27 +10,30 @@ from dataclasses import dataclass
 from typing import Any, Self
 
 import voluptuous as vol
-from homeassistant.config_entries import ConfigEntry
+from homeassistant.config_entries import ConfigEntry, ConfigSubentry
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers import device_registry as dr
 
-from .connection import LinkClosed, LinkTimeout, SolarmaxLink
+from .connection import EngineState, LinkClosed, LinkTimeout, SolarmaxLink
 from .const import (
     CONF_ADDRESS,
     CONF_DEVICE_NAME,
     CONF_HOST,
     CONF_NIGHT_KEEP_VALUES,
     CONF_PORT,
+    CONF_RESPONSE_TIMEOUT,
     CONF_TWILIGHT_ELEVATION_THRESHOLD,
     CONF_UPDATE_INTERVAL,
     CONF_VERIFY_CHECKSUM,
     DEFAULT_NIGHT_KEEP_VALUES,
     DEFAULT_PORT,
+    DEFAULT_RESPONSE_TIMEOUT,
     DEFAULT_TWILIGHT_ELEVATION_THRESHOLD,
     DEFAULT_UPDATE_INTERVAL,
     DEFAULT_VERIFY_CHECKSUM,
     DOMAIN,
+    SUBENTRY_TYPE_INVERTER,
 )
 from .protocol import ProtocolError, build_request, parse_response
 
@@ -48,6 +51,16 @@ OPTION_KEYS = (
 OPTION_DEFAULTS = {
     CONF_UPDATE_INTERVAL: DEFAULT_UPDATE_INTERVAL,
     CONF_VERIFY_CHECKSUM: DEFAULT_VERIFY_CHECKSUM,
+    CONF_TWILIGHT_ELEVATION_THRESHOLD: DEFAULT_TWILIGHT_ELEVATION_THRESHOLD,
+    CONF_NIGHT_KEEP_VALUES: DEFAULT_NIGHT_KEEP_VALUES,
+}
+INVERTER_KEYS = (
+    CONF_ADDRESS,
+    CONF_DEVICE_NAME,
+    CONF_TWILIGHT_ELEVATION_THRESHOLD,
+    CONF_NIGHT_KEEP_VALUES,
+)
+INVERTER_DEFAULTS = {
     CONF_TWILIGHT_ELEVATION_THRESHOLD: DEFAULT_TWILIGHT_ELEVATION_THRESHOLD,
     CONF_NIGHT_KEEP_VALUES: DEFAULT_NIGHT_KEEP_VALUES,
 }
@@ -89,10 +102,15 @@ async def validation_handoff(entry: ConfigEntry) -> AsyncIterator[None]:
 
 
 @callback
-def update_device_name(hass: HomeAssistant, entry_id: str, device_name: str) -> None:
-    """Update the device display name without changing entity identity."""
+def update_device_name(
+    hass: HomeAssistant, identifier_id: str, device_name: str
+) -> None:
+    """Rename the device identified by (DOMAIN, identifier_id).
+
+    A subentry ID from 1.5.0 on.
+    """
     registry = dr.async_get(hass)
-    device = registry.async_get_device(identifiers={(DOMAIN, entry_id)})
+    device = registry.async_get_device(identifiers={(DOMAIN, identifier_id)})
     if device is not None:
         registry.async_update_device(device.id, name=device_name)
 
@@ -204,14 +222,24 @@ def find_endpoint_conflict(
     )
 
 
+def endpoint_unique_id(host: str, port: int) -> str:
+    """Return the stable unique ID for a TCP endpoint shared by its inverters."""
+    return f"{host}:{port}"
+
+
 async def validate_connection(
-    *, host: str, port: int, address: int, verify_checksum: bool
+    *,
+    host: str,
+    port: int,
+    address: int,
+    verify_checksum: bool,
+    response_timeout: float = DEFAULT_RESPONSE_TIMEOUT,
 ) -> None:
-    """Validate an endpoint with a short PAC request."""
-    link = SolarmaxLink(host, port)
+    """Validate one inverter address with a short PAC request."""
+    link = SolarmaxLink(host, port, response_timeout=response_timeout)
     try:
         raw = await link.request(build_request(address, ["PAC"]))
-        parse_response(raw, verify_checksum)
+        parse_response(raw, verify_checksum, expected_address=address)
     except (LinkTimeout, LinkClosed, ProtocolError, OSError, UnicodeError) as err:
         raise CannotConnect from err
     finally:
@@ -233,6 +261,98 @@ def entry_option(entry: ConfigEntry, key: str, default: Any) -> Any:
     return entry.options.get(key, entry.data.get(key, default))
 
 
-def endpoint_unique_id(host: str, port: int, address: int) -> str:
-    """Return the stable unique ID for an inverter endpoint."""
-    return f"{host}:{port}:{address}"
+def subentry_option(subentry: ConfigSubentry, key: str, default: Any) -> Any:
+    """Return a per-inverter preference stored in subentry data."""
+    return subentry.data.get(key, default)
+
+
+def inverter_subentries(entry: ConfigEntry) -> dict[str, ConfigSubentry]:
+    """Return the entry's inverter subentries keyed by subentry ID."""
+    return {
+        subentry_id: subentry
+        for subentry_id, subentry in entry.subentries.items()
+        if subentry.subentry_type == SUBENTRY_TYPE_INVERTER
+    }
+
+
+def inverter_fingerprint(entry: ConfigEntry) -> frozenset[tuple[str, int, float, bool]]:
+    """Runtime-relevant identity of the inverter set; a change needs a reload."""
+    return frozenset(
+        (
+            subentry_id,
+            int(subentry.data[CONF_ADDRESS]),
+            float(
+                subentry_option(
+                    subentry,
+                    CONF_TWILIGHT_ELEVATION_THRESHOLD,
+                    DEFAULT_TWILIGHT_ELEVATION_THRESHOLD,
+                )
+            ),
+            bool(
+                subentry_option(
+                    subentry, CONF_NIGHT_KEEP_VALUES, DEFAULT_NIGHT_KEEP_VALUES
+                )
+            ),
+        )
+        for subentry_id, subentry in inverter_subentries(entry).items()
+    )
+
+
+def find_address_conflict(
+    entry: ConfigEntry, address: int, *, exclude_subentry_id: str | None = None
+) -> ConfigSubentry | None:
+    """Return the inverter subentry that already uses the address."""
+    return next(
+        (
+            subentry
+            for subentry_id, subentry in inverter_subentries(entry).items()
+            if subentry_id != exclude_subentry_id
+            and int(subentry.data[CONF_ADDRESS]) == address
+        ),
+        None,
+    )
+
+
+async def validate_endpoint(entry: ConfigEntry, host: str, port: int) -> None:
+    """Probe a candidate endpoint with the entry's inverters.
+
+    Every inverter that is not confirmed to be in fault must answer, because
+    those prove the new host and port reach the same bus. With no runtime
+    snapshot for an inverter, it is not confirmed faulted, so it must answer
+    too. Inverters already confirmed in fault are what the caller is trying
+    to recover; a dead one must not make the endpoint uneditable, so their
+    silence is tolerated, provided at least one inverter overall answers.
+    Raises CannotConnect otherwise.
+    """
+    subentries = inverter_subentries(entry)
+    if not subentries:
+        return
+    runtime = getattr(entry, "runtime_data", None)
+    snapshots = getattr(runtime, "data", None) or {}
+    healthy = {
+        subentry_id
+        for subentry_id in subentries
+        if snapshots.get(subentry_id) is None
+        or snapshots[subentry_id].state is not EngineState.OFFLINE_FAULT
+    }
+    verify_checksum = entry_option(entry, CONF_VERIFY_CHECKSUM, DEFAULT_VERIFY_CHECKSUM)
+    response_timeout = entry_option(
+        entry, CONF_RESPONSE_TIMEOUT, DEFAULT_RESPONSE_TIMEOUT
+    )
+    answered = 0
+    for subentry_id, subentry in subentries.items():
+        try:
+            await validate_connection(
+                host=host,
+                port=port,
+                address=int(subentry.data[CONF_ADDRESS]),
+                verify_checksum=verify_checksum,
+                response_timeout=response_timeout,
+            )
+        except CannotConnect:
+            if subentry_id in healthy:
+                raise
+            continue
+        answered += 1
+    if answered == 0:
+        raise CannotConnect

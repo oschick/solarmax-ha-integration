@@ -138,7 +138,7 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             async with configuration_mutation_lock(self.hass):
                 if find_endpoint_conflict(self.hass, host, port) is not None:
                     return self.async_abort(reason="already_configured")
-                await self.async_set_unique_id(endpoint_unique_id(host, port, address))
+                await self.async_set_unique_id(endpoint_unique_id(host, port))
                 self._abort_if_unique_id_configured()
                 try:
                     await validate_connection(
@@ -246,7 +246,7 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             data=data,
             options=entry.options,
             title=name,
-            unique_id=endpoint_unique_id(host, port, address),
+            unique_id=endpoint_unique_id(host, port),
         )
         if name_changed:
             update_device_name(self.hass, entry.entry_id, name)

@@ -70,9 +70,7 @@ class SolarmaxCoordinator(DataUpdateCoordinator[EngineSnapshot]):
         """Initialize the coordinator."""
         self._entry = entry
         self._endpoint_unique_id = endpoint_unique_id(
-            entry.data[CONF_HOST],
-            entry.data[CONF_PORT],
-            entry.data.get(CONF_ADDRESS, DEFAULT_ADDRESS),
+            entry.data[CONF_HOST], entry.data[CONF_PORT]
         )
 
         link = SolarmaxLink(
@@ -304,9 +302,7 @@ class SolarmaxCoordinator(DataUpdateCoordinator[EngineSnapshot]):
         if issue_data.get(REPAIR_PENDING) == 1:
             pending_endpoint = issue_data.get(REPAIR_PENDING_ENDPOINT)
             current_endpoint = endpoint_unique_id(
-                self._entry.data[CONF_HOST],
-                self._entry.data[CONF_PORT],
-                self._entry.data.get(CONF_ADDRESS, DEFAULT_ADDRESS),
+                self._entry.data[CONF_HOST], self._entry.data[CONF_PORT]
             )
             current_or_restored_runtime = self._endpoint_unique_id == current_endpoint
             if snapshot.state is EngineState.ONLINE and (

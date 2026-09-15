@@ -161,7 +161,7 @@ async def test_reconfigure_endpoint_success(hass, configured_entry, reconfigure_
         hass, configured_entry, host="192.0.2.99", address=7
     )
     assert result["type"] is FlowResultType.ABORT
-    assert configured_entry.unique_id == "192.0.2.99:12345:7"
+    assert configured_entry.unique_id == "192.0.2.99:12345"
     assert configured_entry.options == OPTION_DEFAULTS
     probe.assert_awaited_once_with(
         host="192.0.2.99", port=12345, address=7, verify_checksum=True
@@ -325,12 +325,12 @@ async def test_reconfigure_failed_restoration_attempted_once(
                 data=dict(configured_entry.data) | {CONF_HOST: "192.0.2.99"},
                 options=dict(configured_entry.options) | {CONF_UPDATE_INTERVAL: 90},
                 title="New",
-                unique_id="192.0.2.99:12345:1",
+                unique_id="192.0.2.99:12345",
             )
     assert configured_entry.data[CONF_HOST] == "192.0.2.10"
     assert configured_entry.options[CONF_UPDATE_INTERVAL] == 30
     assert configured_entry.title == "Existing inverter"
-    assert configured_entry.unique_id == "192.0.2.10:12345:1"
+    assert configured_entry.unique_id == "192.0.2.10:12345"
     assert reload.await_count == 2
 
 
@@ -444,9 +444,9 @@ def test_split_entry_input_separates_connection_data_from_options() -> None:
     }
 
 
-def _response(data: str, *, checksum: str | None = None) -> str:
+def _response(data: str, *, address: int = 1, checksum: str | None = None) -> str:
     """Build one structurally valid MaxComm response frame."""
-    response = "{01;FB;!!|64:" + data + "|$$$$}"
+    response = "{" + format(address, "02X") + ";FB;!!|64:" + data + "|$$$$}"
     response = response.replace("!!", format(len(response), "02X"))
     checksum_data = response[1:-5]
     return response.replace("$$$$", checksum or calculate_checksum(checksum_data))
@@ -466,7 +466,7 @@ def _configured_endpoint_entry(
             CONF_DEVICE_NAME: "Existing inverter",
         },
         options=dict(OPTION_DEFAULTS),
-        unique_id=endpoint_unique_id(host, port, address),
+        unique_id=endpoint_unique_id(host, port),
         version=2,
         minor_version=1,
     )
@@ -507,16 +507,16 @@ async def test_setup_rejects_same_endpoint_with_different_address(
 
 
 @patch.object(SolarmaxLink, "request", new_callable=AsyncMock)
-async def test_setup_uses_address_aware_unique_id(
+async def test_setup_uses_endpoint_unique_id(
     mock_request: AsyncMock, hass: HomeAssistant
 ) -> None:
-    """The inverter address participates in config entry identity."""
+    """The TCP endpoint, not the inverter address, is config entry identity."""
     mock_request.return_value = _response("PAC=03E8")
 
-    result = await _submit_user_flow(hass, host="192.0.2.6", port=12345, address=7)
+    result = await _submit_user_flow(hass, host="192.0.2.10", port=12345, address=1)
 
     assert result["type"] is FlowResultType.CREATE_ENTRY
-    assert result["result"].unique_id == "192.0.2.6:12345:7"
+    assert result["result"].unique_id == "192.0.2.10:12345"
 
 
 @patch.object(SolarmaxLink, "request", new_callable=AsyncMock)
@@ -524,7 +524,7 @@ async def test_setup_creates_split_data_and_options(
     mock_request: AsyncMock, hass: HomeAssistant
 ) -> None:
     """Connection identity and preferences use their canonical stores."""
-    mock_request.return_value = _response("PAC=03E8")
+    mock_request.return_value = _response("PAC=03E8", address=3)
 
     result = await _submit_user_flow(hass, host="192.0.2.7", port=12345, address=3)
 
@@ -628,7 +628,7 @@ async def test_validate_connection_closes_probe_link_on_success(
     fail the very next setup attempt) — must run even when the probe
     succeeds. Also pins that the configured address reaches the PAC probe.
     """
-    mock_request.return_value = _response("PAC=03E8")
+    mock_request.return_value = _response("PAC=03E8", address=2)
 
     await validate_connection(
         host="192.168.1.100",

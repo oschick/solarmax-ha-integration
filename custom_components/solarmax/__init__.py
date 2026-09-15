@@ -49,9 +49,7 @@ async def async_migrate_entry(hass: HomeAssistant, entry: SolarmaxConfigEntry) -
         entry,
         data=data,
         options=options,
-        unique_id=endpoint_unique_id(
-            data[CONF_HOST], data[CONF_PORT], data[CONF_ADDRESS]
-        ),
+        unique_id=endpoint_unique_id(data[CONF_HOST], data[CONF_PORT]),
         version=2,
         minor_version=1,
     )
