@@ -561,10 +561,9 @@ def test_translation_files_cover_reconfiguration_and_repair_flows():
     option_fields = {
         "update_interval",
         "verify_checksum",
-        "night_keep_values",
-        "twilight_elevation_threshold",
+        "response_timeout",
     }
-    reconfigure_fields = {"host", "port", "address", "device_name"}
+    reconfigure_fields = {"host", "port"}
     repair_abort_keys = {
         "entry_missing",
         "already_configured",

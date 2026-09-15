@@ -12,26 +12,24 @@
           "device_name": "Nom de l'appareil",
           "verify_checksum": "Vérifier le checksum de la réponse",
           "night_keep_values": "Conserver les valeurs des capteurs la nuit",
-          "twilight_elevation_threshold": "Seuil d'élévation crépusculaire (degrés)"
+          "twilight_elevation_threshold": "Seuil d'élévation crépusculaire (degrés)",
+          "response_timeout": "Délai de réponse (secondes)"
         },
         "data_description": {
-          "twilight_elevation_threshold": "Élévation du soleil en dessous de laquelle une déconnexion non annoncée est considérée comme attendue (déclenche également l'interrogation rapide à l'aube)."
+          "twilight_elevation_threshold": "Élévation du soleil en dessous de laquelle une déconnexion non annoncée est considérée comme attendue (déclenche également l'interrogation rapide à l'aube).",
+          "response_timeout": "Durée d'attente de chaque réponse de l'onduleur avant de la considérer comme absente."
         }
       },
       "reconfigure": {
         "title": "Modifier la connexion de l'onduleur",
-        "description": "L'onduleur doit être accessible pour enregistrer les modifications de connexion.",
+        "description": "Modifier le point de terminaison. Chaque onduleur actuellement en ligne doit répondre sur le nouvel hôte et port avant l'enregistrement.",
         "data": {
           "host": "Hôte",
-          "port": "Port",
-          "address": "Adresse de l'onduleur (1-249)",
-          "device_name": "Nom de l'appareil"
+          "port": "Port"
         },
         "data_description": {
           "host": "Adresse IP ou nom d'hôte de l'onduleur.",
-          "port": "Port TCP MaxComm utilisé par l'onduleur.",
-          "address": "Adresse MaxComm attribuée à l'onduleur.",
-          "device_name": "Nom de l'appareil affiché dans Home Assistant."
+          "port": "Port TCP MaxComm utilisé par l'onduleur."
         }
       }
     },
@@ -54,17 +52,60 @@
         "description": "Modifiez les préférences d'interrogation et des capteurs.",
         "data": {
           "update_interval": "Intervalle de mise à jour (secondes)",
-          "twilight_elevation_threshold": "Seuil d'élévation crépusculaire (degrés)",
           "verify_checksum": "Vérifier la somme de contrôle de la réponse",
-          "night_keep_values": "Conserver les valeurs des capteurs la nuit"
+          "response_timeout": "Délai de réponse (secondes)"
         },
         "data_description": {
-          "twilight_elevation_threshold": "Élévation du soleil en dessous de laquelle une déconnexion non annoncée est considérée comme attendue (déclenche également l'interrogation rapide à l'aube)."
+          "response_timeout": "Durée d'attente de chaque réponse de l'onduleur avant de la considérer comme absente."
         }
       }
     },
     "error": {
       "reload_failed": "Home Assistant n'a pas pu activer la nouvelle connexion. Les paramètres précédents ont été restaurés."
+    }
+  },
+  "config_subentries": {
+    "inverter": {
+      "entry_type": "Onduleur",
+      "initiate_flow": {
+        "user": "Ajouter un onduleur"
+      },
+      "step": {
+        "user": {
+          "title": "Ajouter un onduleur",
+          "description": "L'onduleur doit répondre sur ce point de terminaison avant d'être ajouté.",
+          "data": {
+            "address": "Adresse de l'onduleur (1-249)",
+            "device_name": "Nom de l'appareil",
+            "twilight_elevation_threshold": "Seuil d'élévation crépusculaire (degrés)",
+            "night_keep_values": "Conserver les valeurs des capteurs la nuit"
+          },
+          "data_description": {
+            "twilight_elevation_threshold": "Élévation du soleil en dessous de laquelle une déconnexion non annoncée est considérée comme attendue (déclenche également l'interrogation rapide à l'aube)."
+          }
+        },
+        "reconfigure": {
+          "title": "Modifier l'onduleur",
+          "description": "Une adresse modifiée doit répondre avant l'enregistrement. Le nom et les préférences sont enregistrés sans contacter l'onduleur.",
+          "data": {
+            "address": "Adresse de l'onduleur (1-249)",
+            "device_name": "Nom de l'appareil",
+            "twilight_elevation_threshold": "Seuil d'élévation crépusculaire (degrés)",
+            "night_keep_values": "Conserver les valeurs des capteurs la nuit"
+          },
+          "data_description": {
+            "twilight_elevation_threshold": "Élévation du soleil en dessous de laquelle une déconnexion non annoncée est considérée comme attendue (déclenche également l'interrogation rapide à l'aube)."
+          }
+        }
+      },
+      "error": {
+        "cannot_connect": "Échec de la connexion à l'onduleur",
+        "unknown": "Une erreur inattendue s'est produite"
+      },
+      "abort": {
+        "already_configured": "Un onduleur avec cette adresse est déjà configuré sur ce point de terminaison",
+        "reconfigure_successful": "La configuration de l'onduleur a été mise à jour."
+      }
     }
   },
   "issues": {
@@ -74,7 +115,7 @@
         "step": {
           "init": {
             "title": "Réparer la connexion de l'onduleur",
-            "description": "L'onduleur à {host}:{port} est inaccessible depuis {minutes} minutes en journée. Modifiez l'hôte ou le port pour tester une autre connexion.",
+            "description": "{inverters} à {host}:{port} est injoignable depuis {minutes} minutes en journée. Modifiez l'hôte ou le port pour tester une autre connexion. Les onduleurs encore en ligne doivent y répondre. Si un seul onduleur reste silencieux alors que les autres répondent, vérifiez son adresse ou retirez-le.",
             "data": {
               "host": "Hôte",
               "port": "Port"
@@ -93,6 +134,10 @@
           "issue_missing": "Le problème de réparation n'existe plus."
         }
       }
+    },
+    "no_inverter": {
+      "title": "Aucun onduleur configuré",
+      "description": "Le point de terminaison Solarmax {title} n'a aucun onduleur. Ouvrez l'intégration et choisissez Ajouter un onduleur."
     }
   },
   "entity": {

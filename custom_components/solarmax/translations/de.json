@@ -12,26 +12,24 @@
           "device_name": "Gerätename",
           "verify_checksum": "Antwort-Prüfsumme verifizieren",
           "night_keep_values": "Sensorwerte über Nacht beibehalten",
-          "twilight_elevation_threshold": "Dämmerungs-Höhenwinkelschwelle (Grad)"
+          "twilight_elevation_threshold": "Dämmerungs-Höhenwinkelschwelle (Grad)",
+          "response_timeout": "Antwort-Zeitüberschreitung (Sekunden)"
         },
         "data_description": {
-          "twilight_elevation_threshold": "Sonnenhöhenwinkel, unterhalb dessen eine unangekündigte Verbindungstrennung als erwartet gilt (startet außerdem die schnellere Abfrage in der Dämmerung)."
+          "twilight_elevation_threshold": "Sonnenhöhenwinkel, unterhalb dessen eine unangekündigte Verbindungstrennung als erwartet gilt (startet außerdem die schnellere Abfrage in der Dämmerung).",
+          "response_timeout": "Wie lange auf jede Antwort des Wechselrichters gewartet wird, bevor sie als ausgeblieben gilt."
         }
       },
       "reconfigure": {
         "title": "Wechselrichterverbindung ändern",
-        "description": "Der Wechselrichter muss erreichbar sein, damit Verbindungsänderungen gespeichert werden können.",
+        "description": "Endpunkt ändern. Jeder derzeit erreichbare Wechselrichter muss unter dem neuen Host und Port antworten, bevor gespeichert wird.",
         "data": {
           "host": "Host",
-          "port": "Port",
-          "address": "Wechselrichter-Adresse (1-249)",
-          "device_name": "Gerätename"
+          "port": "Port"
         },
         "data_description": {
           "host": "IP-Adresse oder Hostname des Wechselrichters.",
-          "port": "Vom Wechselrichter verwendeter MaxComm-TCP-Port.",
-          "address": "Dem Wechselrichter zugewiesene MaxComm-Adresse.",
-          "device_name": "In Home Assistant angezeigter Gerätename."
+          "port": "Vom Wechselrichter verwendeter MaxComm-TCP-Port."
         }
       }
     },
@@ -55,16 +53,59 @@
         "data": {
           "update_interval": "Aktualisierungsintervall (Sekunden)",
           "verify_checksum": "Antwort-Prüfsumme verifizieren",
-          "night_keep_values": "Sensorwerte über Nacht beibehalten",
-          "twilight_elevation_threshold": "Dämmerungs-Höhenwinkelschwelle (Grad)"
+          "response_timeout": "Antwort-Zeitüberschreitung (Sekunden)"
         },
         "data_description": {
-          "twilight_elevation_threshold": "Sonnenhöhenwinkel, unterhalb dessen eine unangekündigte Verbindungstrennung als erwartet gilt (startet außerdem die schnellere Abfrage in der Dämmerung)."
+          "response_timeout": "Wie lange auf jede Antwort des Wechselrichters gewartet wird, bevor sie als ausgeblieben gilt."
         }
       }
     },
     "error": {
       "reload_failed": "Home Assistant konnte die neue Verbindung nicht aktivieren. Die vorherigen Einstellungen wurden wiederhergestellt."
+    }
+  },
+  "config_subentries": {
+    "inverter": {
+      "entry_type": "Wechselrichter",
+      "initiate_flow": {
+        "user": "Wechselrichter hinzufügen"
+      },
+      "step": {
+        "user": {
+          "title": "Wechselrichter hinzufügen",
+          "description": "Der Wechselrichter muss an diesem Endpunkt antworten, bevor er hinzugefügt wird.",
+          "data": {
+            "address": "Wechselrichter-Adresse (1-249)",
+            "device_name": "Gerätename",
+            "twilight_elevation_threshold": "Dämmerungs-Höhenwinkelschwelle (Grad)",
+            "night_keep_values": "Sensorwerte über Nacht beibehalten"
+          },
+          "data_description": {
+            "twilight_elevation_threshold": "Sonnenhöhenwinkel, unterhalb dessen eine unangekündigte Verbindungstrennung als erwartet gilt (startet außerdem die schnellere Abfrage in der Dämmerung)."
+          }
+        },
+        "reconfigure": {
+          "title": "Wechselrichter ändern",
+          "description": "Eine geänderte Adresse muss antworten, bevor sie gespeichert wird. Name und Einstellungen werden ohne Verbindung gespeichert.",
+          "data": {
+            "address": "Wechselrichter-Adresse (1-249)",
+            "device_name": "Gerätename",
+            "twilight_elevation_threshold": "Dämmerungs-Höhenwinkelschwelle (Grad)",
+            "night_keep_values": "Sensorwerte über Nacht beibehalten"
+          },
+          "data_description": {
+            "twilight_elevation_threshold": "Sonnenhöhenwinkel, unterhalb dessen eine unangekündigte Verbindungstrennung als erwartet gilt (startet außerdem die schnellere Abfrage in der Dämmerung)."
+          }
+        }
+      },
+      "error": {
+        "cannot_connect": "Verbindung zum Wechselrichter fehlgeschlagen",
+        "unknown": "Unerwarteter Fehler aufgetreten"
+      },
+      "abort": {
+        "already_configured": "Ein Wechselrichter mit dieser Adresse ist an diesem Endpunkt bereits konfiguriert",
+        "reconfigure_successful": "Die Wechselrichter-Konfiguration wurde aktualisiert."
+      }
     }
   },
   "issues": {
@@ -74,7 +115,7 @@
         "step": {
           "init": {
             "title": "Wechselrichterverbindung reparieren",
-            "description": "Der Wechselrichter unter {host}:{port} ist seit {minutes} Minuten tagsüber nicht erreichbar. Ändern Sie Host oder Port, um eine andere Verbindung zu prüfen.",
+            "description": "{inverters} unter {host}:{port} ist seit {minutes} Minuten tagsüber nicht erreichbar. Aktualisieren Sie Host oder Port, um eine andere Verbindung zu testen. Noch erreichbare Wechselrichter müssen dort antworten. Wenn nur ein Wechselrichter schweigt, während die anderen antworten, prüfen Sie dessen Adresse oder entfernen Sie ihn.",
             "data": {
               "host": "Host",
               "port": "Port"
@@ -93,6 +134,10 @@
           "issue_missing": "Das Reparaturproblem ist nicht mehr vorhanden."
         }
       }
+    },
+    "no_inverter": {
+      "title": "Kein Wechselrichter konfiguriert",
+      "description": "Der Solarmax-Endpunkt {title} hat keinen Wechselrichter. Öffnen Sie die Integration und wählen Sie Wechselrichter hinzufügen."
     }
   },
   "entity": {
