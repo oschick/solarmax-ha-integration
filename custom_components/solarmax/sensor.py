@@ -7,6 +7,7 @@ from collections.abc import Callable
 from typing import Any
 
 from homeassistant.components.sensor import SensorEntity, SensorEntityDescription
+from homeassistant.config_entries import ConfigSubentry
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers import device_registry as dr
 from homeassistant.helpers.entity import DeviceInfo, generate_entity_id
@@ -14,10 +15,9 @@ from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 from homeassistant.util import dt as dt_util
 
-from .configuration import entry_option
-from .connection import EngineState
+from .configuration import inverter_subentries, subentry_option
+from .connection import EngineSnapshot, EngineState
 from .const import (
-    CONF_DEVICE_NAME,
     CONF_NIGHT_KEEP_VALUES,
     DEFAULT_NIGHT_KEEP_VALUES,
     DOMAIN,
@@ -54,35 +54,39 @@ async def async_setup_entry(
     entry: SolarmaxConfigEntry,
     async_add_entities: AddEntitiesCallback,
 ) -> None:
-    """Set up Solarmax sensor platform."""
+    """Set up one sensor set per inverter subentry."""
     coordinator: SolarmaxCoordinator = entry.runtime_data
-    device_name = entry.data.get(CONF_DEVICE_NAME, "Solarmax Inverter")
-
-    async_add_entities(
-        SolarmaxSensor(coordinator, entry, description, device_name)
-        for description in SENSOR_TYPES
-    )
-
-    entry.async_on_unload(
-        coordinator.async_add_listener(
-            _make_device_registry_updater(hass, entry, coordinator)
+    for subentry_id, subentry in inverter_subentries(entry).items():
+        async_add_entities(
+            [
+                SolarmaxSensor(coordinator, subentry, description)
+                for description in SENSOR_TYPES
+            ],
+            config_subentry_id=subentry_id,  # type: ignore[call-arg]
         )
-    )
+        entry.async_on_unload(
+            coordinator.async_add_listener(
+                _make_device_registry_updater(hass, entry, coordinator, subentry_id)
+            )
+        )
     coordinator.sensor_setup_complete = True
 
 
 def _make_device_registry_updater(
-    hass: HomeAssistant, entry: SolarmaxConfigEntry, coordinator: SolarmaxCoordinator
+    hass: HomeAssistant,
+    entry: SolarmaxConfigEntry,
+    coordinator: SolarmaxCoordinator,
+    subentry_id: str,
 ) -> Callable[[], None]:
-    """Refresh device metadata when static inverter data becomes available."""
+    """Refresh one inverter's device metadata when static data becomes available."""
 
     @callback
     def _update_device_registry() -> None:
-        model = coordinator.device_model
+        model = coordinator.device_model_for(subentry_id)
         if model is None:
             return
         device_registry = dr.async_get(hass)
-        identifier = (DOMAIN, entry.entry_id)
+        identifier = (DOMAIN, subentry_id)
         get_by_identifier = getattr(
             device_registry, "async_get_device_by_identifier", None
         )
@@ -93,10 +97,10 @@ def _make_device_registry_updater(
         if device is None:
             return
         metadata: dict[str, Any] = {"model": model}
-        if coordinator.sw_version is not None:
-            metadata["sw_version"] = coordinator.sw_version
-        if coordinator.serial_number is not None:
-            metadata["serial_number"] = coordinator.serial_number
+        if (sw_version := coordinator.sw_version_for(subentry_id)) is not None:
+            metadata["sw_version"] = sw_version
+        if (serial := coordinator.serial_number_for(subentry_id)) is not None:
+            metadata["serial_number"] = serial
         device_registry.async_update_device(device.id, **metadata)
 
     return _update_device_registry
@@ -110,25 +114,24 @@ class SolarmaxSensor(CoordinatorEntity[SolarmaxCoordinator], SensorEntity):
     def __init__(
         self,
         coordinator: SolarmaxCoordinator,
-        entry: SolarmaxConfigEntry,
+        subentry: ConfigSubentry,
         description: SensorEntityDescription,
-        device_name: str,
     ) -> None:
-        """Initialize the sensor."""
+        """Initialize the sensor for one inverter subentry."""
         super().__init__(coordinator)
         self.entity_description = description
         self.sensor_key = description.key
+        self._subentry_id = subentry.subentry_id
+        device_name = subentry.title
 
-        # Snapshot the option: an options-flow change reloads the entry, so a
+        # Snapshot the preference: a subentry change reloads the entry, so a
         # value read at construction time can never go stale.
-        self._night_keep_values: bool = entry_option(
-            entry, CONF_NIGHT_KEEP_VALUES, DEFAULT_NIGHT_KEEP_VALUES
+        self._night_keep_values: bool = bool(
+            subentry_option(subentry, CONF_NIGHT_KEEP_VALUES, DEFAULT_NIGHT_KEEP_VALUES)
         )
 
-        # No hardware identifier is available, so the unique_id falls back to the
-        # config entry id per HA guidance: {entry_id}-{key}.
         sensor_type = description.key.lower()
-        self._attr_unique_id = f"{entry.entry_id}-{sensor_type}"
+        self._attr_unique_id = f"{subentry.subentry_id}-{sensor_type}"
 
         # Force a stable, readable entity_id derived from the device name.
         device_name_normalized = device_name.lower().replace(" ", "_").replace("-", "_")
@@ -141,13 +144,18 @@ class SolarmaxSensor(CoordinatorEntity[SolarmaxCoordinator], SensorEntity):
         # Model/firmware/serial are resolved by the coordinator's first refresh,
         # which runs before the sensor platform is set up.
         self._attr_device_info = DeviceInfo(
-            identifiers={(DOMAIN, entry.entry_id)},
+            identifiers={(DOMAIN, subentry.subentry_id)},
             name=device_name,
             manufacturer="Solarmax",
-            model=coordinator.device_model or "Inverter",
-            sw_version=coordinator.sw_version,
-            serial_number=coordinator.serial_number,
+            model=coordinator.device_model_for(subentry.subentry_id) or "Inverter",
+            sw_version=coordinator.sw_version_for(subentry.subentry_id),
+            serial_number=coordinator.serial_number_for(subentry.subentry_id),
         )
+
+    @property
+    def _snapshot(self) -> EngineSnapshot | None:
+        data = self.coordinator.data
+        return None if data is None else data.get(self._subentry_id)
 
     @staticmethod
     def _decode_sal_alarms(value: int) -> list[str]:
@@ -163,7 +171,7 @@ class SolarmaxSensor(CoordinatorEntity[SolarmaxCoordinator], SensorEntity):
         """Return the active night policy, if this sensor has one."""
         if not self._night_keep_values:
             return None
-        snapshot = self.coordinator.data
+        snapshot = self._snapshot
         if snapshot is None or snapshot.state is not EngineState.OFFLINE_EXPECTED:
             return None
         policy = NIGHT_POLICY.get(self.sensor_key, NightPolicy.UNAVAILABLE)
@@ -184,7 +192,7 @@ class SolarmaxSensor(CoordinatorEntity[SolarmaxCoordinator], SensorEntity):
 
     def _anomalous_expected(self) -> bool:
         """True when the current OFFLINE_EXPECTED was armed outside twilight."""
-        snapshot = self.coordinator.data
+        snapshot = self._snapshot
         return snapshot is not None and snapshot.expected_outside_twilight
 
     def _is_new_day(self) -> bool:
@@ -193,7 +201,7 @@ class SolarmaxSensor(CoordinatorEntity[SolarmaxCoordinator], SensorEntity):
         Stateless and restart-safe: derived from the timestamp rather than a
         latch, so it cannot drift out of sync with the wall clock.
         """
-        last = self.coordinator.last_successful_update
+        last = self.coordinator.last_successful_update_for(self._subentry_id)
         if last is None:
             return False
         return last.date() != dt_util.now().date()
@@ -204,7 +212,7 @@ class SolarmaxSensor(CoordinatorEntity[SolarmaxCoordinator], SensorEntity):
 
     def _sensor_data(self) -> dict[str, float | int] | None:
         """Return the cached reading for this entity."""
-        snapshot = self.coordinator.data
+        snapshot = self._snapshot
         if snapshot is None:
             return None
         return snapshot.values.get(self.sensor_key)
@@ -221,7 +229,7 @@ class SolarmaxSensor(CoordinatorEntity[SolarmaxCoordinator], SensorEntity):
         """Return the connection state exposed by the status sensor."""
         if not self._is_status:
             return None
-        snapshot = self.coordinator.data
+        snapshot = self._snapshot
         state = snapshot.state if snapshot is not None else EngineState.UNKNOWN
         if state is EngineState.ONLINE:
             return None
@@ -260,17 +268,17 @@ class SolarmaxSensor(CoordinatorEntity[SolarmaxCoordinator], SensorEntity):
             "raw_value": "offline",
             "code": "offline",
         }
-        snapshot = self.coordinator.data
+        snapshot = self._snapshot
         if snapshot is not None:
             attributes.update(self._snapshot_diagnostic_attributes())
-        last_update = self.coordinator.last_successful_update
+        last_update = self.coordinator.last_successful_update_for(self._subentry_id)
         if last_update:
             attributes["last_successful_update"] = last_update.isoformat()
         return attributes
 
     def _snapshot_diagnostic_attributes(self) -> dict[str, Any]:
         """Return diagnostic flags from the current snapshot."""
-        snapshot = self.coordinator.data
+        snapshot = self._snapshot
         if snapshot is None:
             return {}
         attributes: dict[str, Any] = {}
@@ -315,7 +323,7 @@ class SolarmaxSensor(CoordinatorEntity[SolarmaxCoordinator], SensorEntity):
             attributes["raw_value"] = sensor_data["raw_value"]
         value = sensor_data.get("value")
         attributes.update(self._register_attributes(value))
-        last_update = self.coordinator.last_successful_update
+        last_update = self.coordinator.last_successful_update_for(self._subentry_id)
         if self._is_status and last_update:
             attributes["last_successful_update"] = last_update.isoformat()
         if night_source is not None:
@@ -337,7 +345,7 @@ class SolarmaxSensor(CoordinatorEntity[SolarmaxCoordinator], SensorEntity):
     @property
     def available(self) -> bool:
         """Return if entity is available."""
-        snapshot = self.coordinator.data
+        snapshot = self._snapshot
         if snapshot is not None and snapshot.state is EngineState.ONLINE:
             return True
         if self._is_status:
