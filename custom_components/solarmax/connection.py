@@ -114,6 +114,14 @@ class LinkClosed(Exception):
     """Peer closed the connection (FIN/reset/EPIPE) and no recovery was possible."""
 
 
+class LinkConnectTimeout(LinkTimeout):
+    """The TCP connect itself timed out; nothing at the endpoint answered."""
+
+
+class LinkConnectFailed(LinkClosed):
+    """The TCP connect was refused or failed before any request was sent."""
+
+
 class _PeerClosed(Exception):
     """Internal signal: peer closed the socket — triggers one reconnect+resend."""
 
@@ -210,7 +218,7 @@ class SolarmaxLink:
             self._configure_socket(writer)
         except OSError as err:
             self._abort_transport()
-            raise LinkClosed(
+            raise LinkConnectFailed(
                 f"connect to {self.host}:{self.port} failed: {err}"
             ) from err
 
@@ -225,10 +233,12 @@ class SolarmaxLink:
         except TimeoutError as err:
             self.timeouts += 1
             self._abort_transport()
-            raise LinkTimeout(f"connect to {self.host}:{self.port} timed out") from err
+            raise LinkConnectTimeout(
+                f"connect to {self.host}:{self.port} timed out"
+            ) from err
         except OSError as err:
             self._abort_transport()
-            raise LinkClosed(
+            raise LinkConnectFailed(
                 f"connect to {self.host}:{self.port} failed: {err}"
             ) from err
 
