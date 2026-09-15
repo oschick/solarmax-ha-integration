@@ -18,6 +18,7 @@ from custom_components.solarmax.connection import (
 from custom_components.solarmax.coordinator import SolarmaxCoordinator
 from custom_components.solarmax.protocol import build_request, parse_response
 from tests.emulator import EmulatorHandle
+from tests.helpers import endpoint_entry
 from tests.test_config_flow import (
     _configured_endpoint_entry,
     _submit_options,
@@ -40,10 +41,12 @@ def proposed_emulator(socket_enabled):
 
 async def _loaded_entry(hass, emulator):
     host, port = emulator.addr
-    entry = _configured_endpoint_entry(host=host, port=port, address=1)
+    entry = endpoint_entry(host=host, port=port, inverters=(1,))
     entry.add_to_hass(hass)
     assert await hass.config_entries.async_setup(entry.entry_id)
-    assert (await entry.runtime_data.engine.poll()).state is EngineState.ONLINE
+    coordinator = entry.runtime_data
+    snapshots = await coordinator._async_update_data()
+    assert all(s.state is EngineState.ONLINE for s in snapshots.values())
     return entry
 
 

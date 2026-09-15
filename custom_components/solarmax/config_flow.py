@@ -114,7 +114,7 @@ def _build_options_schema(values: Mapping[str, Any]) -> vol.Schema:
 class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
     """Handle a config flow for Solarmax Inverter."""
 
-    VERSION = 2
+    VERSION = 3
     MINOR_VERSION = 1
 
     @staticmethod
