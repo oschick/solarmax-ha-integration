@@ -20,20 +20,18 @@ from .configuration import (
     async_apply_and_reload,
     configuration_mutation_lock,
     endpoint_unique_id,
-    entry_option,
     find_endpoint_conflict,
-    validate_connection,
+    validate_endpoint,
     validation_handoff,
 )
+from .connection import EngineState
 from .const import (
-    CONF_ADDRESS,
     CONF_HOST,
     CONF_PORT,
-    CONF_VERIFY_CHECKSUM,
-    DEFAULT_VERIFY_CHECKSUM,
     DOMAIN,
     REPAIR_PENDING,
     REPAIR_PENDING_ENDPOINT,
+    REPAIR_PENDING_INVERTERS,
 )
 
 _LOGGER = logging.getLogger(__name__)
@@ -52,6 +50,7 @@ class SolarmaxConnectionRepairFlow(RepairsFlow):
             "host": str(data.get("host", "unknown")),
             "port": str(data.get("port", "unknown")),
             "minutes": str(data.get("minutes", "?")),
+            "inverters": str(data.get("inverters", "unknown")),
         }
 
     async def async_step_init(
@@ -92,7 +91,11 @@ class SolarmaxConnectionRepairFlow(RepairsFlow):
         )
 
     def _set_pending(
-        self, issue: ir.IssueEntry, pending: bool, endpoint: str | None = None
+        self,
+        issue: ir.IssueEntry,
+        pending: bool,
+        endpoint: str | None = None,
+        inverters: str | None = None,
     ) -> None:
         """Update the same issue record, preserving native Ignore and metadata."""
         data = dict(issue.data or {})
@@ -100,9 +103,12 @@ class SolarmaxConnectionRepairFlow(RepairsFlow):
             data[REPAIR_PENDING] = 1
             if endpoint is not None:
                 data[REPAIR_PENDING_ENDPOINT] = endpoint
+            if inverters is not None:
+                data[REPAIR_PENDING_INVERTERS] = inverters
         else:
             data.pop(REPAIR_PENDING, None)
             data.pop(REPAIR_PENDING_ENDPOINT, None)
+            data.pop(REPAIR_PENDING_INVERTERS, None)
         ir.async_create_issue(
             self.hass,
             DOMAIN,
@@ -138,14 +144,7 @@ class SolarmaxConnectionRepairFlow(RepairsFlow):
             async with validation_handoff(entry):
                 if registry.async_get_issue(DOMAIN, self.issue_id) is None:
                     return self.async_abort(reason="issue_missing")
-                await validate_connection(
-                    host=host,
-                    port=port,
-                    address=entry.data[CONF_ADDRESS],
-                    verify_checksum=entry_option(
-                        entry, CONF_VERIFY_CHECKSUM, DEFAULT_VERIFY_CHECKSUM
-                    ),
-                )
+                await validate_endpoint(entry, host, port)
                 current_issue = registry.async_get_issue(DOMAIN, self.issue_id)
                 if current_issue is None:
                     return self.async_abort(reason="issue_missing")
@@ -154,7 +153,14 @@ class SolarmaxConnectionRepairFlow(RepairsFlow):
                     self.hass, host, port, exclude_entry_id=entry.entry_id
                 ):
                     return self.async_abort(reason="already_configured")
-                self._set_pending(issue, True, target_endpoint)
+                runtime = getattr(entry, "runtime_data", None)
+                snapshots = getattr(runtime, "data", None) or {}
+                faulted = ",".join(
+                    sid
+                    for sid, snapshot in snapshots.items()
+                    if snapshot.state is EngineState.OFFLINE_FAULT
+                )
+                self._set_pending(issue, True, target_endpoint, faulted or None)
                 marked_pending = True
             # Unload closes the engine, so release its poll lock first.
             unchanged = (host, port) == (entry.data[CONF_HOST], entry.data[CONF_PORT])

@@ -440,7 +440,7 @@ async def test_repair_emulator_waits_for_full_poll(
             await hass.async_block_till_done()
         assert result["type"] is FlowResultType.ABORT
         assert entry.data["port"] == port
-        assert entry.runtime_data.data.state is EngineState.ONLINE
+        assert _state(entry.runtime_data) is EngineState.ONLINE
         assert _connection_issue(hass, entry) is None
     finally:
         release_poll.set()
@@ -468,8 +468,8 @@ async def test_old_runtime_poll_cannot_verify_new_repair_endpoint(
     async def unload(current, platforms):
         issue = _connection_issue(hass, entry)
         assert issue.data["verification_pending"] == 1
-        snapshot = await asyncio.wait_for(poll_task, 5)
-        assert snapshot.state is EngineState.ONLINE
+        snapshots = await asyncio.wait_for(poll_task, 5)
+        assert all(s.state is EngineState.ONLINE for s in snapshots.values())
         assert entry.runtime_data is old_runtime
         issue_seen_during_unload.append(_connection_issue(hass, entry) is not None)
         return await unload_platforms(current, platforms)
@@ -477,7 +477,7 @@ async def test_old_runtime_poll_cannot_verify_new_repair_endpoint(
     try:
         with (
             patch(
-                "custom_components.solarmax.repairs.validate_connection",
+                "custom_components.solarmax.configuration.validate_connection",
                 side_effect=probe,
             ),
             patch.object(
@@ -492,7 +492,7 @@ async def test_old_runtime_poll_cannot_verify_new_repair_endpoint(
         assert result["type"] is FlowResultType.ABORT
         assert issue_seen_during_unload == [True]
         assert entry.runtime_data is not old_runtime
-        assert entry.runtime_data.data.state is EngineState.ONLINE
+        assert _state(entry.runtime_data) is EngineState.ONLINE
         assert _connection_issue(hass, entry) is None
     finally:
         if poll_task is not None:
@@ -516,7 +516,7 @@ async def test_repair_emulator_unreachable_endpoint_stays_open(
         assert entry.runtime_data is old_runtime
         assert _connection_issue(hass, entry) is not None
         await entry.runtime_data.async_refresh()
-        assert entry.runtime_data.data.state is EngineState.ONLINE
+        assert _state(entry.runtime_data) is EngineState.ONLINE
         assert _connection_issue(hass, entry) is None
     finally:
         await hass.config_entries.async_unload(entry.entry_id)
@@ -549,7 +549,7 @@ async def test_repair_emulator_activation_rollback_full_poll_clears(
             result = await asyncio.wait_for(task, 5)
         assert result["errors"] == {"base": "reload_failed"}
         assert entry.data["port"] == emulator.addr[1]
-        assert entry.runtime_data.data.state is EngineState.ONLINE
+        assert _state(entry.runtime_data) is EngineState.ONLINE
         assert _connection_issue(hass, entry) is None
     finally:
         release_restore.set()
@@ -571,7 +571,7 @@ async def test_disabled_repair_emulator_waits_until_enabled(hass, emulator):
     object.__setattr__(entry, "disabled_by", None)
     try:
         assert await hass.config_entries.async_setup(entry.entry_id)
-        assert entry.runtime_data.data.state is EngineState.ONLINE
+        assert _state(entry.runtime_data) is EngineState.ONLINE
         assert _connection_issue(hass, entry) is None
     finally:
         await hass.config_entries.async_unload(entry.entry_id)
