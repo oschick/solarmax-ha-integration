@@ -8,6 +8,7 @@ from homeassistant.components.diagnostics import async_redact_data
 from homeassistant.core import HomeAssistant
 from homeassistant.loader import async_get_integration
 
+from .configuration import inverter_subentries
 from .const import CONF_HOST, DEVICE_KEY_SERIAL
 from .coordinator import SolarmaxConfigEntry, SolarmaxCoordinator
 
@@ -18,10 +19,9 @@ REDACT_KEYS = {CONF_HOST, DEVICE_KEY_SERIAL, "serial_number"}
 async def async_get_config_entry_diagnostics(
     hass: HomeAssistant, entry: SolarmaxConfigEntry
 ) -> dict[str, Any]:
-    """Return diagnostics for a config entry."""
+    """Return diagnostics for an endpoint and every inverter behind it."""
     coordinator: SolarmaxCoordinator = entry.runtime_data
-    snapshot = coordinator.data
-
+    snapshots = coordinator.data or {}
     integration = await async_get_integration(hass, entry.domain)
 
     diagnostics_data: dict[str, Any] = {
@@ -35,51 +35,56 @@ async def async_get_config_entry_diagnostics(
             "options": entry.options,
             "source": entry.source,
             "state": entry.state.value if entry.state else None,
+            "subentries": [
+                {
+                    "subentry_id": subentry.subentry_id,
+                    "title": subentry.title,
+                    "data": dict(subentry.data),
+                }
+                for subentry in inverter_subentries(entry).values()
+            ],
         },
         "coordinator": {
             "update_interval": str(coordinator.update_interval),
-            "state": snapshot.state if snapshot else None,
-            "reconnecting": snapshot.reconnecting if snapshot else None,
             "sun_source": coordinator.sun_source,
-            "fault_since": (
-                snapshot.fault_since.isoformat()
-                if snapshot and snapshot.fault_since
-                else None
-            ),
-            "last_successful_update": (
-                coordinator.last_successful_update.isoformat()
-                if coordinator.last_successful_update
-                else None
-            ),
         },
-        "connection": dict(snapshot.diagnostics) if snapshot else {},
-        "sensor_data": {},
+        "inverters": {},
         "system_info": {
             "ha_version": hass.config.as_dict().get("version"),
             "integration_version": str(integration.version),
         },
     }
 
-    if snapshot:
-        diagnostics_data["sensor_data"] = async_redact_data(
-            {
-                sensor_key: {
-                    "value": sensor_value.get("value"),
-                    "raw_value": sensor_value.get("raw_value"),
-                }
-                for sensor_key, sensor_value in snapshot.values.items()
-            },
-            REDACT_KEYS,
-        )
-
-    diagnostics_data["device_info"] = async_redact_data(
-        {
-            "identifiers": [(entry.domain, entry.entry_id)],
-            "name": entry.data.get("device_name", "Solarmax Inverter"),
-            "manufacturer": "Solarmax",
-            "model": coordinator.device_model or "Inverter",
-        },
-        REDACT_KEYS,
-    )
+    for subentry_id in coordinator.subentry_ids():
+        snapshot = snapshots.get(subentry_id)
+        last_update = coordinator.last_successful_update_for(subentry_id)
+        diagnostics_data["inverters"][subentry_id] = {
+            "state": snapshot.state if snapshot else None,
+            "reconnecting": snapshot.reconnecting if snapshot else None,
+            "link_failure": snapshot.link_failure if snapshot else None,
+            "fault_since": (
+                snapshot.fault_since.isoformat()
+                if snapshot and snapshot.fault_since
+                else None
+            ),
+            "last_successful_update": last_update.isoformat() if last_update else None,
+            "connection": dict(snapshot.diagnostics) if snapshot else {},
+            "sensor_data": async_redact_data(
+                {
+                    key: {"value": v.get("value"), "raw_value": v.get("raw_value")}
+                    for key, v in (snapshot.values if snapshot else {}).items()
+                },
+                REDACT_KEYS,
+            ),
+            "device_info": async_redact_data(
+                {
+                    "identifiers": [(entry.domain, subentry_id)],
+                    "name": coordinator.subentry_title(subentry_id),
+                    "manufacturer": "Solarmax",
+                    "model": coordinator.device_model_for(subentry_id) or "Inverter",
+                },
+                REDACT_KEYS,
+            ),
+        }
 
     return diagnostics_data
