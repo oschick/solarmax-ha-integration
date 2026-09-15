@@ -120,10 +120,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: SolarmaxConfigEntry) -> 
         # HA skips integration unload after failed setup. Release this setup's
         # client slot before rollback, including when setup was cancelled.
         try:
-            try:
-                await coordinator.async_shutdown()
-            finally:
-                await coordinator.engine.close()
+            await coordinator.async_shutdown()
         finally:
             if getattr(entry, "runtime_data", None) is coordinator:
                 object.__delattr__(entry, "runtime_data")
@@ -140,5 +137,5 @@ async def async_unload_entry(hass: HomeAssistant, entry: SolarmaxConfigEntry) ->
     """
     unload_ok = await hass.config_entries.async_unload_platforms(entry, PLATFORMS)
     if unload_ok:
-        await entry.runtime_data.engine.close()
+        await entry.runtime_data.async_shutdown()
     return unload_ok

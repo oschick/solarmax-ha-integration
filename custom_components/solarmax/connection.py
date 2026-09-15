@@ -15,8 +15,7 @@ import asyncio
 import logging
 import socket
 import time
-from collections.abc import AsyncIterator, Callable
-from contextlib import asynccontextmanager
+from collections.abc import Callable
 from dataclasses import asdict, dataclass, field
 from datetime import UTC, date, datetime
 from enum import StrEnum
@@ -399,23 +398,13 @@ class ConnectionEngine:
             except (TimeoutError, LinkTimeout, LinkClosed, ProtocolError):
                 return await self._on_failure(LinkFailure.EXCHANGE)
 
-    @asynccontextmanager
-    async def validation_handoff(self) -> AsyncIterator[None]:
-        """Temporarily release the inverter connection for validation."""
-        async with self._poll_lock:
-            if self._closed:
-                raise LinkClosed("connection engine is closed")
-            await self._link.disconnect()
-            yield
-
     async def close(self) -> None:
-        """Idempotent; the last word — no poll() may touch the link again.
+        """Idempotent; no poll() may issue another request after close returns.
 
-        Sets `_closed` before tearing down the link, then waits for the poll
-        lock so no active poll can issue another request after close returns.
+        The shared link belongs to the coordinator, which closes it once after
+        every engine has drained.
         """
         self._closed = True
-        await self._link.close()
         async with self._poll_lock:
             pass
 
@@ -535,7 +524,6 @@ class ConnectionEngine:
         """Handle a disconnect explained by shutdown evidence or darkness."""
         # An expected window starts a fresh repair clock if it later becomes a fault.
         self._fault_since = None
-        await self._link.disconnect()
         self._statics_loaded = False
         self._static_fetch_attempts = 0
 

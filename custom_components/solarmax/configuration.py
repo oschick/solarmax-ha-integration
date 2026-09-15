@@ -93,11 +93,11 @@ class EntrySnapshot:
 async def validation_handoff(entry: ConfigEntry) -> AsyncIterator[None]:
     """Wait for setup, then release the runtime connection if one exists."""
     async with entry.setup_lock:
-        engine = getattr(getattr(entry, "runtime_data", None), "engine", None)
-        if engine is None:
+        runtime = getattr(entry, "runtime_data", None)
+        if runtime is None:
             yield
             return
-        async with engine.validation_handoff():
+        async with runtime.validation_handoff():
             yield
 
 
