@@ -364,6 +364,22 @@ def _has_valid_frame_structure(frame: str, *, first: bool, final: bool) -> bool:
     return bool(port_separator and _is_hex(port))
 
 
+def _frame_source_address(frame: str) -> int:
+    """Return the Src field of a validated frame as an integer."""
+    header = _frame_payload(frame).partition(PROTO_FRS)[0]
+    return int(header.split(PROTO_FS)[0], 16)
+
+
+def _raise_for_wrong_source(frames: list[str], expected_address: int) -> None:
+    """Reject frames sent by a device other than the one addressed."""
+    for frame in frames:
+        source = _frame_source_address(frame)
+        if source != expected_address:
+            raise RetryableProtocolError(
+                f"Reply from address {source} while expecting {expected_address}"
+            )
+
+
 def _validated_frames(data: str, verify_checksum: bool) -> list[str]:
     """Return complete frames or raise a retryable parse error."""
     frames = split_frames(data)
@@ -425,7 +441,7 @@ def _parse_field(item: str) -> tuple[str, dict[str, float | int]] | None:
 
 
 def parse_response(
-    data: str, verify_checksum: bool = True
+    data: str, verify_checksum: bool = True, expected_address: int | None = None
 ) -> dict[str, dict[str, float | int]]:
     """Parse a MaxComm protocol response into a dictionary.
 
@@ -440,11 +456,16 @@ def parse_response(
     - Empty data section → "not supported" (unknown key)
     - Port 3E8 responses → interface error messages (IPR, IPN)
 
+    When `expected_address` is given, every frame's Src field must equal it;
+    a reply from another bus address raises RetryableProtocolError.
+
     Raises RetryableProtocolError on missing/corrupted frames (may succeed on
     retry), ProtocolError on deterministic inverter-reported errors (IPR/IPN).
     """
     try:
         frames = _validated_frames(data, verify_checksum)
+        if expected_address is not None:
+            _raise_for_wrong_source(frames, expected_address)
         _raise_for_interface_error(frames[0])
         result_dict: dict[str, dict[str, float | int]] = {}
         for item in _extract_data_from_frames(frames).split(PROTO_FS):
