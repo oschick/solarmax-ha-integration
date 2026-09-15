@@ -1,6 +1,7 @@
 """Engine orchestration against the emulator — the spec's success criteria."""
 
 import asyncio
+from unittest.mock import patch
 
 import pytest
 from freezegun import freeze_time
@@ -13,6 +14,7 @@ from custom_components.solarmax.connection import (
     ConnectionEngine,
     EngineState,
     LinkClosed,
+    LinkFailure,
     LinkTimeout,
     SolarmaxLink,
 )
@@ -548,13 +550,15 @@ async def test_armed_escalates_to_fault_after_sustained_anomaly(emulator):
         assert armed_snapshot.shutdown_announced is True
 
         for _ in range(9):  # below the 10-failure floor: no escalation yet
-            snapshot = await engine._on_failure()
+            snapshot = await engine._on_failure(LinkFailure.EXCHANGE)
         assert snapshot.state is EngineState.OFFLINE_EXPECTED
         assert snapshot.expected_outside_twilight is True
         assert snapshot.shutdown_announced is True
 
         clock.advance(ARMED_ESCALATION_SECONDS + 1)
-        snapshot = await engine._on_failure()  # 10th failed probe, window elapsed
+        snapshot = await engine._on_failure(
+            LinkFailure.EXCHANGE
+        )  # 10th failed probe, window elapsed
         assert snapshot.state is EngineState.OFFLINE_FAULT
         assert snapshot.shutdown_announced is False  # armed cleared on escalation
         assert snapshot.expected_outside_twilight is False
@@ -575,7 +579,7 @@ async def test_armed_anomaly_below_window_stays_expected(emulator):
         clock.advance(100.0)  # well under ARMED_ESCALATION_SECONDS
         snapshot = None
         for _ in range(ARMED_ESCALATION_MIN_FAILURES + 5):
-            snapshot = await engine._on_failure()
+            snapshot = await engine._on_failure(LinkFailure.EXCHANGE)
         assert snapshot.state is EngineState.OFFLINE_EXPECTED
         assert snapshot.expected_outside_twilight is True
     finally:
@@ -594,7 +598,7 @@ async def test_armed_with_sun_below_needs_no_escalation(emulator):
         clock.advance(ARMED_ESCALATION_SECONDS * 2)
         snapshot = None
         for _ in range(ARMED_ESCALATION_MIN_FAILURES + 5):
-            snapshot = await engine._on_failure()
+            snapshot = await engine._on_failure(LinkFailure.EXCHANGE)
         assert snapshot.state is EngineState.OFFLINE_EXPECTED
         assert snapshot.expected_outside_twilight is False
     finally:
@@ -612,13 +616,13 @@ async def test_armed_daytime_outage_becomes_expected_at_dusk(emulator):
         await engine.poll()
 
         for _ in range(9):
-            snapshot = await engine._on_failure()
+            snapshot = await engine._on_failure(LinkFailure.EXCHANGE)
         assert snapshot.state is EngineState.OFFLINE_EXPECTED
         assert snapshot.expected_outside_twilight is True
 
         clock.advance(ARMED_ESCALATION_SECONDS + 1)
         sun_below = True
-        snapshot = await engine._on_failure()
+        snapshot = await engine._on_failure(LinkFailure.EXCHANGE)
 
         assert snapshot.state is EngineState.OFFLINE_EXPECTED
         assert snapshot.shutdown_announced is True
@@ -637,18 +641,18 @@ async def test_armed_night_outage_escalates_if_still_offline_after_dawn(emulator
         await engine.poll()
         emulator.begin_dusk(announce_seconds=0.4)
         await engine.poll()
-        night_snapshot = await engine._on_failure()
+        night_snapshot = await engine._on_failure(LinkFailure.EXCHANGE)
         assert night_snapshot.state is EngineState.OFFLINE_EXPECTED
         assert night_snapshot.expected_outside_twilight is False
 
         sun_below = False
         for _ in range(9):
-            dawn_snapshot = await engine._on_failure()
+            dawn_snapshot = await engine._on_failure(LinkFailure.EXCHANGE)
         assert dawn_snapshot.state is EngineState.OFFLINE_EXPECTED
         assert dawn_snapshot.expected_outside_twilight is True
 
         clock.advance(ARMED_ESCALATION_SECONDS + 1)
-        fault_snapshot = await engine._on_failure()
+        fault_snapshot = await engine._on_failure(LinkFailure.EXCHANGE)
         assert fault_snapshot.state is EngineState.OFFLINE_FAULT
         assert fault_snapshot.shutdown_announced is False
         assert fault_snapshot.fault_since is not None
@@ -690,9 +694,9 @@ async def test_successful_responses_are_parsed_once(emulator, monkeypatch):
     original = connection_module.parse_response
     parsed_responses: list[str] = []
 
-    def track_parse(response: str, verify_checksum: bool):
+    def track_parse(response: str, verify_checksum: bool, expected_address=None):
         parsed_responses.append(response)
-        return original(response, verify_checksum)
+        return original(response, verify_checksum, expected_address=expected_address)
 
     monkeypatch.setattr(connection_module, "parse_response", track_parse)
     engine = _engine(emulator)
@@ -769,3 +773,95 @@ def test_default_response_timeout_and_poll_budget():
     link = SolarmaxLink("127.0.0.1", 1)
     assert link.response_timeout == 3.5
     assert POLL_BUDGET_SECONDS == 15.0
+
+
+# --- Link failure reporting and classification ----------------------------------
+
+
+def _response_from(source: str, data: str) -> str:
+    """A checksummed frame sent by an arbitrary bus address."""
+    inner = f"{source};FB;18|64:{data}|"
+    return "{" + inner + calculate_checksum(inner) + "}"
+
+
+class _ReplyLink:
+    """Link double that returns scripted frames and counts requests."""
+
+    def __init__(self, replies: list[str]) -> None:
+        self.replies = list(replies)
+        self.requests = 0
+        self.attempts = 0
+        self.reconnects = 0
+        self.timeouts = 0
+
+    async def request(self, payload: str) -> str:
+        self.requests += 1
+        return self.replies.pop(0)
+
+    async def disconnect(self) -> None:
+        pass
+
+    async def close(self) -> None:
+        pass
+
+
+async def test_connect_failure_is_reported_in_snapshot():
+    link = SolarmaxLink("127.0.0.1", 12345)
+    engine = ConnectionEngine(
+        link, address=1, sun_below=lambda: False, grace_seconds=0.0
+    )
+    with patch("asyncio.open_connection", side_effect=ConnectionRefusedError()):
+        snapshot = await engine.poll()
+    assert snapshot.state is EngineState.OFFLINE_FAULT
+    assert snapshot.link_failure is LinkFailure.CONNECT
+    # A fresh engine issues the static fetch and then the hot fetch; each
+    # connects once and a refused connect is never retried.
+    assert link.attempts == 2
+
+
+async def test_silent_address_is_an_exchange_failure(emulator):
+    emulator.dark = True
+    engine = _engine(emulator)
+    snapshot = await engine.poll()
+    assert snapshot.state is EngineState.OFFLINE_FAULT
+    assert snapshot.link_failure is LinkFailure.EXCHANGE
+
+
+async def test_successful_poll_clears_link_failure(emulator):
+    engine = _engine(emulator)
+    assert (await engine.poll()).link_failure is None
+
+
+async def test_record_bus_failure_classifies_without_link_traffic():
+    link = SolarmaxLink("127.0.0.1", 12345)
+    engine = ConnectionEngine(
+        link, address=1, sun_below=lambda: True, grace_seconds=0.0
+    )
+    snapshot = await engine.record_bus_failure()
+    assert snapshot.state is EngineState.OFFLINE_EXPECTED
+    assert snapshot.link_failure is LinkFailure.CONNECT
+    assert link.attempts == 0
+
+
+async def test_reply_from_other_address_is_retried_once():
+    ok = _response("PAC=BB8;PDC=C80;SYS=4E28")
+    wrong = _response_from("02", "PAC=BB8")
+    link = _ReplyLink([ok, wrong, ok])
+    engine = ConnectionEngine(
+        link, address=1, sun_below=lambda: False, grace_seconds=0.0
+    )
+    snapshot = await engine.poll()
+    assert snapshot.state is EngineState.ONLINE
+    assert link.requests == 3
+
+
+async def test_second_reply_from_other_address_fails_the_poll():
+    ok = _response("PAC=BB8;PDC=C80;SYS=4E28")
+    wrong = _response_from("02", "PAC=BB8")
+    link = _ReplyLink([ok, wrong, wrong])
+    engine = ConnectionEngine(
+        link, address=1, sun_below=lambda: False, grace_seconds=0.0
+    )
+    snapshot = await engine.poll()
+    assert snapshot.state is EngineState.OFFLINE_FAULT
+    assert snapshot.link_failure is LinkFailure.EXCHANGE

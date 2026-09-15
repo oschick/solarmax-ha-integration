@@ -90,6 +90,13 @@ class EngineDiagnostics:
         del self.transitions[:-20]
 
 
+class LinkFailure(StrEnum):
+    """Which stage of the link failed during the poll that produced a snapshot."""
+
+    CONNECT = "connect"
+    EXCHANGE = "exchange"
+
+
 @dataclass(frozen=True)
 class EngineSnapshot:
     """Immutable result of a single poll cycle."""
@@ -104,6 +111,9 @@ class EngineSnapshot:
     # churn in diagnostics must not defeat `always_update=False`, so it is
     # excluded from equality/hash comparison.
     diagnostics: dict[str, object] = field(compare=False)
+    # None on success; CONNECT means the endpoint itself was unreachable, so
+    # the coordinator can fail the rest of the bus without more attempts.
+    link_failure: LinkFailure | None = None
 
 
 class LinkTimeout(Exception):
@@ -384,8 +394,10 @@ class ConnectionEngine:
             try:
                 async with asyncio.timeout(POLL_BUDGET_SECONDS):
                     return await self._poll_inner()
+            except (LinkConnectTimeout, LinkConnectFailed):
+                return await self._on_failure(LinkFailure.CONNECT)
             except (TimeoutError, LinkTimeout, LinkClosed, ProtocolError):
-                return await self._on_failure()
+                return await self._on_failure(LinkFailure.EXCHANGE)
 
     @asynccontextmanager
     async def validation_handoff(self) -> AsyncIterator[None]:
@@ -406,6 +418,19 @@ class ConnectionEngine:
         await self._link.close()
         async with self._poll_lock:
             pass
+
+    async def record_bus_failure(self) -> EngineSnapshot:
+        """Classify a connect-stage failure another engine saw on the shared link.
+
+        No request is sent. The engine applies its own arming and sun evidence,
+        exactly as it would after its own failed poll.
+        """
+        async with self._poll_lock:
+            if self._closed:
+                return self._snapshot(
+                    reconnecting=False, expected_outside_twilight=False
+                )
+            return await self._on_failure(LinkFailure.CONNECT)
 
     async def _poll_inner(self) -> EngineSnapshot:
         if not self._statics_loaded:
@@ -441,10 +466,14 @@ class ConnectionEngine:
         except LinkTimeout:
             raw = await self._link.request(payload)
         try:
-            return parse_response(raw, self._verify_checksum)
+            return parse_response(
+                raw, self._verify_checksum, expected_address=self._address
+            )
         except RetryableProtocolError:
             raw = await self._link.request(payload)
-            return parse_response(raw, self._verify_checksum)
+            return parse_response(
+                raw, self._verify_checksum, expected_address=self._address
+            )
 
     def _on_success(self, values: dict[str, dict[str, float | int]]) -> EngineSnapshot:
         today = self._today()
@@ -470,7 +499,7 @@ class ConnectionEngine:
 
         return self._snapshot(reconnecting=False, expected_outside_twilight=False)
 
-    async def _on_failure(self) -> EngineSnapshot:
+    async def _on_failure(self, link_failure: LinkFailure) -> EngineSnapshot:
         previous_state = self._state
         armed = self._tracker.armed
         sun_below = self._sun_is_below()
@@ -487,6 +516,7 @@ class ConnectionEngine:
         return self._snapshot(
             reconnecting=reconnecting,
             expected_outside_twilight=expected_outside_twilight,
+            link_failure=link_failure,
         )
 
     def _sun_is_below(self) -> bool:
@@ -553,7 +583,11 @@ class ConnectionEngine:
             self._diagnostics.record_transition(previous_state, state)
 
     def _snapshot(
-        self, *, reconnecting: bool, expected_outside_twilight: bool
+        self,
+        *,
+        reconnecting: bool,
+        expected_outside_twilight: bool,
+        link_failure: LinkFailure | None = None,
     ) -> EngineSnapshot:
         # Link counters are live and must not lag behind the returned snapshot.
         self._diagnostics.connection_attempts = self._link.attempts
@@ -567,4 +601,5 @@ class ConnectionEngine:
             expected_outside_twilight=expected_outside_twilight,
             fault_since=self._fault_since,
             diagnostics=asdict(self._diagnostics),
+            link_failure=link_failure,
         )
