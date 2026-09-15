@@ -12,6 +12,7 @@ import pathlib
 import sys
 import threading
 import time
+from collections.abc import Sequence
 
 _TOOLS = pathlib.Path(__file__).resolve().parent.parent / "tools"
 _spec = importlib.util.spec_from_file_location(
@@ -54,8 +55,14 @@ def parse_values(response: str) -> dict[str, int]:
 class EmulatorHandle:
     """One running emulator on an ephemeral port, with scenario controls."""
 
-    def __init__(self) -> None:
-        self._emulator = SolarmaxEmulator(host="127.0.0.1", port=0)
+    def __init__(self, addresses: Sequence[int] = (1,)) -> None:
+        addresses = list(addresses)
+        self._emulator = SolarmaxEmulator(
+            host="127.0.0.1",
+            port=0,
+            address=addresses[0],
+            extra_addresses=addresses[1:],
+        )
         self._thread = threading.Thread(target=self._emulator.start, daemon=True)
 
     def start(self) -> None:
@@ -88,11 +95,13 @@ class EmulatorHandle:
     def idle_timeout(self, value: float) -> None:
         self._emulator.idle_timeout = value
 
-    def begin_dusk(self, announce_seconds: float | None) -> None:
-        self._emulator.begin_dusk(announce_seconds)
+    def begin_dusk(
+        self, announce_seconds: float | None, address: int | None = None
+    ) -> None:
+        self._emulator.begin_dusk(announce_seconds, address)
 
-    def wake(self) -> None:
-        self._emulator.wake()
+    def wake(self, address: int | None = None) -> None:
+        self._emulator.wake(address)
 
     def inject(self, failure: str) -> None:
         self._emulator.inject(failure)
@@ -109,6 +118,13 @@ class EmulatorHandle:
     def dark(self, value: bool) -> None:
         self._emulator.dark = value
 
+    def set_dark(self, address: int, value: bool) -> None:
+        self._emulator.set_dark(address, value)
+
+    def state_for(self, address: int):
+        return self._emulator.states[address]
+
     def set_noise(self, enabled: bool) -> None:
         """Toggle the emulator's +-2% jitter (on by default)."""
-        self._emulator.state.add_noise = enabled
+        for state in self._emulator.states.values():
+            state.add_noise = enabled

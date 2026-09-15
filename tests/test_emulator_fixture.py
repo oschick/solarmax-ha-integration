@@ -149,3 +149,40 @@ def test_failure_injection_corrupt_crc(emulator):
         assert crc.rstrip("}") != expected
         # next poll is clean again
         assert _poll(sock)["PAC"] is not None
+
+
+def _ask(addr, address, fields, timeout=0.5):
+    with socket.create_connection(addr, timeout=timeout) as sock:
+        sock.sendall(build_request(address, fields))
+        buf = b""
+        while not buf.endswith(b"}"):
+            buf += sock.recv(4096)
+        return parse_values(buf.decode())
+
+
+def test_dual_emulator_answers_each_address_from_its_own_state(dual_emulator):
+    dual_emulator.set_noise(False)
+    dual_emulator.state_for(2).pac = 1234
+    assert _ask(dual_emulator.addr, 1, ["PAC"])["PAC"] == 3000
+    assert _ask(dual_emulator.addr, 2, ["PAC"])["PAC"] == 1234
+
+
+def test_unserved_address_is_silent(dual_emulator):
+    with (
+        socket.create_connection(dual_emulator.addr, timeout=0.3) as sock,
+        pytest.raises(TimeoutError),
+    ):
+        sock.sendall(build_request(3, ["PAC"]))
+        sock.recv(4096)
+
+
+def test_dark_address_is_silent_while_other_answers(dual_emulator):
+    dual_emulator.set_noise(False)
+    dual_emulator.set_dark(2, True)
+    assert _ask(dual_emulator.addr, 1, ["PAC"])["PAC"] == 3000
+    with (
+        socket.create_connection(dual_emulator.addr, timeout=0.3) as sock,
+        pytest.raises(TimeoutError),
+    ):
+        sock.sendall(build_request(2, ["PAC"]))
+        sock.recv(4096)

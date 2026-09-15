@@ -39,6 +39,7 @@ import socket
 import sys
 import threading
 import time
+from collections.abc import Sequence
 from dataclasses import dataclass
 
 logging.basicConfig(
@@ -363,28 +364,62 @@ def get_scenario_state(scenario: str) -> InverterState:
 class SolarmaxEmulator:
     """TCP server emulating a Solarmax inverter."""
 
-    def __init__(self, host: str = "0.0.0.0", port: int = 12345, address: int = 1):
+    def __init__(
+        self,
+        host: str = "0.0.0.0",
+        port: int = 12345,
+        address: int = 1,
+        extra_addresses: Sequence[int] = (),
+    ):
         """Initialize the emulator."""
         self.host = host
         self.port = port
         self.address = address
-        self.state = InverterState()
+        self.addresses: list[int] = [address, *extra_addresses]
+        self.states: dict[int, InverterState] = {
+            device: InverterState() for device in self.addresses
+        }
         self.running = False
         self._server_socket: socket.socket | None = None
         self._lock = threading.Lock()
         # Behaviour measured on a live 7TP2 (2026-09-01 probe):
         self.bound_port: int | None = None  # set after bind (supports port=0)
         self._idle_timeout = 100.0  # peer-closes idle conns ~90-120s
-        self.dark = False  # powered off: swallow everything, answer nothing
+        self._dark: set[int] = set()  # powered off addresses: swallow, answer nothing
         self._active_client = False  # the real device serves ONE TCP client
         self._inject: str | None = None  # one-shot failure injection
         self._respond_only: list[str] | None = None  # answer only these fields
-        self._pre_dusk: InverterState | None = None
+        self._pre_dusk: dict[int, InverterState] = {}
         self._client_socket: socket.socket | None = None
         self._thread_lock = threading.Lock()
         self._client_threads: set[threading.Thread] = set()
         self._timer_thread: threading.Thread | None = None
         self._stop_event = threading.Event()  # interrupts a pending dark timer
+
+    @property
+    def state(self) -> InverterState:
+        """State of the primary address (single-inverter compatibility)."""
+        return self.states[self.address]
+
+    @state.setter
+    def state(self, value: InverterState) -> None:
+        self.states[self.address] = value
+
+    @property
+    def dark(self) -> bool:
+        """True when every served address is powered off."""
+        return all(device in self._dark for device in self.addresses)
+
+    @dark.setter
+    def dark(self, value: bool) -> None:
+        self._dark = set(self.addresses) if value else set()
+
+    def set_dark(self, address: int, value: bool) -> None:
+        """Power one address off or on without touching the others."""
+        if value:
+            self._dark.add(address)
+        else:
+            self._dark.discard(address)
 
     @property
     def idle_timeout(self) -> float:
@@ -402,14 +437,15 @@ class SolarmaxEmulator:
         checksum_value = sum(ord(c) for c in data)
         return format(checksum_value, "04X")
 
-    def get_field_value(self, field: str) -> str:
+    def get_field_value(self, field: str, address: int) -> str:
         """Get the hex-encoded value for a field, with optional noise."""
         with self._lock:
-            raw = getattr(self.state, field.lower(), 0)
+            state = self.states[address]
+            raw = getattr(state, field.lower(), 0)
 
         # Add small random noise for realism
         if (
-            self.state.add_noise
+            state.add_noise
             and raw > 0
             and field
             not in (
@@ -439,10 +475,13 @@ class SolarmaxEmulator:
         else:
             return format(raw, "X")
 
-    def build_response(self, requested_fields: list[str]) -> str | None:
+    def build_response(
+        self, requested_fields: list[str], address: int | None = None
+    ) -> str | None:
+        address = self.address if address is None else address
         if self._respond_only is not None:
             requested_fields = [f for f in requested_fields if f in self._respond_only]
-        response = self._build_response_clean(requested_fields)
+        response = self._build_response_clean(requested_fields, address)
         failure, self._inject = self._inject, None
         if failure == "drop":
             # One-shot: swallow this request entirely, no reply at all —
@@ -464,7 +503,7 @@ class SolarmaxEmulator:
             return "{" + payload + "|" + crc + "}"
         return response
 
-    def _build_response_clean(self, requested_fields: list[str]) -> str:
+    def _build_response_clean(self, requested_fields: list[str], address: int) -> str:
         """Build a response message for the requested fields.
 
         Mimics real inverter behavior: if the response exceeds 255 bytes,
@@ -472,12 +511,12 @@ class SolarmaxEmulator:
         the final frame uses '}'. Field names may be split at frame boundaries.
         """
         MAX_FRAME = 255
-        addr_hex = format(self.address, "02X")
+        addr_hex = format(address, "02X")
 
         # Build field responses
         field_responses = []
         for f in requested_fields:
-            val = self.get_field_value(f)
+            val = self.get_field_value(f, address)
             field_responses.append(f"{f}={val}")
 
         fields_str = ";".join(field_responses)
@@ -530,20 +569,20 @@ class SolarmaxEmulator:
 
         return "".join(frames)
 
-    def parse_request(self, data: str) -> list[str]:
-        """Parse incoming request and extract requested field names."""
+    def parse_request(self, data: str) -> tuple[int | None, list[str]]:
+        """Return (destination address, requested fields) of an incoming frame."""
         try:
-            # Format: {FB;ADR;LEN|64:FIELD1;FIELD2;...|CHECKSUM}
-            # Extract fields between : and |
+            header = data[1:].split("|", 1)[0]
+            address = int(header.split(";")[1], 16)
             parts = data.split(":")
             if len(parts) < 2:
-                return []
+                return address, []
             fields_part = parts[1].split("|")[0]
             fields = [f.strip() for f in fields_part.split(";") if f.strip()]
-            return fields
+            return address, fields
         except (IndexError, ValueError) as e:
             _LOGGER.warning(f"Failed to parse request: {data!r} - {e}")
-            return []
+            return None, []
 
     def handle_client(self, client_socket: socket.socket, client_addr: tuple):
         """Handle a single client connection."""
@@ -562,11 +601,11 @@ class SolarmaxEmulator:
                 if not data:
                     break  # client closed
                 last_activity = time.monotonic()
-                if self.dark:
-                    continue  # powered off: swallow silently, never answer
-                fields = self.parse_request(data)
+                address, fields = self.parse_request(data)
+                if address not in self.states or address in self._dark:
+                    continue  # absent or powered off: swallow silently
                 if fields:
-                    response = self.build_response(fields)
+                    response = self.build_response(fields, address)
                     if response is None:
                         _LOGGER.debug("  Dropped request (drop injection)")
                         continue
@@ -600,7 +639,7 @@ class SolarmaxEmulator:
         _LOGGER.info("  Solarmax Inverter Emulator")
         _LOGGER.info("=" * 60)
         _LOGGER.info(f"  Listening on {self.host}:{self.port}")
-        _LOGGER.info(f"  Inverter address: {self.address}")
+        _LOGGER.info(f"  Inverter addresses: {self.addresses}")
         _LOGGER.info(f"  Status: {self.state.sys} | Alarm: {self.state.sal}")
         _LOGGER.info(f"  AC Power (raw): {self.state.pac} -> {self.state.pac / 2}W")
         _LOGGER.info("=" * 60)
@@ -641,7 +680,9 @@ class SolarmaxEmulator:
             except OSError:
                 break
 
-    def begin_dusk(self, announce_seconds: float | None) -> None:
+    def begin_dusk(
+        self, announce_seconds: float | None, address: int | None = None
+    ) -> None:
         """Scripted dusk: announce SYS 20002 with zero power, then go dark.
 
         Mirrors the live capture: 20008 -> 20002 (PAC=0, PDC=0) for the
@@ -651,18 +692,23 @@ class SolarmaxEmulator:
         `announce_seconds=None` means announce-only: set the SYS/PDC state
         and start no dark timer at all (no live `time.sleep` thread left
         running for a test that never calls `wake()`).
+
+        `address=None` targets every served address.
         """
         import copy
 
+        targets = self.addresses if address is None else [address]
         with self._lock:
-            self._pre_dusk = copy.copy(self.state)
-            self.state.sys = 20002
-            self.state.pac = 0
-            # The real device still reports a 1-2W residual on PDC while
-            # shutting down (user observation) — never emulate a clean zero.
-            self.state.pdc = 3
-            self.state.pd01 = 0
-            self.state.pd02 = 0
+            for device in targets:
+                state = self.states[device]
+                self._pre_dusk[device] = copy.copy(state)
+                state.sys = 20002
+                state.pac = 0
+                # The real device still reports a 1-2W residual on PDC while
+                # shutting down (user observation) — never emulate a clean zero.
+                state.pdc = 3
+                state.pd01 = 0
+                state.pd02 = 0
 
         if announce_seconds is None:
             return
@@ -672,19 +718,26 @@ class SolarmaxEmulator:
             # immediately instead of joining a thread mid-sleep.
             if self._stop_event.wait(announce_seconds):
                 return
-            self.dark = True
-            _LOGGER.info("Emulator: dark (powered off)")
+            for device in targets:
+                self._dark.add(device)
+            _LOGGER.info("Emulator: dark (powered off) %s", targets)
 
         self._timer_thread = threading.Thread(target=_go_dark, daemon=True)
         self._timer_thread.start()
 
-    def wake(self) -> None:
-        """Dawn: restore the pre-dusk state and answer again."""
+    def wake(self, address: int | None = None) -> None:
+        """Dawn: restore the pre-dusk state and answer again.
+
+        `address=None` targets every served address.
+        """
+        targets = self.addresses if address is None else [address]
         with self._lock:
-            if self._pre_dusk is not None:
-                self.state = self._pre_dusk
-                self._pre_dusk = None
-        self.dark = False
+            for device in targets:
+                restored = self._pre_dusk.pop(device, None)
+                if restored is not None:
+                    self.states[device] = restored
+        for device in targets:
+            self._dark.discard(device)
 
     def inject(self, failure: str) -> None:
         """Poison exactly the next response: corrupt_crc | truncate | empty_data | drop."""
@@ -821,6 +874,13 @@ def main():
         "--address", type=int, default=1, help="Inverter address 1-249 (default: 1)"
     )
     parser.add_argument(
+        "--extra-address",
+        type=int,
+        action="append",
+        default=[],
+        help="Additional inverter address served on the same port (repeatable)",
+    )
+    parser.add_argument(
         "--scenario",
         type=str,
         default="day",
@@ -845,7 +905,12 @@ def main():
     if args.verbose:
         logging.getLogger().setLevel(logging.DEBUG)
 
-    emulator = SolarmaxEmulator(host=args.host, port=args.port, address=args.address)
+    emulator = SolarmaxEmulator(
+        host=args.host,
+        port=args.port,
+        address=args.address,
+        extra_addresses=args.extra_address,
+    )
     emulator.state = get_scenario_state(args.scenario)
 
     # Start server in a thread
