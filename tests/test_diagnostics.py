@@ -36,9 +36,6 @@ def _snapshot(**overrides) -> EngineSnapshot:
         "expected_outside_twilight": False,
         "fault_since": None,
         "diagnostics": {
-            "connection_attempts": 5,
-            "reconnects": 1,
-            "timeouts": 0,
             "polls_ok": 10,
             "last_successful_poll": datetime(2025, 9, 11, 10, 0, tzinfo=UTC),
             "last_shutdown_announcement": None,
@@ -68,6 +65,7 @@ def _mock_coordinator(**attrs) -> MagicMock:
     coordinator.subentry_title.return_value = "Roof"
     coordinator.device_model_for.return_value = "SolarMax 7TP2"
     coordinator.last_successful_update_for.return_value = None
+    coordinator.link = MagicMock(attempts=5, reconnects=1, timeouts=0)
     for key, value in attrs.items():
         setattr(coordinator, key, value)
     return coordinator
@@ -95,10 +93,12 @@ async def test_config_entry_diagnostics(hass: HomeAssistant):
     assert config_data["data"]["host"] == "**REDACTED**"
     assert "port" in config_data["data"]
 
-    # Verify coordinator data (only update_interval and sun_source at top level)
+    # Verify coordinator data (update_interval, sun_source, shared-link counters)
     coordinator_data = diagnostics["coordinator"]
     assert coordinator_data["sun_source"] == "sun.sun"
     assert "update_interval" in coordinator_data
+    # The shared link's counters are reported once at coordinator level.
+    assert coordinator_data["link"] == {"attempts": 5, "reconnects": 1, "timeouts": 0}
 
     # Verify per-inverter diagnostics structure
     inverter_data = diagnostics["inverters"]["sub1"]
@@ -106,11 +106,11 @@ async def test_config_entry_diagnostics(hass: HomeAssistant):
     assert inverter_data["reconnecting"] is False
     assert inverter_data["fault_since"] is None
 
-    # Engine counters and transitions are exposed unchanged.
+    # Per-engine diagnostics no longer copy the shared link's counters.
     connection_data = inverter_data["connection"]
-    assert connection_data["connection_attempts"] == 5
-    assert connection_data["reconnects"] == 1
-    assert connection_data["timeouts"] == 0
+    assert "connection_attempts" not in connection_data
+    assert "reconnects" not in connection_data
+    assert "timeouts" not in connection_data
     assert connection_data["transitions"] == []
 
     # Verify sensor data

@@ -55,6 +55,16 @@ async def async_get_config_entry_diagnostics(
         },
     }
 
+    # The link is shared by every engine, so its counters are reported once
+    # here rather than copied into each inverter's diagnostics.
+    link = coordinator.link
+    if link is not None:
+        diagnostics_data["coordinator"]["link"] = {
+            "attempts": link.attempts,
+            "reconnects": link.reconnects,
+            "timeouts": link.timeouts,
+        }
+
     for subentry_id in coordinator.subentry_ids():
         snapshot = snapshots.get(subentry_id)
         last_update = coordinator.last_successful_update_for(subentry_id)

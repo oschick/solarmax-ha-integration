@@ -73,11 +73,12 @@ class ArmingTracker:
 
 @dataclass
 class EngineDiagnostics:
-    """Poll/connection counters and the most recent state transitions."""
+    """Per-engine poll counters and the most recent state transitions.
 
-    connection_attempts: int = 0
-    reconnects: int = 0
-    timeouts: int = 0
+    Link-level counters (attempts, reconnects, timeouts) belong to the shared
+    link and are reported once at coordinator level, not copied per engine.
+    """
+
     polls_ok: int = 0
     last_successful_poll: datetime | None = None
     last_shutdown_announcement: datetime | None = None
@@ -112,7 +113,9 @@ class EngineSnapshot:
     diagnostics: dict[str, object] = field(compare=False)
     # None on success; CONNECT means the endpoint itself was unreachable, so
     # the coordinator can fail the rest of the bus without more attempts.
-    link_failure: LinkFailure | None = None
+    # compare=False: a CONNECT/EXCHANGE flip must never notify listeners; the
+    # coordinator reads it once per cycle, so its equality is irrelevant.
+    link_failure: LinkFailure | None = field(default=None, compare=False)
 
 
 class LinkTimeout(Exception):
@@ -359,9 +362,21 @@ class ConnectionEngine:
         grace_seconds: float = STARTUP_GRACE_SECONDS,
         clock: Callable[[], float] = time.monotonic,
         today: Callable[[], date] | None = None,
+        poll_budget: float | None = None,
     ) -> None:
         self._link = link
         self._address = address
+        # Scale the budget with the link's timeouts so a raised response
+        # timeout never truncates a slow-but-healthy poll; never below the
+        # POLL_BUDGET_SECONDS floor.
+        self._poll_budget = (
+            poll_budget
+            if poll_budget is not None
+            else max(
+                POLL_BUDGET_SECONDS,
+                link.connect_timeout + 4 * link.response_timeout,
+            )
+        )
         self._sun_below = sun_below
         self._verify_checksum = verify_checksum
         self._grace_seconds = grace_seconds
@@ -391,7 +406,7 @@ class ConnectionEngine:
                     reconnecting=False, expected_outside_twilight=False
                 )
             try:
-                async with asyncio.timeout(POLL_BUDGET_SECONDS):
+                async with asyncio.timeout(self._poll_budget):
                     return await self._poll_inner()
             except (LinkConnectTimeout, LinkConnectFailed):
                 return await self._on_failure(LinkFailure.CONNECT)
@@ -577,10 +592,6 @@ class ConnectionEngine:
         expected_outside_twilight: bool,
         link_failure: LinkFailure | None = None,
     ) -> EngineSnapshot:
-        # Link counters are live and must not lag behind the returned snapshot.
-        self._diagnostics.connection_attempts = self._link.attempts
-        self._diagnostics.reconnects = self._link.reconnects
-        self._diagnostics.timeouts = self._link.timeouts
         return EngineSnapshot(
             state=self._state,
             values=dict(self._values),  # fresh copy every snapshot

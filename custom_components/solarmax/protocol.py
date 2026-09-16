@@ -464,9 +464,9 @@ def parse_response(
     """
     try:
         frames = _validated_frames(data, verify_checksum)
+        _raise_for_interface_error(frames[0])
         if expected_address is not None:
             _raise_for_wrong_source(frames, expected_address)
-        _raise_for_interface_error(frames[0])
         result_dict: dict[str, dict[str, float | int]] = {}
         for item in _extract_data_from_frames(frames).split(PROTO_FS):
             if parsed := _parse_field(item):

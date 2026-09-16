@@ -12,6 +12,7 @@ from custom_components.solarmax.connection import (
     ARMED_ESCALATION_SECONDS,
     POLL_BUDGET_SECONDS,
     ConnectionEngine,
+    EngineSnapshot,
     EngineState,
     LinkClosed,
     LinkFailure,
@@ -44,6 +45,9 @@ class _FakeClock:
 class _BlockingStaticLink:
     """Link double that lets close land after the static request starts."""
 
+    connect_timeout = 3.0
+    response_timeout = 3.5
+
     def __init__(self) -> None:
         self.static_started = asyncio.Event()
         self.release_static = asyncio.Event()
@@ -73,6 +77,9 @@ class _BlockingStaticLink:
 class _PartialStaticLink:
     """Always omits most static fields and records the requested payloads."""
 
+    connect_timeout = 3.0
+    response_timeout = 3.5
+
     def __init__(self) -> None:
         self.payloads: list[str] = []
         self.connected = False
@@ -93,6 +100,9 @@ class _PartialStaticLink:
 
 class _ScriptedLink:
     """Return or raise a fixed sequence of request outcomes."""
+
+    connect_timeout = 3.0
+    response_timeout = 3.5
 
     def __init__(
         self, responses: list[str | Exception], *, disconnect_delay: float = 0.0
@@ -736,6 +746,9 @@ def _response_from(source: str, data: str) -> str:
 class _ReplyLink:
     """Link double that returns scripted frames and counts requests."""
 
+    connect_timeout = 3.0
+    response_timeout = 3.5
+
     def __init__(self, replies: list[str]) -> None:
         self.replies = list(replies)
         self.requests = 0
@@ -814,3 +827,26 @@ async def test_second_reply_from_other_address_fails_the_poll():
     snapshot = await engine.poll()
     assert snapshot.state is EngineState.OFFLINE_FAULT
     assert snapshot.link_failure is LinkFailure.EXCHANGE
+
+
+def test_poll_budget_scales_with_response_timeout():
+    """A raised response timeout widens the per-engine poll budget (A8)."""
+    link = SolarmaxLink("127.0.0.1", 1, response_timeout=8)
+    engine = ConnectionEngine(link, address=1, sun_below=lambda: False)
+    assert engine._poll_budget == 3 + 4 * 8
+
+
+def test_link_failure_excluded_from_snapshot_equality():
+    """A CONNECT/EXCHANGE flip must not notify listeners (A11)."""
+    base = {
+        "state": EngineState.OFFLINE_EXPECTED,
+        "values": {},
+        "shutdown_announced": False,
+        "reconnecting": False,
+        "expected_outside_twilight": True,
+        "fault_since": None,
+        "diagnostics": {},
+    }
+    connect = EngineSnapshot(**base, link_failure=LinkFailure.CONNECT)
+    exchange = EngineSnapshot(**base, link_failure=LinkFailure.EXCHANGE)
+    assert connect == exchange
