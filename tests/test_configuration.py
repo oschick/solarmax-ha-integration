@@ -58,25 +58,27 @@ def _runtime_with_states(entry, states: dict[int, EngineState]) -> None:
     from types import SimpleNamespace
 
     by_address = {int(s.data["address"]): sid for sid, s in entry.subentries.items()}
-    entry.runtime_data = SimpleNamespace(
-        data={
-            by_address[address]: SimpleNamespace(state=state)
-            for address, state in states.items()
-        }
+    data = {
+        by_address[address]: SimpleNamespace(state=state)
+        for address, state in states.items()
+    }
+    online = {sid for sid, snap in data.items() if snap.state is EngineState.ONLINE}
+    entry.runtime_data = SimpleNamespace(data=data, online_subentry_ids=lambda: online)
+
+
+def _probe(**answers: bool):
+    """Patch probe_addresses to report a fixed answer per address."""
+    return patch(
+        "custom_components.solarmax.configuration.probe_addresses",
+        return_value={int(address): value for address, value in answers.items()},
     )
 
 
-async def test_validate_endpoint_requires_every_healthy_inverter(hass):
+async def test_validate_endpoint_requires_every_online_inverter(hass):
     entry = endpoint_entry(host="192.0.2.10", port=12345, inverters=(1, 2))
     entry.add_to_hass(hass)
     _runtime_with_states(entry, {1: EngineState.ONLINE, 2: EngineState.ONLINE})
-    with (
-        patch(
-            "custom_components.solarmax.configuration.validate_connection",
-            side_effect=[None, CannotConnect],
-        ),
-        pytest.raises(CannotConnect),
-    ):
+    with _probe(**{"1": True, "2": False}), pytest.raises(CannotConnect):
         await validate_endpoint(entry, "192.0.2.20", 12345)
 
 
@@ -84,12 +86,31 @@ async def test_validate_endpoint_tolerates_a_faulted_inverter(hass):
     entry = endpoint_entry(host="192.0.2.10", port=12345, inverters=(1, 2))
     entry.add_to_hass(hass)
     _runtime_with_states(entry, {1: EngineState.ONLINE, 2: EngineState.OFFLINE_FAULT})
-    with patch(
-        "custom_components.solarmax.configuration.validate_connection",
-        side_effect=[None, CannotConnect],
-    ) as probe:
+    with _probe(**{"1": True, "2": False}) as probe:
         await validate_endpoint(entry, "192.0.2.20", 12345)
-    assert probe.await_count == 2
+    # A single link probes every address in one pass.
+    assert probe.await_count == 1
+    assert sorted(probe.await_args.args[1]) == [1, 2]
+
+
+async def test_validate_endpoint_tolerates_expected_offline_sibling(hass):
+    """An OFFLINE_EXPECTED sibling may stay silent while a faulted one answers."""
+    entry = endpoint_entry(host="192.0.2.10", port=12345, inverters=(1, 2))
+    entry.add_to_hass(hass)
+    _runtime_with_states(
+        entry, {1: EngineState.OFFLINE_EXPECTED, 2: EngineState.OFFLINE_FAULT}
+    )
+    with _probe(**{"1": False, "2": True}):
+        await validate_endpoint(entry, "192.0.2.20", 12345)
+
+
+async def test_validate_endpoint_requires_a_silent_online_sibling(hass):
+    """An ONLINE sibling that stays silent fails the probe."""
+    entry = endpoint_entry(host="192.0.2.10", port=12345, inverters=(1, 2))
+    entry.add_to_hass(hass)
+    _runtime_with_states(entry, {1: EngineState.ONLINE, 2: EngineState.OFFLINE_FAULT})
+    with _probe(**{"1": False, "2": True}), pytest.raises(CannotConnect):
+        await validate_endpoint(entry, "192.0.2.20", 12345)
 
 
 async def test_validate_endpoint_needs_one_answer_when_all_faulted(hass):
@@ -98,34 +119,16 @@ async def test_validate_endpoint_needs_one_answer_when_all_faulted(hass):
     _runtime_with_states(
         entry, {1: EngineState.OFFLINE_FAULT, 2: EngineState.OFFLINE_FAULT}
     )
-    with patch(
-        "custom_components.solarmax.configuration.validate_connection",
-        side_effect=[CannotConnect, None],
-    ):
+    with _probe(**{"1": False, "2": True}):
         await validate_endpoint(entry, "192.0.2.20", 12345)
-    with (
-        patch(
-            "custom_components.solarmax.configuration.validate_connection",
-            side_effect=[CannotConnect, CannotConnect],
-        ),
-        pytest.raises(CannotConnect),
-    ):
+    with _probe(**{"1": False, "2": False}), pytest.raises(CannotConnect):
         await validate_endpoint(entry, "192.0.2.20", 12345)
 
 
 async def test_validate_endpoint_without_runtime_needs_one_answer(hass):
     entry = endpoint_entry(host="192.0.2.10", port=12345, inverters=(1, 2))
     entry.add_to_hass(hass)
-    with patch(
-        "custom_components.solarmax.configuration.validate_connection",
-        side_effect=[None, CannotConnect],
-    ):
+    with _probe(**{"1": True, "2": False}):
         await validate_endpoint(entry, "192.0.2.20", 12345)
-    with (
-        patch(
-            "custom_components.solarmax.configuration.validate_connection",
-            side_effect=[CannotConnect, CannotConnect],
-        ),
-        pytest.raises(CannotConnect),
-    ):
+    with _probe(**{"1": False, "2": False}), pytest.raises(CannotConnect):
         await validate_endpoint(entry, "192.0.2.20", 12345)

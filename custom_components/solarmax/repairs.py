@@ -24,7 +24,6 @@ from .configuration import (
     validate_endpoint,
     validation_handoff,
 )
-from .connection import EngineState
 from .const import (
     CONF_HOST,
     CONF_PORT,
@@ -154,11 +153,10 @@ class SolarmaxConnectionRepairFlow(RepairsFlow):
                 ):
                     return self.async_abort(reason="already_configured")
                 runtime = getattr(entry, "runtime_data", None)
-                snapshots = getattr(runtime, "data", None) or {}
-                faulted = ",".join(
-                    sid
-                    for sid, snapshot in snapshots.items()
-                    if snapshot.state is EngineState.OFFLINE_FAULT
+                faulted = (
+                    ",".join(sorted(runtime.faulted_subentry_ids()))
+                    if runtime is not None
+                    else ""
                 )
                 self._set_pending(issue, True, target_endpoint, faulted or None)
                 marked_pending = True

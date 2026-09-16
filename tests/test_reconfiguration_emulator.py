@@ -9,7 +9,10 @@ from homeassistant.config_entries import ConfigEntryDisabler, ConfigEntryState
 from homeassistant.data_entry_flow import FlowResultType
 
 from custom_components.solarmax import async_setup_entry, sensor
-from custom_components.solarmax.configuration import validate_connection
+from custom_components.solarmax.configuration import (
+    probe_addresses,
+    validate_connection,
+)
 from custom_components.solarmax.connection import EngineState, SolarmaxLink
 from custom_components.solarmax.coordinator import SolarmaxCoordinator
 from custom_components.solarmax.protocol import build_request, parse_response
@@ -117,9 +120,9 @@ async def test_reconfigure_waits_for_startup_connection_owner(
         starting_runtime = coordinator
         await original_refresh(coordinator)
 
-    async def probe(**kwargs):
+    async def probe(link, addresses, verify_checksum):
         overlaps.append(starting_runtime.link.connected)
-        return await validate_connection(**kwargs)
+        return await probe_addresses(link, addresses, verify_checksum)
 
     new_host, new_port = proposed_emulator.addr
     try:
@@ -133,7 +136,7 @@ async def test_reconfigure_waits_for_startup_connection_owner(
                 first_refresh,
             ),
             patch(
-                "custom_components.solarmax.configuration.validate_connection",
+                "custom_components.solarmax.configuration.probe_addresses",
                 side_effect=probe,
             ),
         ):
@@ -324,15 +327,16 @@ async def test_reconfigure_emulator_cancel_validation(
     old_runtime = entry.runtime_data
     validated = asyncio.Event()
 
-    async def blocked_probe(**kwargs):
-        await validate_connection(**kwargs)
+    async def blocked_probe(link, addresses, verify_checksum):
+        answered = await probe_addresses(link, addresses, verify_checksum)
         validated.set()
         await asyncio.Event().wait()
+        return answered
 
     host, port = proposed_emulator.addr
     try:
         with patch(
-            "custom_components.solarmax.configuration.validate_connection",
+            "custom_components.solarmax.configuration.probe_addresses",
             side_effect=blocked_probe,
         ):
             submit = asyncio.create_task(
@@ -343,7 +347,9 @@ async def test_reconfigure_emulator_cancel_validation(
             with pytest.raises(asyncio.CancelledError):
                 await submit
         assert entry.data["port"] == emulator.addr[1]
-        assert (await _engine(old_runtime).poll()).state is EngineState.ONLINE
+        # A full cycle through the cycle lock proves the handoff released it.
+        snapshots = await old_runtime._async_update_data()
+        assert all(s.state is EngineState.ONLINE for s in snapshots.values())
     finally:
         await hass.config_entries.async_unload(entry.entry_id)
 
@@ -458,12 +464,13 @@ async def test_old_runtime_poll_cannot_verify_new_repair_endpoint(
     issue_seen_during_unload = []
     unload_platforms = hass.config_entries.async_unload_platforms
 
-    async def probe(**kwargs):
+    async def probe(link, addresses, verify_checksum):
         nonlocal poll_task
-        await validate_connection(**kwargs)
+        answered = await probe_addresses(link, addresses, verify_checksum)
         poll_task = asyncio.create_task(old_runtime._async_update_data())
         await asyncio.sleep(0)
         assert not poll_task.done()
+        return answered
 
     async def unload(current, platforms):
         issue = _connection_issue(hass, entry)
@@ -477,7 +484,7 @@ async def test_old_runtime_poll_cannot_verify_new_repair_endpoint(
     try:
         with (
             patch(
-                "custom_components.solarmax.configuration.validate_connection",
+                "custom_components.solarmax.configuration.probe_addresses",
                 side_effect=probe,
             ),
             patch.object(

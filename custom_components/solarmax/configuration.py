@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from collections.abc import AsyncIterator, Mapping
+from collections.abc import AsyncIterator, Mapping, Sequence
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from typing import Any, Self
@@ -15,7 +15,7 @@ from homeassistant.core import HomeAssistant, callback
 from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers import device_registry as dr
 
-from .connection import EngineState, LinkClosed, LinkTimeout, SolarmaxLink
+from .connection import LinkClosed, LinkTimeout, SolarmaxLink
 from .const import (
     CONF_ADDRESS,
     CONF_DEVICE_NAME,
@@ -318,48 +318,61 @@ def find_address_conflict(
     )
 
 
-async def validate_endpoint(entry: ConfigEntry, host: str, port: int) -> None:
-    """Probe a candidate endpoint with the entry's inverters.
+async def probe_addresses(
+    link: SolarmaxLink, addresses: Sequence[int], verify_checksum: bool
+) -> dict[int, bool]:
+    """Probe each address once over one shared link.
 
-    Every inverter that is not currently in fault must answer, because those
-    prove the new host and port reach the same bus. Inverters already in
-    fault are what the caller is trying to recover; a dead one must not make
-    the endpoint uneditable, so their silence is tolerated. When every
-    inverter is in fault, or no runtime exists, at least one must answer.
+    Returns a map of address to whether it answered a PAC request. The link is
+    reused across addresses so the whole endpoint is verified over a single
+    connection; the caller owns opening and closing it.
+    """
+    answered: dict[int, bool] = {}
+    for address in addresses:
+        try:
+            raw = await link.request(build_request(address, ["PAC"]))
+            parse_response(raw, verify_checksum, expected_address=address)
+        except (LinkTimeout, LinkClosed, ProtocolError, OSError, UnicodeError):
+            answered[address] = False
+        else:
+            answered[address] = True
+    return answered
+
+
+async def validate_endpoint(entry: ConfigEntry, host: str, port: int) -> None:
+    """Probe a candidate endpoint with the entry's inverters over one link.
+
+    Every inverter that is currently online must answer, because those prove
+    the candidate host and port reach the same bus. Inverters that are not
+    online are the ones the caller is trying to recover; a genuinely dead one
+    must not make the endpoint uneditable, so their silence is tolerated. When
+    no inverter is online, or no runtime exists, at least one must answer.
     Raises CannotConnect otherwise.
     """
     subentries = inverter_subentries(entry)
     if not subentries:
         return
     runtime = getattr(entry, "runtime_data", None)
-    snapshots = getattr(runtime, "data", None)
-    if snapshots is None:
-        healthy: set[str] = set()
-    else:
-        healthy = {
-            subentry_id
-            for subentry_id in subentries
-            if subentry_id not in snapshots
-            or snapshots[subentry_id].state is not EngineState.OFFLINE_FAULT
-        }
+    must_answer: set[str] = (
+        runtime.online_subentry_ids() if runtime is not None else set()
+    )
     verify_checksum = entry_option(entry, CONF_VERIFY_CHECKSUM, DEFAULT_VERIFY_CHECKSUM)
     response_timeout = entry_option(
         entry, CONF_RESPONSE_TIMEOUT, DEFAULT_RESPONSE_TIMEOUT
     )
-    answered = 0
-    for subentry_id, subentry in subentries.items():
-        try:
-            await validate_connection(
-                host=host,
-                port=port,
-                address=int(subentry.data[CONF_ADDRESS]),
-                verify_checksum=verify_checksum,
-                response_timeout=response_timeout,
-            )
-        except CannotConnect:
-            if subentry_id in healthy:
-                raise
-            continue
-        answered += 1
-    if answered == 0:
+    address_by_subentry = {
+        subentry_id: int(subentry.data[CONF_ADDRESS])
+        for subentry_id, subentry in subentries.items()
+    }
+    link = SolarmaxLink(host, port, response_timeout=response_timeout)
+    try:
+        answered = await probe_addresses(
+            link, list(address_by_subentry.values()), verify_checksum
+        )
+    finally:
+        await link.close()
+    for subentry_id, address in address_by_subentry.items():
+        if subentry_id in must_answer and not answered.get(address, False):
+            raise CannotConnect
+    if not any(answered.values()):
         raise CannotConnect

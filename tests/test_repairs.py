@@ -13,7 +13,6 @@ from homeassistant.data_entry_flow import FlowResultType
 from homeassistant.helpers import issue_registry as ir
 from homeassistant.util import dt as dt_util
 
-from custom_components.solarmax.configuration import CannotConnect
 from custom_components.solarmax.connection import EngineState
 from custom_components.solarmax.const import (
     DOMAIN,
@@ -188,6 +187,16 @@ def _runtime(configured_entry, first_state, second_state):
         ids[0]: _snap(first_state, fault_since=dt_util.utcnow()),
         ids[1]: _snap(second_state, fault_since=dt_util.utcnow()),
     }
+    coordinator.online_subentry_ids.return_value = {
+        sid
+        for sid, snap in coordinator.data.items()
+        if snap.state is EngineState.ONLINE
+    }
+    coordinator.faulted_subentry_ids.return_value = {
+        sid
+        for sid, snap in coordinator.data.items()
+        if snap.state is EngineState.OFFLINE_FAULT
+    }
     coordinator.validation_handoff = MagicMock()
     coordinator.validation_handoff.return_value.__aenter__ = AsyncMock()
     coordinator.validation_handoff.return_value.__aexit__ = AsyncMock(
@@ -202,10 +211,15 @@ async def test_repair_probes_every_inverter_and_records_pending_set(
     hass, configured_entry
 ):
     ids = _runtime(configured_entry, EngineState.OFFLINE_FAULT, EngineState.ONLINE)
-    with patch("custom_components.solarmax.configuration.validate_connection") as probe:
+    with patch(
+        "custom_components.solarmax.configuration.probe_addresses",
+        return_value={7: True, 8: True},
+    ) as probe:
         result = await _submit_repair(hass, configured_entry, host="192.0.2.10")
     assert result["reason"] == "repair_pending_verification"
-    assert sorted(call.kwargs["address"] for call in probe.await_args_list) == [7, 8]
+    # One shared link probes every address in a single pass.
+    assert probe.await_count == 1
+    assert sorted(probe.await_args.args[1]) == [7, 8]
     issue = _connection_issue(hass, configured_entry)
     assert issue.data[REPAIR_PENDING] == 1
     assert issue.data[REPAIR_PENDING_INVERTERS] == ids[0]
@@ -213,9 +227,10 @@ async def test_repair_probes_every_inverter_and_records_pending_set(
 
 async def test_repair_fails_when_a_healthy_inverter_is_silent(hass, configured_entry):
     _runtime(configured_entry, EngineState.OFFLINE_FAULT, EngineState.ONLINE)
+    # Address 8 is online but stays silent on the candidate endpoint.
     with patch(
-        "custom_components.solarmax.configuration.validate_connection",
-        side_effect=[None, CannotConnect],
+        "custom_components.solarmax.configuration.probe_addresses",
+        return_value={7: True, 8: False},
     ):
         result = await _submit_repair(hass, configured_entry, host="192.0.2.99")
     assert result["type"] is FlowResultType.FORM
@@ -228,9 +243,10 @@ async def test_repair_tolerates_the_faulted_inverter_staying_silent(
 ):
     """A dead sibling must not make the endpoint uneditable."""
     ids = _runtime(configured_entry, EngineState.ONLINE, EngineState.OFFLINE_FAULT)
+    # Address 8 is the faulted one being recovered; its silence is tolerated.
     with patch(
-        "custom_components.solarmax.configuration.validate_connection",
-        side_effect=[None, CannotConnect],
+        "custom_components.solarmax.configuration.probe_addresses",
+        return_value={7: True, 8: False},
     ):
         result = await _submit_repair(hass, configured_entry, host="192.0.2.10")
     assert result["reason"] == "repair_pending_verification"
@@ -241,15 +257,19 @@ async def test_repair_tolerates_the_faulted_inverter_staying_silent(
 
 
 @pytest.mark.parametrize(
-    "error,key", [(CannotConnect(), "cannot_connect"), (RuntimeError(), "unknown")]
+    "probe_kwargs,key",
+    [
+        ({"return_value": {7: False, 8: False}}, "cannot_connect"),
+        ({"side_effect": RuntimeError()}, "unknown"),
+    ],
 )
 async def test_failed_repair_probe_leaves_entry_and_issue_unchanged(
-    hass, configured_entry, error, key
+    hass, configured_entry, probe_kwargs, key
 ):
     with (
         patch(
-            "custom_components.solarmax.configuration.validate_connection",
-            side_effect=error,
+            "custom_components.solarmax.configuration.probe_addresses",
+            **probe_kwargs,
         ),
         patch.object(hass.config_entries, "async_reload", return_value=True) as reload,
     ):
@@ -271,8 +291,9 @@ async def test_repair_without_runtime_preserves_disabled_state(
     original_options = dict(configured_entry.options)
     with (
         patch(
-            "custom_components.solarmax.configuration.validate_connection"
-        ) as validate,
+            "custom_components.solarmax.configuration.probe_addresses",
+            return_value={7: True, 8: True},
+        ) as probe,
         patch.object(hass.config_entries, "async_reload", return_value=True) as reload,
     ):
         result = await _submit_repair(hass, configured_entry, host=host)
@@ -285,7 +306,7 @@ async def test_repair_without_runtime_preserves_disabled_state(
     assert configured_entry.data == {"host": host, "port": 12345}
     assert dict(configured_entry.options) == original_options
     assert _connection_issue(hass, configured_entry).data[REPAIR_PENDING] == 1
-    assert sorted(call.kwargs["address"] for call in validate.await_args_list) == [7, 8]
+    assert sorted(probe.await_args.args[1]) == [7, 8]
 
 
 async def test_repair_unchanged_runtime_handoff_and_refresh(hass, configured_entry):
@@ -299,20 +320,25 @@ async def test_repair_unchanged_runtime_handoff_and_refresh(hass, configured_ent
         handed_off = False
 
     runtime = Mock(
-        validation_handoff=handoff, async_request_refresh=AsyncMock(), data=None
+        validation_handoff=handoff,
+        async_request_refresh=AsyncMock(),
+        data=None,
+        online_subentry_ids=lambda: set(),
+        faulted_subentry_ids=lambda: set(),
     )
     configured_entry.runtime_data = runtime
     hass.config_entries.async_update_entry(
         configured_entry, options={**configured_entry.options, "verify_checksum": False}
     )
 
-    async def probe(**kwargs):
+    async def probe(link, addresses, verify_checksum):
         assert handed_off
-        assert kwargs["verify_checksum"] is False
+        assert verify_checksum is False
+        return {address: True for address in addresses}
 
     with (
         patch(
-            "custom_components.solarmax.configuration.validate_connection",
+            "custom_components.solarmax.configuration.probe_addresses",
             side_effect=probe,
         ),
         patch.object(hass.config_entries, "async_reload") as reload,
@@ -330,7 +356,10 @@ async def test_repair_reload_failure_restores_entry_and_open_issue(
     hass, configured_entry, failure
 ):
     with (
-        patch("custom_components.solarmax.configuration.validate_connection"),
+        patch(
+            "custom_components.solarmax.configuration.probe_addresses",
+            return_value={7: True, 8: True},
+        ),
         patch.object(hass.config_entries, "async_reload", side_effect=[failure, True]),
     ):
         result = await _submit_repair(hass, configured_entry, host="192.0.2.20")
@@ -347,7 +376,10 @@ async def test_repair_failed_unload_accepts_recovered_original_runtime(
     configured_entry.runtime_data = coordinator
     ids = [s.subentry_id for s in configured_entry.subentries.values()]
     with (
-        patch("custom_components.solarmax.configuration.validate_connection"),
+        patch(
+            "custom_components.solarmax.configuration.probe_addresses",
+            return_value={7: True, 8: True},
+        ),
         patch.object(hass.config_entries, "async_reload", return_value=False),
     ):
         result = await _submit_repair(hass, configured_entry, host="192.0.2.20")
@@ -377,8 +409,16 @@ async def test_repair_cancel_before_activation_removes_pending(hass, configured_
         leaving.set()
         await release.wait()
 
-    configured_entry.runtime_data = Mock(validation_handoff=handoff, data=None)
-    with patch("custom_components.solarmax.configuration.validate_connection"):
+    configured_entry.runtime_data = Mock(
+        validation_handoff=handoff,
+        data=None,
+        online_subentry_ids=lambda: set(),
+        faulted_subentry_ids=lambda: set(),
+    )
+    with patch(
+        "custom_components.solarmax.configuration.probe_addresses",
+        return_value={7: True, 8: True},
+    ):
         task = asyncio.create_task(
             _submit_repair(hass, configured_entry, host="192.0.2.20")
         )
@@ -411,8 +451,8 @@ async def test_repair_aborts_when_poll_recovers_while_waiting_for_handoff(
             stack.enter_context(
                 patch.object(engine, "_poll_inner", side_effect=poll_inner)
             )
-        validate = stack.enter_context(
-            patch("custom_components.solarmax.configuration.validate_connection")
+        probe = stack.enter_context(
+            patch("custom_components.solarmax.configuration.probe_addresses")
         )
         refresh = stack.enter_context(
             patch.object(coordinator, "async_request_refresh")
@@ -435,7 +475,7 @@ async def test_repair_aborts_when_poll_recovers_while_waiting_for_handoff(
     assert result["reason"] == "issue_missing"
     assert _connection_issue(hass, configured_entry) is None
     assert configured_entry.data["host"] == "192.0.2.10"
-    validate.assert_not_awaited()
+    probe.assert_not_awaited()
     refresh.assert_not_awaited()
     reload.assert_not_awaited()
 
@@ -453,14 +493,15 @@ async def test_repair_aborts_when_completed_poll_clears_issue_during_probe(
         ):
             recovered[subentry_id] = await engine.poll()
 
-    async def probe(**kwargs):
+    async def probe(link, addresses, verify_checksum):
         # The engines already returned these snapshots; handling them needs no lock.
         await coordinator._async_handle_snapshots(recovered)
         assert _connection_issue(hass, configured_entry) is None
+        return {address: True for address in addresses}
 
     with (
         patch(
-            "custom_components.solarmax.configuration.validate_connection",
+            "custom_components.solarmax.configuration.probe_addresses",
             side_effect=probe,
         ),
         patch.object(coordinator, "async_request_refresh") as refresh,
@@ -483,20 +524,22 @@ async def test_repair_rejects_endpoint_owned_by_other_address(
     if not during_probe:
         other.add_to_hass(hass)
 
-    async def probe(**kwargs):
+    async def probe(link, addresses, verify_checksum):
         if other.entry_id not in hass.config_entries.async_entry_ids():
             other.add_to_hass(hass)
+        return {address: True for address in addresses}
 
     with (
         patch(
-            "custom_components.solarmax.configuration.validate_connection",
+            "custom_components.solarmax.configuration.probe_addresses",
             side_effect=probe,
         ) as validate,
         patch.object(hass.config_entries, "async_reload") as reload,
     ):
         result = await _submit_repair(hass, configured_entry, host="192.0.2.20")
     assert result["reason"] == "already_configured"
-    assert validate.await_count == (2 if during_probe else 0)
+    # One shared-link probe per repair, regardless of inverter count.
+    assert validate.await_count == (1 if during_probe else 0)
     reload.assert_not_awaited()
     assert configured_entry.data["host"] == "192.0.2.10"
     assert "verification_pending" not in _connection_issue(hass, configured_entry).data
@@ -508,13 +551,14 @@ async def test_overlapping_repairs_serialize_endpoint_ownership(hass, configured
     _create_connection_issue(hass, second)
     started, release = asyncio.Event(), asyncio.Event()
 
-    async def probe(**kwargs):
+    async def probe(link, addresses, verify_checksum):
         started.set()
         await release.wait()
+        return {address: True for address in addresses}
 
     with (
         patch(
-            "custom_components.solarmax.configuration.validate_connection",
+            "custom_components.solarmax.configuration.probe_addresses",
             side_effect=probe,
         ) as validate,
         patch.object(hass.config_entries, "async_reload", return_value=True),
@@ -531,7 +575,8 @@ async def test_overlapping_repairs_serialize_endpoint_ownership(hass, configured
         first, last = await asyncio.gather(first_task, second_task)
     assert first["reason"] == "repair_pending_verification"
     assert last["reason"] == "already_configured"
-    assert validate.await_count == 2
+    # The first repair claims the endpoint; the second aborts before probing.
+    assert validate.await_count == 1
 
 
 def test_translation_files_share_issues_and_sys_state_keys():

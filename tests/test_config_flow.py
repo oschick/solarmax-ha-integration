@@ -80,6 +80,9 @@ def _online_runtime(subentry_ids, *, faulted=()) -> MagicMock:
         )
         for subentry_id in subentry_ids
     }
+    runtime.online_subentry_ids.return_value = {
+        subentry_id for subentry_id in subentry_ids if subentry_id not in faulted
+    }
     return runtime
 
 
@@ -93,8 +96,14 @@ def configured_entry(hass):
 
 @pytest.fixture
 def reconfigure_io(hass):
+    def _all_answer(link, addresses, verify_checksum):
+        return {address: True for address in addresses}
+
     with (
-        patch("custom_components.solarmax.configuration.validate_connection") as probe,
+        patch(
+            "custom_components.solarmax.configuration.probe_addresses",
+            side_effect=_all_answer,
+        ) as probe,
         patch.object(hass.config_entries, "async_reload", return_value=True) as reload,
     ):
         yield probe, reload
@@ -154,13 +163,12 @@ async def test_reconfigure_endpoint_success(hass, configured_entry, reconfigure_
     assert result["type"] is FlowResultType.ABORT
     assert configured_entry.unique_id == "192.0.2.99:12345"
     assert configured_entry.options == OPTION_DEFAULTS
-    probe.assert_awaited_once_with(
-        host="192.0.2.99",
-        port=12345,
-        address=1,
-        verify_checksum=True,
-        response_timeout=DEFAULT_RESPONSE_TIMEOUT,
-    )
+    probe.assert_awaited_once()
+    link = probe.await_args.args[0]
+    assert (link.host, link.port) == ("192.0.2.99", 12345)
+    assert link.response_timeout == DEFAULT_RESPONSE_TIMEOUT
+    assert probe.await_args.args[1] == [1]
+    assert probe.await_args.args[2] is True
     configured_entry.runtime_data.validation_handoff.assert_called_once()
     reload.assert_awaited_once_with(configured_entry.entry_id)
 
@@ -176,8 +184,9 @@ async def test_reconfigure_probes_every_inverter(hass, reconfigure_io):
 
     assert result["type"] is FlowResultType.ABORT
     assert result["reason"] == "reconfigure_successful"
-    assert probe.await_count == 2
-    assert sorted(call.kwargs["address"] for call in probe.await_args_list) == [1, 2]
+    # One shared-link probe covers every address in a single pass.
+    assert probe.await_count == 1
+    assert sorted(probe.await_args.args[1]) == [1, 2]
     reload.assert_awaited_once_with(entry.entry_id)
 
 
@@ -186,7 +195,7 @@ async def test_reconfigure_fails_when_a_healthy_inverter_is_silent(
 ):
     """A non-faulted inverter that stops answering blocks the endpoint change."""
     probe, reload = reconfigure_io
-    probe.side_effect = [None, CannotConnect]
+    probe.side_effect = lambda link, addresses, vc: {1: True, 2: False}
     entry = endpoint_entry(host="192.0.2.10", port=12345, inverters=(1, 2))
     entry.add_to_hass(hass)
     entry.runtime_data = _online_runtime(set(entry.subentries))
@@ -202,7 +211,7 @@ async def test_reconfigure_fails_when_a_healthy_inverter_is_silent(
 async def test_reconfigure_tolerates_a_faulted_inverter(hass, reconfigure_io):
     """A dead sibling must not make the endpoint uneditable during recovery."""
     probe, reload = reconfigure_io
-    probe.side_effect = [None, CannotConnect]
+    probe.side_effect = lambda link, addresses, vc: {1: True, 2: False}
     entry = endpoint_entry(host="192.0.2.10", port=12345, inverters=(1, 2))
     entry.add_to_hass(hass)
     faulted = {s.subentry_id for s in entry.subentries.values() if s.unique_id == "2"}
@@ -217,7 +226,7 @@ async def test_reconfigure_tolerates_a_faulted_inverter(hass, reconfigure_io):
 
 async def test_reconfigure_failed_probe(hass, configured_entry, reconfigure_io):
     probe, reload = reconfigure_io
-    probe.side_effect = CannotConnect
+    probe.side_effect = lambda link, addresses, vc: {a: False for a in addresses}
     result = await _submit_reconfigure(hass, configured_entry, host="192.0.2.99")
     assert result["errors"] == {"base": "cannot_connect"}
     assert configured_entry.data[CONF_HOST] == "192.0.2.10"
@@ -242,7 +251,12 @@ async def test_reconfigure_endpoint_conflict(
     probe, reload = reconfigure_io
     conflict = _configured_endpoint_entry(host="192.0.2.99", port=12345, address=2)
     if after_probe:
-        probe.side_effect = lambda **kwargs: conflict.add_to_hass(hass)
+
+        def _probe(link, addresses, verify_checksum):
+            conflict.add_to_hass(hass)
+            return {address: True for address in addresses}
+
+        probe.side_effect = _probe
     else:
         conflict.add_to_hass(hass)
     result = await _submit_reconfigure(hass, configured_entry, host="192.0.2.99")

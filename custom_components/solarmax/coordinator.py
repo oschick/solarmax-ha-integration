@@ -170,6 +170,22 @@ class SolarmaxCoordinator(DataUpdateCoordinator[SnapshotMap]):
             subentry = self._subentries.get(subentry_id)
         return subentry.title if subentry is not None else subentry_id
 
+    def online_subentry_ids(self) -> set[str]:
+        """Subentry IDs whose latest snapshot is ONLINE."""
+        return {
+            subentry_id
+            for subentry_id, snapshot in (self.data or {}).items()
+            if snapshot.state is EngineState.ONLINE
+        }
+
+    def faulted_subentry_ids(self) -> set[str]:
+        """Subentry IDs whose latest snapshot is a genuine fault."""
+        return {
+            subentry_id
+            for subentry_id, snapshot in (self.data or {}).items()
+            if snapshot.state is EngineState.OFFLINE_FAULT
+        }
+
     @property
     def sun_source(self) -> str:
         """Return the source used by the most recent sun check."""
