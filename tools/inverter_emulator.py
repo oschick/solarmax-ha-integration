@@ -602,8 +602,14 @@ class SolarmaxEmulator:
                     break  # client closed
                 last_activity = time.monotonic()
                 address, fields = self.parse_request(data)
+                if address is None:
+                    # A frame whose header cannot be parsed is a real fault to
+                    # surface, unlike a frame for an address we simply do not
+                    # serve.
+                    _LOGGER.warning(f"  Could not parse request: {data!r}")
+                    continue
                 if address not in self.states or address in self._dark:
-                    continue  # absent or powered off: swallow silently
+                    continue  # unserved address or powered off: swallow silently
                 if fields:
                     response = self.build_response(fields, address)
                     if response is None:
@@ -772,17 +778,29 @@ class SolarmaxEmulator:
                 thread.join(timeout=5)
         _LOGGER.info("Emulator stopped.")
 
-    def update_state(self, **kwargs):
-        """Thread-safe state update."""
+    def update_state(self, address: int | None = None, **kwargs):
+        """Thread-safe state update.
+
+        `address=None` updates every served address; a value targets one.
+        """
+        targets = self.addresses if address is None else [address]
         with self._lock:
-            for key, value in kwargs.items():
-                if hasattr(self.state, key):
-                    setattr(self.state, key, value)
+            for device in targets:
+                state = self.states[device]
+                for key, value in kwargs.items():
+                    if hasattr(state, key):
+                        setattr(state, key, value)
 
 
-def _set_interactive_value(emulator: SolarmaxEmulator, field: str, raw: str) -> None:
-    """Apply one value entered in the interactive console."""
-    if not hasattr(emulator.state, field):
+def _set_interactive_value(
+    emulator: SolarmaxEmulator, field: str, raw: str, address: int | None = None
+) -> None:
+    """Apply one value entered in the interactive console.
+
+    `address=None` applies to every served address; a value targets one.
+    """
+    reference = emulator.state if address is None else emulator.states[address]
+    if not hasattr(reference, field):
         print(f"  Unknown field: {field}")
         return
 
@@ -794,14 +812,22 @@ def _set_interactive_value(emulator: SolarmaxEmulator, field: str, raw: str) -> 
             return
         value = raw.lower() == "true"
 
-    emulator.update_state(**{field: value})
+    emulator.update_state(address, **{field: value})
     print(f"  {field} = {value}")
 
 
-def _load_interactive_scenario(emulator: SolarmaxEmulator, name: str) -> None:
-    """Replace the emulator state with a named scenario."""
+def _load_interactive_scenario(
+    emulator: SolarmaxEmulator, name: str, address: int | None = None
+) -> None:
+    """Replace emulator state with a named scenario.
+
+    `address=None` applies the scenario to every served address; a value
+    targets one.
+    """
+    targets = emulator.addresses if address is None else [address]
     with emulator._lock:
-        emulator.state = get_scenario_state(name)
+        for device in targets:
+            emulator.states[device] = get_scenario_state(name)
     print(f"  Loaded scenario: {name}")
 
 
@@ -816,11 +842,11 @@ def execute_interactive_command(emulator: SolarmaxEmulator, command_line: str) -
         return False
     if command == "help":
         print("Commands:")
-        print("  set <field> <value>   - Set a field (pac, pdc, sys, sal, etc.)")
-        print("  scenario <name>       - Load a predefined scenario")
-        print("  status                - Show current state")
-        print("  noise                 - Toggle measurement noise")
-        print("  quit                  - Stop emulator")
+        print("  set <field> <value> [address]  - Set a field on all or one address")
+        print("  scenario <name> [address]      - Load a scenario on all or one")
+        print("  status                         - Show current state")
+        print("  noise [address]                - Toggle noise on all or one address")
+        print("  quit                           - Stop emulator")
     elif command == "status":
         state = emulator.state
         print(f"\n  SYS (status):    {state.sys}")
@@ -835,12 +861,16 @@ def execute_interactive_command(emulator: SolarmaxEmulator, command_line: str) -
         print(f"  KT0 (total):     {state.kt0} kWh")
         print(f"  Noise: {'on' if state.add_noise else 'off'}\n")
     elif command == "set" and len(parts) >= 3:
-        _set_interactive_value(emulator, parts[1].lower(), parts[2])
+        address = int(parts[3]) if len(parts) >= 4 else None
+        _set_interactive_value(emulator, parts[1].lower(), parts[2], address)
     elif command == "scenario" and len(parts) >= 2:
-        _load_interactive_scenario(emulator, parts[1].lower())
+        address = int(parts[2]) if len(parts) >= 3 else None
+        _load_interactive_scenario(emulator, parts[1].lower(), address)
     elif command == "noise":
-        emulator.update_state(add_noise=not emulator.state.add_noise)
-        print(f"  Noise: {'on' if emulator.state.add_noise else 'off'}")
+        address = int(parts[1]) if len(parts) >= 2 else None
+        reference = emulator.state if address is None else emulator.states[address]
+        emulator.update_state(address, add_noise=not reference.add_noise)
+        print(f"  Noise: {'on' if reference.add_noise else 'off'}")
     else:
         print(f"  Unknown command: {command_line}")
     return True
@@ -911,7 +941,9 @@ def main():
         address=args.address,
         extra_addresses=args.extra_address,
     )
-    emulator.state = get_scenario_state(args.scenario)
+    # The CLI scenario applies to every served address.
+    for device in emulator.addresses:
+        emulator.states[device] = get_scenario_state(args.scenario)
 
     # Start server in a thread
     server_thread = threading.Thread(target=emulator.start, daemon=True)

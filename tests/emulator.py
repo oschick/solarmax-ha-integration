@@ -23,6 +23,8 @@ sys.modules["inverter_emulator"] = _mod  # dataclasses need the module registere
 _spec.loader.exec_module(_mod)
 
 SolarmaxEmulator = _mod.SolarmaxEmulator
+get_scenario_state = _mod.get_scenario_state
+load_interactive_scenario = _mod._load_interactive_scenario
 
 
 def _checksum(payload: str) -> str:

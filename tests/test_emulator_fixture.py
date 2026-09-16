@@ -186,3 +186,46 @@ def test_dark_address_is_silent_while_other_answers(dual_emulator):
     ):
         sock.sendall(build_request(2, ["PAC"]))
         sock.recv(4096)
+
+
+def test_scenario_load_applies_to_every_served_address(dual_emulator):
+    """A15: a scenario with no address targets every served inverter."""
+    from tests.emulator import get_scenario_state, load_interactive_scenario
+
+    expected = get_scenario_state("night").sys
+    load_interactive_scenario(dual_emulator._emulator, "night")
+    assert dual_emulator.state_for(1).sys == expected
+    assert dual_emulator.state_for(2).sys == expected
+
+
+def test_scenario_load_can_target_one_address(dual_emulator):
+    """A15: an explicit address leaves the other inverter untouched."""
+    from tests.emulator import get_scenario_state, load_interactive_scenario
+
+    before = dual_emulator.state_for(1).sys
+    load_interactive_scenario(dual_emulator._emulator, "night", address=2)
+    assert dual_emulator.state_for(1).sys == before
+    assert dual_emulator.state_for(2).sys == get_scenario_state("night").sys
+
+
+def test_update_state_applies_to_every_served_address(dual_emulator):
+    """A15: update_state with no address updates every served inverter."""
+    dual_emulator._emulator.update_state(pac=4242)
+    assert dual_emulator.state_for(1).pac == 4242
+    assert dual_emulator.state_for(2).pac == 4242
+    dual_emulator._emulator.update_state(2, pac=99)
+    assert dual_emulator.state_for(1).pac == 4242
+    assert dual_emulator.state_for(2).pac == 99
+
+
+def test_unparseable_frame_warns_while_unserved_address_is_silent(
+    dual_emulator, caplog
+):
+    """A15: a garbled header warns; a frame for an unserved address does not."""
+    import logging
+
+    with caplog.at_level(logging.WARNING):
+        with socket.create_connection(dual_emulator.addr, timeout=1) as sock:
+            sock.sendall(b"not-a-maxcomm-frame\n")
+            time.sleep(0.2)
+    assert any("Could not parse request" in record.message for record in caplog.records)
