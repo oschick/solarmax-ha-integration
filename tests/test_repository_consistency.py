@@ -256,18 +256,15 @@ def test_release_workflow_prepares_changes_through_a_pull_request() -> None:
 
 
 def test_supported_python_versions_use_distinct_home_assistant_stacks() -> None:
-    """Minimum, current, and newest Python lanes must not collapse together."""
+    """The minimum and current Home Assistant lanes must not collapse together."""
     minimum = _active_requirement(
-        "requirements_min.txt", "pytest-homeassistant-custom-component", "3.12"
+        "requirements_min.txt", "pytest-homeassistant-custom-component", "3.14"
     )
     current = _active_requirement(
-        "requirements_test.txt", "pytest-homeassistant-custom-component", "3.13"
-    )
-    newest = _active_requirement(
         "requirements_test.txt", "pytest-homeassistant-custom-component", "3.14"
     )
 
-    assert _exact_version(minimum) < _exact_version(current) < _exact_version(newest)
+    assert _exact_version(minimum) < _exact_version(current)
 
 
 def test_quality_chardet_constraint_matches_requests() -> None:

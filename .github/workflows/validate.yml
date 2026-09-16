@@ -150,14 +150,14 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - name: Minimum compatibility (Python 3.12, HA 2024.12)
-            python: "3.12"
+          - name: Minimum compatibility (Python 3.14, HA 2026.8)
+            python: "3.14"
             requirements: requirements_min.txt
-            artifact: python-3.12-reports
-          - name: Current compatibility (Python 3.13)
-            python: "3.13"
+            artifact: python-3.14-minimum-reports
+          - name: Current compatibility (Python 3.14)
+            python: "3.14"
             requirements: requirements_test.txt
-            artifact: python-3.13-reports
+            artifact: python-3.14-current-reports
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1

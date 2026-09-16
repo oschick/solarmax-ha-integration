@@ -4,7 +4,7 @@ Bug reports, device compatibility results, translations, tests, and code changes
 
 ## Local setup
 
-Use Python 3.13 or 3.14 for development. CI also tests the minimum supported pair, Python 3.12 with Home Assistant 2024.12.
+Use Python 3.14 for development. Home Assistant 2026.8, the minimum supported release, requires Python 3.14, and CI tests that minimum stack as well as the current one.
 
 ```bash
 python3.14 -m venv .venv
@@ -39,7 +39,7 @@ Read [docs/architecture.md](docs/architecture.md) before changing connection, po
 ## Change requirements
 
 - Add focused tests for behavior changes and bug fixes.
-- Keep runtime code compatible with Home Assistant 2024.12.
+- Keep runtime code compatible with Home Assistant 2026.8.
 - Add each user-facing string to `strings.json` and every translation file.
 - Update `README.md` and `CHANGELOG.md` when users will notice the change.
 - Keep `AGENTS.md` and `CLAUDE.md` byte-identical.
@@ -57,8 +57,8 @@ Python environments:
 
 | Python | Purpose | Dependencies |
 | --- | --- | --- |
-| 3.12 | Minimum compatibility with Home Assistant 2024.12 | `requirements_min.txt` |
-| 3.13 | Supported-version compatibility | `requirements_test.txt` |
+| 3.14 | Minimum compatibility with Home Assistant 2026.8 | `requirements_min.txt` |
+| 3.14 | Current Home Assistant compatibility | `requirements_test.txt` |
 | 3.14 | Formatting, typing, tests, and coverage | `requirements_dev.txt` |
 
 Pull requests must maintain 90 percent coverage both overall and across changed
