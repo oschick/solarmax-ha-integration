@@ -76,7 +76,9 @@ Copy `custom_components/solarmax/translations/en.json` to the target BCP 47 lang
 
 Maintainers prepare and publish a release with these steps:
 
-1. From the Actions page, run **Release** on `main` and enter the new tag.
+1. From the Actions page, run **Release** and enter the new tag. A stable
+   tag must run on `main`. A prerelease tag such as `v1.5.0-test1` may run
+   on a pull request branch to produce a test release from that branch.
 2. If the source is not prepared, the workflow creates a release branch and
    provides a link for opening its pull request. Open, review, and merge the
    pull request after its checks pass.

@@ -240,7 +240,11 @@ def test_release_workflow_prepares_changes_through_a_pull_request() -> None:
     )
     assert "script/prepare-release" in prepare_commands
     assert "git push" in prepare_commands
-    assert "compare/main..." in prepare_commands
+    assert "compare/${BASE_BRANCH}..." in prepare_commands
+    guard = next(step for step in prepare["steps"] if "Require main" in step["name"])
+    assert guard["if"] == "github.event_name == 'workflow_dispatch'"
+    assert "INPUT_TAG" in guard["env"]
+    assert "refs/heads/main" in guard["run"]
     assert "git remote set-url" not in prepare_commands
     assert "x-access-token" not in prepare_commands
     assert "GIT_CONFIG_KEY_0=http.https://github.com/.extraheader" in prepare_commands
