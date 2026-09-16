@@ -7,7 +7,7 @@
   "config_flow": true,
   "dependencies": [],
   "documentation": "https://github.com/oschick/solarmax-ha-integration",
-  "integration_type": "device",
+  "integration_type": "hub",
   "iot_class": "local_polling",
   "issue_tracker": "https://github.com/oschick/solarmax-ha-integration/issues",
   "requirements": [],

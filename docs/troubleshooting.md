@@ -23,6 +23,21 @@ Saving options reloads the integration without a connection probe. Watch the Sta
 
 Avoid opening a manual TCP session while Home Assistant polls the inverter. That session can take the only client slot and change the failure you are trying to inspect.
 
+## One inverter silent while others answer
+
+When one inverter behind an endpoint stops answering while its siblings keep
+polling successfully, the endpoint and connection are fine. Check that
+inverter's MaxComm address (its **Inverter address** setting) and its bus
+wiring instead. A lone silent inverter should be checked or removed under
+its own **Reconfigure**, not fixed by editing the endpoint.
+
+## Endpoint unreachable
+
+When every inverter behind an endpoint faults together, the connection
+itself is the problem, not an individual inverter. Home Assistant raises one
+repair issue for the endpoint listing every faulted inverter by name. Open
+it to change the host or port.
+
 ## Expected offline at the wrong time
 
 The integration marks a disconnect as expected after the inverter reports low irradiation (`SYS=20002`), after `PDC` falls below 25 W, or while the sun sits below the configured twilight threshold.
