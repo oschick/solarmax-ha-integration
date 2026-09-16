@@ -138,6 +138,7 @@ jobs:
       - name: Summarize preparation
         if: steps.prepare.outputs.ready == 'false'
         env:
+          BASE_BRANCH: ${{ github.ref_name }}
           COMPARE_URL: ${{ steps.branch.outputs.compare-url }}
           RELEASE_TAG: ${{ steps.version.outputs.tag }}
         run: |
@@ -145,7 +146,11 @@ jobs:
             echo "### Release preparation"
             echo "- Tag: \`$RELEASE_TAG\`"
             echo "- [Open the preparation pull request]($COMPARE_URL)"
-            echo "- Merge the pull request to create the draft release."
+            if [[ "$BASE_BRANCH" == "main" ]]; then
+              echo "- Merge the pull request to create the draft release."
+            else
+              echo "- Merge the pull request into \`$BASE_BRANCH\`, then run this workflow again with \`$RELEASE_TAG\` on \`$BASE_BRANCH\` to create the draft release."
+            fi
           } >> "$GITHUB_STEP_SUMMARY"
 
   release:

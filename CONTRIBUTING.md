@@ -82,8 +82,11 @@ Maintainers prepare and publish a release with these steps:
 2. If the source is not prepared, the workflow creates a release branch and
    provides a link for opening its pull request. Open, review, and merge the
    pull request after its checks pass.
-3. The merge creates the validated draft release. If the source already
-   matches the requested tag, the first workflow run creates the draft.
+3. On `main`, the merge creates the validated draft release. On a pull
+   request branch, run **Release** again with the same tag after the merge;
+   only pushes to `main` start the workflow automatically. If the source
+   already matches the requested tag, the first workflow run creates the
+   draft.
 4. Inspect the draft, its `solarmax.zip` asset, and its changelog notes.
 5. Publish the draft.
 
