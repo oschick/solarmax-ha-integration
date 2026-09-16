@@ -239,6 +239,101 @@ async def test_migrate_is_idempotent_on_a_migrated_entry(hass):
     _assert_migrated(hass, entry, device, pac, kt0)
 
 
+def _v2_endpoint_entry(hass, *, address, entry_id, name) -> MockConfigEntry:
+    """A version 2 entry for the shared 192.0.2.10:12345 endpoint."""
+    entry = MockConfigEntry(
+        domain=DOMAIN,
+        version=2,
+        minor_version=1,
+        title=name,
+        entry_id=entry_id,
+        unique_id=f"192.0.2.10:12345:{address}",
+        data={
+            CONF_HOST: "192.0.2.10",
+            CONF_PORT: 12345,
+            CONF_ADDRESS: address,
+            CONF_DEVICE_NAME: name,
+        },
+        options={
+            CONF_UPDATE_INTERVAL: 30,
+            CONF_VERIFY_CHECKSUM: True,
+            CONF_TWILIGHT_ELEVATION_THRESHOLD: 7,
+            CONF_NIGHT_KEEP_VALUES: True,
+        },
+    )
+    entry.add_to_hass(hass)
+    return entry
+
+
+def _seed_one(hass, entry, *, object_id):
+    """One device and one PAC entity, as 1.4.0 registered them for `entry`."""
+    device_registry = dr.async_get(hass)
+    device = device_registry.async_get_or_create(
+        config_entry_id=entry.entry_id,
+        identifiers={(DOMAIN, entry.entry_id)},
+        name=entry.title,
+    )
+    entity_registry = er.async_get(hass)
+    pac = entity_registry.async_get_or_create(
+        "sensor",
+        DOMAIN,
+        f"{entry.entry_id}-pac",
+        config_entry=entry,
+        device_id=device.id,
+        suggested_object_id=object_id,
+    )
+    return device, pac
+
+
+@pytest.mark.parametrize("first_key", ["a", "b"])
+async def test_migrate_merges_duplicate_endpoint_entries(hass, first_key):
+    """A4: two legacy entries for one endpoint collapse into one v3 entry.
+
+    Migrating in either order leaves a single v3 endpoint with two inverter
+    subentries; every device and entity is preserved and re-parented, and the
+    duplicate entry is removed.
+    """
+    a = _v2_endpoint_entry(hass, address=1, entry_id="entry_a", name="Roof")
+    b = _v2_endpoint_entry(hass, address=2, entry_id="entry_b", name="Garage")
+    dev_a, pac_a = _seed_one(hass, a, object_id="roof_pac")
+    dev_b, pac_b = _seed_one(hass, b, object_id="garage_pac")
+
+    order = {"a": (a, b), "b": (b, a)}
+    first, second = order[first_key]
+    assert await async_migrate_entry(hass, first) is False  # merged into sibling
+    assert await async_migrate_entry(hass, second) is True  # survivor is v3 already
+    await hass.async_block_till_done()  # let the scheduled removal run
+
+    remaining = hass.config_entries.async_entries(DOMAIN)
+    assert len(remaining) == 1
+    survivor = remaining[0]
+    assert survivor.version == 3 and survivor.unique_id == "192.0.2.10:12345"
+    assert hass.config_entries.async_get_entry(first.entry_id) is None
+
+    subs = {
+        int(sub.data[CONF_ADDRESS]): sub
+        for sub in survivor.subentries.values()
+        if sub.subentry_type == "inverter"
+    }
+    assert set(subs) == {1, 2}
+
+    entity_registry = er.async_get(hass)
+    device_registry = dr.async_get(hass)
+    # Address 1 always carries Roof's records, address 2 Garage's, whichever
+    # entry survived.
+    for address, pac, device in ((1, pac_a, dev_a), (2, pac_b, dev_b)):
+        sub = subs[address]
+        migrated = entity_registry.async_get(pac.entity_id)
+        assert migrated is not None
+        assert migrated.config_entry_id == survivor.entry_id
+        assert migrated.config_subentry_id == sub.subentry_id
+        assert migrated.unique_id == f"{sub.subentry_id}-pac"
+        moved_device = device_registry.async_get(device.id)
+        assert moved_device is not None
+        assert survivor.entry_id in moved_device.config_entries
+        assert moved_device.identifiers == {(DOMAIN, sub.subentry_id)}
+
+
 async def test_migrate_future_major_version_is_rejected(hass):
     entry = _legacy_entry(version=4)
     entry.add_to_hass(hass)

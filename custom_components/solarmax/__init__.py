@@ -17,6 +17,7 @@ from .configuration import (
     INVERTER_DEFAULTS,
     OPTION_DEFAULTS,
     endpoint_unique_id,
+    find_endpoint_conflict,
     inverter_fingerprint,
     inverter_subentries,
     subentry_option,
@@ -54,8 +55,88 @@ async def async_migrate_entry(hass: HomeAssistant, entry: SolarmaxConfigEntry) -
     if entry.version == 1:
         _migrate_v1_to_v2(hass, entry)
     if entry.version == 2:
+        if _merge_duplicate_endpoint(hass, entry):
+            # Folded into an existing endpoint; this entry is being removed and
+            # must not load.
+            return False
         _migrate_v2_to_v3(hass, entry)
     return True
+
+
+def _merge_duplicate_endpoint(hass: HomeAssistant, entry: SolarmaxConfigEntry) -> bool:
+    """Fold a second entry for the same endpoint into the surviving one.
+
+    One host:port has one client slot and one owner, so two entries for it
+    cannot both load. This entry's inverter becomes a subentry of the surviving
+    entry, its device and entities move across, and this entry is scheduled for
+    removal. Returns True when a merge happened.
+    """
+    survivor = find_endpoint_conflict(
+        hass,
+        entry.data[CONF_HOST],
+        entry.data[CONF_PORT],
+        exclude_entry_id=entry.entry_id,
+    )
+    if survivor is None:
+        return False
+    # The survivor must be a version 3 endpoint before another inverter attaches.
+    if survivor.version == 1:
+        _migrate_v1_to_v2(hass, survivor)
+    if survivor.version == 2:
+        _migrate_v2_to_v3(hass, survivor)
+    address = int(entry.data.get(CONF_ADDRESS, DEFAULT_ADDRESS))
+    subentry = _resolve_inverter_subentry(
+        hass, survivor, address, dict(entry.data), dict(entry.options)
+    )
+    _move_records_to_entry(hass, entry, survivor, subentry.subentry_id)
+    _LOGGER.warning(
+        "Two Solarmax entries share endpoint %s:%s; merging inverter %s into "
+        "%r and removing the duplicate entry",
+        entry.data[CONF_HOST],
+        entry.data[CONF_PORT],
+        address,
+        survivor.title,
+    )
+    hass.async_create_task(
+        hass.config_entries.async_remove(entry.entry_id),
+        f"remove duplicate Solarmax entry {entry.entry_id}",
+    )
+    return True
+
+
+def _move_records_to_entry(
+    hass: HomeAssistant,
+    entry: SolarmaxConfigEntry,
+    survivor: SolarmaxConfigEntry,
+    subentry_id: str,
+) -> None:
+    """Re-parent this entry's sensor entities and device under the survivor.
+
+    Entity IDs and device IDs are preserved; only their owning entry, subentry,
+    and unique IDs change.
+    """
+    entity_registry = er.async_get(hass)
+    prefix = f"{entry.entry_id}-"
+    for reg_entry in er.async_entries_for_config_entry(entity_registry, entry.entry_id):
+        if reg_entry.domain != Platform.SENSOR or not reg_entry.unique_id.startswith(
+            prefix
+        ):
+            continue
+        entity_registry.async_update_entity(
+            reg_entry.entity_id,
+            config_entry_id=survivor.entry_id,
+            config_subentry_id=subentry_id,
+            new_unique_id=f"{subentry_id}-{reg_entry.unique_id.removeprefix(prefix)}",
+        )
+    device_registry = dr.async_get(hass)
+    device = device_registry.async_get_device(identifiers={(DOMAIN, entry.entry_id)})
+    if device is not None:
+        device_registry.async_update_device(
+            device.id,
+            new_config_entry_id=survivor.entry_id,
+            new_config_subentry_id=subentry_id,
+            new_identifiers={(DOMAIN, subentry_id)},
+        )
 
 
 def _migrate_v1_to_v2(hass: HomeAssistant, entry: SolarmaxConfigEntry) -> None:
