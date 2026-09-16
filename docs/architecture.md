@@ -34,7 +34,7 @@ Use `disconnect()` for an expected night shutdown because an engine must reopen 
 
 ### Connection engine
 
-`ConnectionEngine` keeps a single-address contract: one engine per inverter subentry, each with its own state, arming tracker, static values, fault clock, and diagnostics. It serializes its own polls, enforces the 15-second poll budget, caches values, retries a timeout or corrupt frame once, and returns an `EngineSnapshot`. Link and protocol failures become snapshot state instead of escaping to the coordinator. `EngineSnapshot` carries a `link_failure` field (`None`, `connect`, or `exchange`) set from the exception type that ended the poll. A reply from a different inverter address raises a retryable protocol error, so the engine's existing retry-once policy handles it and a second mismatch fails the poll.
+`ConnectionEngine` keeps a single-address contract: one engine per inverter subentry, each with its own state, arming tracker, static values, fault clock, and diagnostics. It serializes its own polls, enforces a per-engine poll budget (`max(15 s, connect_timeout + 4 × response_timeout)`, so it grows when the response timeout is raised), caches values, retries a timeout or corrupt frame once, and returns an `EngineSnapshot`. Link and protocol failures become snapshot state instead of escaping to the coordinator. `EngineSnapshot` carries a `link_failure` field (`None`, `connect`, or `exchange`) set from the exception type that ended the poll. A reply from a different inverter address raises a retryable protocol error, so the engine's existing retry-once policy handles it and a second mismatch fails the poll.
 
 The engine does not own the shared link. It never calls `disconnect()` or `close()` on it; `close()` on the engine only marks that engine closed and drains its own poll lock. The engine exposes `record_bus_failure()`, which classifies a bus-wide connect failure from the engine's own arming and sun evidence without touching the link; the coordinator calls it for every engine it skips after a connect-stage failure elsewhere in the cycle.
 
@@ -55,7 +55,7 @@ A successful poll clears prior failure timing and recomputes the shutdown arm. E
 
 `SolarmaxCoordinator` owns the shared link and a mapping from subentry ID to `ConnectionEngine`; its data is a mapping from subentry ID to `EngineSnapshot`. A coordinator-level cycle lock serializes whole cycles: scheduled and debounced refreshes, the validation handoff, and shutdown all take it, so two overlapping refreshes can never interleave requests from different cycles.
 
-One cycle polls every engine in subentry order, one request at a time. When an engine's snapshot reports `link_failure == "connect"`, the coordinator calls `record_bus_failure()` on every engine not yet polled in that cycle and sends no further requests; each engine still classifies the failure from its own evidence, so a dark inverter reaches `offline_expected` and a daytime one reaches `offline_fault`. An `exchange` failure affects only the engine that observed it, and the cycle continues with the next engine. The worst case is the 15-second poll budget multiplied by the inverter count, about 150 seconds for ten dark inverters, and the cycle lock means the effective cadence during such a cycle is the cycle length rather than the configured interval.
+One cycle polls every engine in subentry order, one request at a time. When an engine's snapshot reports `link_failure == "connect"`, the coordinator calls `record_bus_failure()` on every engine not yet polled in that cycle and sends no further requests; each engine still classifies the failure from its own evidence, so a dark inverter reaches `offline_expected` and a daytime one reaches `offline_fault`. An `exchange` failure affects only the engine that observed it, and the cycle continues with the next engine. The worst case is the per-engine poll budget (15 seconds, or more when the response timeout is raised) multiplied by the inverter count, about 150 seconds for ten dark inverters, and the cycle lock means the effective cadence during such a cycle is the cycle length rather than the configured interval.
 
 The next interval is the minimum, over all inverters, of the interval the rule below assigns to that inverter's own state:
 
@@ -103,9 +103,13 @@ under it, moves the existing device under the subentry with its device ID
 preserved, and then drops the moved fields from `data`/`options` and sets the
 entry's unique ID to `host:port`. Every step is idempotent and its version
 bump is its last write, so a failure at any point leaves an entry the next
-attempt completes. Entity IDs and history are untouched. A downgrade from
-`v1.5.0` requires a Home Assistant backup from before the migration, as it
-did for version 2.
+attempt completes. Entity IDs and history are untouched. When a second entry
+already owns the same `host:port`, the migrating entry does not become a rival
+endpoint: its inverter is folded in as a subentry of the survivor (migrating
+the survivor to version 3 first if needed), its device and entities move
+across with their IDs preserved, and the duplicate entry is scheduled for
+removal so it never loads. A downgrade from `v1.5.0` requires a Home Assistant
+backup from before the migration, as it did for version 2.
 
 The initial config flow uses a short-lived `SolarmaxLink` to probe the first
 inverter's address and creates the entry together with its first `inverter`
@@ -115,9 +119,11 @@ only the address being added or changed, through the coordinator's
 yields so the probe can use the endpoint's single client slot; a name-only or
 preference-only inverter change is saved without a probe. Parent
 **Reconfigure** (host or port) and the repair fix flow probe every inverter
-through `validate_endpoint`: every inverter not currently in fault must
-answer, a faulted one is tolerated, and at least one answer is required when
-every inverter is in fault or the entry is not loaded. The Options flow only
+through `validate_endpoint` over one shared link: every inverter that is
+currently online must answer, an inverter that is not online is tolerated, and
+at least one answer is required when no inverter is online or the entry is not
+loaded. The endpoint reconfigure keeps a title the user set and retitles to the
+new host only while the title still equals the old host. The Options flow only
 accepts update interval, checksum, and response timeout, and never probes.
 
 The domain-scoped `configuration_mutation_lock` serializes setup,

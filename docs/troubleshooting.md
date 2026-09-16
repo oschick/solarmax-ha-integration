@@ -36,7 +36,10 @@ its own **Reconfigure**, not fixed by editing the endpoint.
 When every inverter behind an endpoint faults together, the connection
 itself is the problem, not an individual inverter. Home Assistant raises one
 repair issue for the endpoint listing every faulted inverter by name. Open
-it to change the host or port.
+it to change the host or port. Saving a new endpoint requires every inverter
+that is currently online to answer there; an inverter that is not online is
+tolerated, so a still-faulted sibling cannot block the recovery, and at least
+one inverter must answer when none is online.
 
 ## Expected offline at the wrong time
 

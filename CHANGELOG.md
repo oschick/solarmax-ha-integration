@@ -31,6 +31,8 @@ applies to polling and to every connection test.
   edited per inverter under the inverter's **Reconfigure**. To downgrade
   from `v1.5.0`, restore a Home Assistant backup made before you installed
   the upgrade.
+- Two entries for the same host and port are merged into one: the second
+  entry disappears and its inverter appears as a subentry of the first.
 - A reply from a different inverter address is rejected and retried once.
 
 ## [1.4.0] - 2026-09-06
