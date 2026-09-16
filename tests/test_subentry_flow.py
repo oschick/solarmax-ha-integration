@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -12,6 +13,7 @@ from homeassistant.helpers import device_registry as dr
 
 from custom_components.solarmax.configuration import CannotConnect
 from custom_components.solarmax.const import DOMAIN
+from custom_components.solarmax.coordinator import SolarmaxCoordinator
 from tests.helpers import endpoint_entry
 
 INVERTER_INPUT = {
@@ -100,7 +102,72 @@ async def test_add_inverter_schedules_reload_when_entry_not_loaded(hass):
         result = await hass.config_entries.subentries.async_configure(
             result["flow_id"], INVERTER_INPUT
         )
+        # The reload is deferred until the manager commits the subentry.
+        await hass.async_block_till_done()
     assert result["type"] is FlowResultType.CREATE_ENTRY
+    reload.assert_called_once_with(entry.entry_id)
+
+
+async def test_add_inverter_reload_sees_committed_subentry_when_not_loaded(hass):
+    """A1: the deferred reload runs after the new subentry is committed, so the
+    rebuilt coordinator polls every inverter and exactly one reload runs."""
+    entry = endpoint_entry(host="192.0.2.10", port=12345, inverters=(1,))
+    entry.add_to_hass(hass)
+    entry.mock_state(hass, config_entries.ConfigEntryState.NOT_LOADED)
+
+    built = asyncio.Event()
+    release = asyncio.Event()
+    engines_at_build: dict[str, set[str]] = {}
+
+    async def first_refresh(coordinator):
+        engines_at_build["ids"] = set(coordinator.engines)
+        coordinator.sensor_setup_complete = True
+        built.set()
+        await release.wait()
+
+    result = await _start(hass, entry)
+    with (
+        patch("custom_components.solarmax.config_flow.validate_connection"),
+        patch.object(
+            SolarmaxCoordinator, "async_config_entry_first_refresh", first_refresh
+        ),
+        patch.object(hass.config_entries, "async_forward_entry_setups", AsyncMock()),
+        patch.object(
+            hass.config_entries,
+            "async_schedule_reload",
+            wraps=hass.config_entries.async_schedule_reload,
+        ) as reload,
+    ):
+        result = await hass.config_entries.subentries.async_configure(
+            result["flow_id"], INVERTER_INPUT
+        )
+        assert result["type"] is FlowResultType.CREATE_ENTRY
+        await asyncio.wait_for(built.wait(), 5)
+        release.set()
+        await hass.async_block_till_done()
+
+    reload.assert_called_once_with(entry.entry_id)
+    # Both address 1 and the newly added address 2 are present when the reload
+    # builds the coordinator: the subentry was committed first.
+    assert len(engines_at_build["ids"]) == 2
+
+
+async def test_reconfigure_address_schedules_reload_when_entry_not_loaded(hass):
+    """A7: an address change on an idle entry reloads through the same path."""
+    entry = endpoint_entry(host="192.0.2.10", port=12345, inverters=(1,))
+    entry.add_to_hass(hass)
+    entry.mock_state(hass, config_entries.ConfigEntryState.NOT_LOADED)
+    sub = next(iter(entry.subentries.values()))
+    result = await _start(hass, entry, "reconfigure", sub.subentry_id)
+    with (
+        patch("custom_components.solarmax.config_flow.validate_connection"),
+        patch.object(hass.config_entries, "async_schedule_reload") as reload,
+    ):
+        result = await hass.config_entries.subentries.async_configure(
+            result["flow_id"], {**dict(sub.data), "address": 5}
+        )
+        await hass.async_block_till_done()
+    assert result["reason"] == "reconfigure_successful"
     reload.assert_called_once_with(entry.entry_id)
 
 

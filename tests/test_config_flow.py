@@ -173,6 +173,91 @@ async def test_reconfigure_endpoint_success(hass, configured_entry, reconfigure_
     reload.assert_awaited_once_with(configured_entry.entry_id)
 
 
+async def test_reconfigure_title_follows_host_when_untouched(hass, reconfigure_io):
+    """A12: a title still equal to the old host tracks the new host."""
+    entry = endpoint_entry(
+        host="192.0.2.10", port=12345, inverters=(1,), title="192.0.2.10"
+    )
+    entry.add_to_hass(hass)
+    entry.runtime_data = _online_runtime(set(entry.subentries))
+    await _submit_reconfigure(hass, entry, host="192.0.2.99")
+    assert entry.title == "192.0.2.99"
+
+
+async def test_reconfigure_keeps_custom_title(hass, configured_entry, reconfigure_io):
+    """A12: a user-chosen title survives an endpoint change."""
+    await _submit_reconfigure(hass, configured_entry, host="192.0.2.99")
+    assert configured_entry.title == "Existing inverter"
+
+
+def _legacy_v2_entry(hass, *, disabled: bool) -> MockConfigEntry:
+    """A not-yet-migrated version 2 entry: inverter identity still in data."""
+    entry = MockConfigEntry(
+        domain=DOMAIN,
+        title="192.0.2.10",
+        data={
+            CONF_HOST: "192.0.2.10",
+            CONF_PORT: 12345,
+            CONF_ADDRESS: 7,
+            CONF_DEVICE_NAME: "Garage",
+        },
+        options={
+            CONF_UPDATE_INTERVAL: DEFAULT_UPDATE_INTERVAL,
+            CONF_VERIFY_CHECKSUM: DEFAULT_VERIFY_CHECKSUM,
+            CONF_TWILIGHT_ELEVATION_THRESHOLD: 8,
+            CONF_NIGHT_KEEP_VALUES: True,
+        },
+        unique_id="192.0.2.10:12345:7",
+        version=2,
+        minor_version=1,
+        disabled_by=ConfigEntryDisabler.USER if disabled else None,
+    )
+    entry.add_to_hass(hass)
+    return entry
+
+
+async def test_reconfigure_legacy_entry_preserves_data_and_probes_address(hass):
+    """A3: a not-yet-migrated entry keeps its legacy keys and probes its address."""
+    entry = _legacy_v2_entry(hass, disabled=True)
+    with (
+        patch("custom_components.solarmax.config_flow.validate_connection") as probe,
+        patch.object(hass.config_entries, "async_reload", return_value=True),
+    ):
+        form = await hass.config_entries.flow.async_init(
+            DOMAIN,
+            context={
+                "source": config_entries.SOURCE_RECONFIGURE,
+                "entry_id": entry.entry_id,
+            },
+        )
+        result = await hass.config_entries.flow.async_configure(
+            form["flow_id"], {CONF_HOST: "192.0.2.99", CONF_PORT: 12345}
+        )
+    assert result["type"] is FlowResultType.ABORT
+    assert entry.data[CONF_HOST] == "192.0.2.99"
+    assert entry.data[CONF_ADDRESS] == 7
+    assert entry.data[CONF_DEVICE_NAME] == "Garage"
+    probe.assert_awaited_once()
+    assert probe.await_args.kwargs["address"] == 7
+
+
+async def test_options_save_preserves_legacy_option_keys(hass):
+    """A3: saving options on a not-yet-migrated entry keeps its legacy options."""
+    entry = _legacy_v2_entry(hass, disabled=True)
+    form = await hass.config_entries.options.async_init(entry.entry_id)
+    await hass.config_entries.options.async_configure(
+        form["flow_id"],
+        user_input={
+            CONF_UPDATE_INTERVAL: 30,
+            CONF_VERIFY_CHECKSUM: True,
+            CONF_RESPONSE_TIMEOUT: DEFAULT_RESPONSE_TIMEOUT,
+        },
+    )
+    assert entry.options[CONF_TWILIGHT_ELEVATION_THRESHOLD] == 8
+    assert entry.options[CONF_NIGHT_KEEP_VALUES] is True
+    assert entry.options[CONF_UPDATE_INTERVAL] == 30
+
+
 async def test_reconfigure_probes_every_inverter(hass, reconfigure_io):
     """The endpoint probe verifies every inverter behind the shared bus."""
     probe, reload = reconfigure_io

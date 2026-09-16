@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from collections.abc import Mapping
 from typing import Any
@@ -32,6 +33,7 @@ from .configuration import (
     entry_option,
     find_address_conflict,
     find_endpoint_conflict,
+    inverter_subentries,
     split_entry_input,
     update_device_name,
     validate_connection,
@@ -230,21 +232,50 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         ):
             return self.async_abort(reason="already_configured")
         async with validation_handoff(entry):
-            await validate_endpoint(entry, host, port)
+            await self._validate_reconfigured_endpoint(entry, host, port)
         # Release the handoff before unload closes the runtime.
         if find_endpoint_conflict(
             self.hass, host, port, exclude_entry_id=entry.entry_id
         ):
             return self.async_abort(reason="already_configured")
+        # The title tracks the host only while the user never renamed it.
+        title = host if entry.title == entry.data[CONF_HOST] else entry.title
         await async_apply_and_reload(
             self.hass,
             entry,
-            data={CONF_HOST: host, CONF_PORT: port},
-            options=entry.options,
-            title=entry.title,
+            # Merge, never replace: legacy address/device_name in data and the
+            # twilight/night-keep options must survive until migration runs.
+            data=dict(entry.data) | {CONF_HOST: host, CONF_PORT: port},
+            options=dict(entry.options),
+            title=title,
             unique_id=endpoint_unique_id(host, port),
         )
         return self.async_abort(reason="reconfigure_successful")
+
+    async def _validate_reconfigured_endpoint(
+        self, entry: ConfigEntry, host: str, port: int
+    ) -> None:
+        """Probe the candidate endpoint, covering a not-yet-migrated entry.
+
+        A migrated entry probes its inverter subentries. A legacy entry that
+        has not reached version 3 yet has no subentries but still carries its
+        single inverter address in data, so that address is probed instead of
+        probing nothing.
+        """
+        if not inverter_subentries(entry) and CONF_ADDRESS in entry.data:
+            await validate_connection(
+                host=host,
+                port=port,
+                address=int(entry.data[CONF_ADDRESS]),
+                verify_checksum=entry_option(
+                    entry, CONF_VERIFY_CHECKSUM, DEFAULT_VERIFY_CHECKSUM
+                ),
+                response_timeout=entry_option(
+                    entry, CONF_RESPONSE_TIMEOUT, DEFAULT_RESPONSE_TIMEOUT
+                ),
+            )
+            return
+        await validate_endpoint(entry, host, port)
 
 
 class OptionsFlow(config_entries.OptionsFlow):
@@ -261,19 +292,22 @@ class OptionsFlow(config_entries.OptionsFlow):
                 options = dict(entry.options)
                 if user_input == options:
                     return self.async_create_entry(title="", data=None)  # type: ignore[arg-type]
+                # Merge, never replace: a not-yet-migrated entry keeps its
+                # legacy twilight/night-keep options until migration removes them.
+                merged_options = dict(entry.options) | user_input
                 try:
                     await async_apply_and_reload(
                         self.hass,
                         entry,
                         data=dict(entry.data),
-                        options=user_input,
+                        options=merged_options,
                         title=entry.title,
                         unique_id=entry.unique_id,
                     )
                 except EntryReloadError:
                     errors["base"] = "reload_failed"
                 else:
-                    return self.async_create_entry(title="", data=user_input)
+                    return self.async_create_entry(title="", data=merged_options)
 
         values = {
             key: entry_option(self.config_entry, key, default)
@@ -303,26 +337,16 @@ class InverterSubentryFlow(ConfigSubentryFlow):
             async with configuration_mutation_lock(self.hass):
                 if find_address_conflict(entry, address) is not None:
                     return self.async_abort(reason="already_configured")
-                try:
-                    async with validation_handoff(entry):
-                        await self._probe(entry, address)
-                except CannotConnect:
-                    errors["base"] = "cannot_connect"
-                except Exception:
-                    _LOGGER.exception("Unexpected exception")
-                    errors["base"] = "unknown"
-                else:
+                if await self._try_probe(entry, address, errors):
                     if find_address_conflict(entry, address) is not None:
                         return self.async_abort(reason="already_configured")
-                    if entry.state is not ConfigEntryState.LOADED:
-                        # An idle or failed entry has no update listener to
-                        # notice the new inverter.
-                        self.hass.config_entries.async_schedule_reload(entry.entry_id)
-                    return self.async_create_entry(
+                    result = self.async_create_entry(
                         title=user_input[CONF_DEVICE_NAME],
                         data=user_input,
                         unique_id=str(address),
                     )
+                    self._schedule_reload_after_commit(entry, address)
+                    return result
 
         values = _DEFAULT_VALUES if user_input is None else user_input
         return self.async_show_form(
@@ -349,14 +373,7 @@ class InverterSubentryFlow(ConfigSubentryFlow):
                         is not None
                     ):
                         return self.async_abort(reason="already_configured")
-                    try:
-                        async with validation_handoff(entry):
-                            await self._probe(entry, address)
-                    except CannotConnect:
-                        errors["base"] = "cannot_connect"
-                    except Exception:
-                        _LOGGER.exception("Unexpected exception")
-                        errors["base"] = "unknown"
+                    await self._try_probe(entry, address, errors)
                 if not errors:
                     renamed = name != subentry.title
                     # Persist first: the repair text is rendered from titles.
@@ -372,6 +389,9 @@ class InverterSubentryFlow(ConfigSubentryFlow):
                         runtime = getattr(entry, "runtime_data", None)
                         if runtime is not None:
                             runtime.async_refresh_repair_issue()
+                    # A not-loaded entry has no fingerprint listener to pick up
+                    # an address/preference change, so reload it here as well.
+                    self._schedule_reload_after_commit(entry, address)
                     return result
 
         values = dict(subentry.data) if user_input is None else user_input
@@ -379,6 +399,53 @@ class InverterSubentryFlow(ConfigSubentryFlow):
             step_id="reconfigure",
             data_schema=_inverter_schema(values),
             errors=errors,
+        )
+
+    async def _try_probe(
+        self, entry: ConfigEntry, address: int, errors: dict[str, str]
+    ) -> bool:
+        """Probe an address through the handoff, mapping failures to errors.
+
+        Returns True when the address answered. Shared by the add and
+        reconfigure steps.
+        """
+        try:
+            async with validation_handoff(entry):
+                await self._probe(entry, address)
+        except CannotConnect:
+            errors["base"] = "cannot_connect"
+            return False
+        except Exception:
+            _LOGGER.exception("Unexpected exception")
+            errors["base"] = "unknown"
+            return False
+        return True
+
+    def _schedule_reload_after_commit(self, entry: ConfigEntry, address: int) -> None:
+        """Reload a not-loaded entry once the manager has committed the subentry.
+
+        A subentry flow's result is committed by the subentry manager after the
+        step returns, so an idle or failed entry (which has no fingerprint
+        listener to notice the change) is reloaded from a deferred task that
+        waits for the commit, verifies the subentry exists, then reloads. A
+        loaded entry relies on the fingerprint listener instead.
+        """
+        if entry.state is ConfigEntryState.LOADED or not entry.state.recoverable:
+            return
+
+        async def _reload_when_committed() -> None:
+            # Two yields let the subentry manager's async_finish_flow commit
+            # the subentry before the reload rebuilds the coordinator.
+            await asyncio.sleep(0)
+            await asyncio.sleep(0)
+            if any(
+                subentry.unique_id == str(address)
+                for subentry in entry.subentries.values()
+            ):
+                self.hass.config_entries.async_schedule_reload(entry.entry_id)
+
+        self.hass.async_create_task(
+            _reload_when_committed(), f"reload Solarmax entry {entry.entry_id}"
         )
 
     async def _probe(self, entry: ConfigEntry, address: int) -> None:
