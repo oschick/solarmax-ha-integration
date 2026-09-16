@@ -46,3 +46,14 @@ def emulator(socket_enabled):
     handle.start()
     yield handle
     handle.stop()
+
+
+@pytest.fixture
+def dual_emulator(socket_enabled):
+    """A running emulator serving inverter addresses 1 and 2 on one port."""
+    from tests.emulator import EmulatorHandle
+
+    handle = EmulatorHandle(addresses=(1, 2))
+    handle.start()
+    yield handle
+    handle.stop()

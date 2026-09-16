@@ -7,7 +7,13 @@ from unittest.mock import patch
 
 import pytest
 
-from custom_components.solarmax.connection import LinkClosed, LinkTimeout, SolarmaxLink
+from custom_components.solarmax.connection import (
+    LinkClosed,
+    LinkConnectFailed,
+    LinkConnectTimeout,
+    LinkTimeout,
+    SolarmaxLink,
+)
 from custom_components.solarmax.protocol import build_request
 
 
@@ -196,3 +202,33 @@ async def test_close_is_terminal(emulator):
             await link.request(build_request(1, ["PAC"]))
     finally:
         await link.close()
+
+
+async def test_refused_connection_raises_connect_failed():
+    link = SolarmaxLink("127.0.0.1", 12345)
+    with (
+        patch("asyncio.open_connection", side_effect=ConnectionRefusedError()),
+        pytest.raises(LinkConnectFailed),
+    ):
+        await link.request("{FB;01;0A|64:PAC|0000}")
+
+
+async def test_connect_timeout_raises_connect_timeout():
+    async def _hang(*_args, **_kwargs):
+        await asyncio.sleep(10)
+
+    link = SolarmaxLink("127.0.0.1", 1, connect_timeout=0.05)
+    with (
+        patch("asyncio.open_connection", side_effect=_hang),
+        pytest.raises(LinkConnectTimeout),
+    ):
+        await link.request("{FB;01;0A|64:PAC|0000}")
+
+
+async def test_setsockopt_failure_is_a_connect_failure(emulator):
+    link = SolarmaxLink(*emulator.addr)
+    with (
+        patch.object(SolarmaxLink, "_configure_socket", side_effect=OSError("boom")),
+        pytest.raises(LinkConnectFailed),
+    ):
+        await link.request("{FB;01;0A|64:PAC|0000}")

@@ -6,7 +6,7 @@ Solarmax Inverter separates protocol parsing, socket ownership, connection polic
 flowchart LR
     CF[Config flow] --> LINK[SolarmaxLink]
     INIT[Entry setup] --> COORD[Coordinator]
-    COORD --> ENGINE[ConnectionEngine]
+    COORD --> ENGINE["ConnectionEngine (1..N, one per inverter)"]
     ENGINE --> LINK
     LINK --> PROTO[MaxComm protocol]
     COORD --> SENSOR[Sensor entities]
@@ -26,13 +26,17 @@ The protocol groups fields by traffic pattern:
 
 ### Link
 
-`SolarmaxLink` owns the persistent `asyncio` reader and writer. A request lock permits one exchange at a time. A peer close triggers one reconnect and resend. Terminal `close()` blocks later requests and prevents an in-flight connect from publishing a new socket.
+`SolarmaxLink` owns the persistent `asyncio` reader and writer for one entry, shared by every inverter behind that endpoint. A request lock permits one exchange at a time. A peer close triggers one reconnect and resend. Terminal `close()` blocks later requests and prevents an in-flight connect from publishing a new socket.
 
-Use `disconnect()` for an expected night shutdown because the engine must reopen the link at dawn. Use `close()` only during entry teardown.
+Connect-stage failures are typed so the coordinator can tell an unreachable endpoint from a silent inverter: a connect timeout raises `LinkConnectTimeout` (a `LinkTimeout` subclass), and a refused or failed connect, including a failed post-connect socket configuration, raises `LinkConnectFailed` (a `LinkClosed` subclass). Exchange failures still raise the base `LinkTimeout` or `LinkClosed`. `_request_with_retry` catches `LinkTimeout`, so a connect timeout is retried once inside a poll before it can surface as a connect failure. A response timeout still aborts the transport, so the next engine on the shared link reconnects before its own request.
+
+Use `disconnect()` for an expected night shutdown because an engine must reopen the link at dawn. Use `close()` only during entry teardown.
 
 ### Connection engine
 
-`ConnectionEngine` serializes polls, enforces the 15-second poll budget, caches values, retries a timeout or corrupt frame once, and returns an `EngineSnapshot`. Link and protocol failures become snapshot state instead of escaping to the coordinator.
+`ConnectionEngine` keeps a single-address contract: one engine per inverter subentry, each with its own state, arming tracker, static values, fault clock, and diagnostics. It serializes its own polls, enforces a per-engine poll budget (`max(15 s, connect_timeout + 4 × response_timeout)`, so it grows when the response timeout is raised), caches values, retries a timeout or corrupt frame once, and returns an `EngineSnapshot`. Link and protocol failures become snapshot state instead of escaping to the coordinator. `EngineSnapshot` carries a `link_failure` field (`None`, `connect`, or `exchange`) set from the exception type that ended the poll. A reply from a different inverter address raises a retryable protocol error, so the engine's existing retry-once policy handles it and a second mismatch fails the poll.
+
+The engine does not own the shared link. It never calls `disconnect()` or `close()` on it; `close()` on the engine only marks that engine closed and drains its own poll lock. The engine exposes `record_bus_failure()`, which classifies a bus-wide connect failure from the engine's own arming and sun evidence without touching the link; the coordinator calls it for every engine it skips after a connect-stage failure elsewhere in the cycle.
 
 The engine classifies state from current observations:
 
@@ -49,62 +53,93 @@ A successful poll clears prior failure timing and recomputes the shutdown arm. E
 
 ### Coordinator
 
-`SolarmaxCoordinator` calls the engine and returns its snapshot to Home Assistant. The coordinator catches unexpected exceptions so entry setup can create entities while the inverter sleeps.
+`SolarmaxCoordinator` owns the shared link and a mapping from subentry ID to `ConnectionEngine`; its data is a mapping from subentry ID to `EngineSnapshot`. A coordinator-level cycle lock serializes whole cycles: scheduled and debounced refreshes, the validation handoff, and shutdown all take it, so two overlapping refreshes can never interleave requests from different cycles.
 
-It chooses the next interval from state:
+One cycle polls every engine in subentry order, one request at a time. When an engine's snapshot reports `link_failure == "connect"`, the coordinator calls `record_bus_failure()` on every engine not yet polled in that cycle and sends no further requests; each engine still classifies the failure from its own evidence, so a dark inverter reaches `offline_expected` and a daytime one reaches `offline_fault`. An `exchange` failure affects only the engine that observed it, and the cycle continues with the next engine. The worst case is the per-engine poll budget (15 seconds, or more when the response timeout is raised) multiplied by the inverter count, about 150 seconds for ten dark inverters, and the cycle lock means the effective cadence during such a cycle is the cycle length rather than the configured interval.
+
+The next interval is the minimum, over all inverters, of the interval the rule below assigns to that inverter's own state:
 
 - `online`: configured interval
 - startup reconnect or `offline_fault`: configured interval capped at 60 seconds
 - `offline_expected` during full night: 900 seconds
 - `offline_expected` from civil dawn (-6° while rising) or during daytime: 60 seconds
 
-The internal civil-dawn threshold affects scheduling only. The configured
-twilight elevation remains the source of fault classification. Without a
-`sun.sun` entity, classification uses 20:00-06:00 and fast recovery polling
-uses 05:00-20:00. The fallback logs one warning per coordinator instance, and
-diagnostics expose the active sun source.
+The civil-dawn check is evaluated per inverter against that inverter's own
+twilight threshold before the minimum across inverters is taken. The internal
+civil-dawn threshold affects scheduling only; each inverter's configured
+twilight elevation remains the source of its own fault classification.
+Without a `sun.sun` entity, classification uses 20:00-06:00 and fast recovery
+polling uses 05:00-20:00. The fallback logs one warning per coordinator
+instance, and diagnostics expose the active sun source.
 
-A fault lasting five minutes creates a Home Assistant repair issue. An expected
-offline period or a recovered connection removes a standard issue. The repair
-flow lets the user edit the host and port, then probes the proposed endpoint
-during a validation handoff. A successful probe marks the same issue as pending
-verification. The coordinator removes that pending issue only after a complete
-**Online** (`EngineState.ONLINE`) poll.
+The coordinator disconnects the shared link only when every engine on it is expected offline; an engine no longer disconnects the link itself when it enters `offline_expected`.
+
+One repair issue per endpoint, ID `connection_issues_{entry_id}`, is created once at least one inverter has been in `offline_fault` for five minutes, with placeholders listing every currently faulted inverter by name. It is updated as the faulted set changes and cleared when no inverter is in fault. The repair flow lets the user edit the host and port, then probes the proposed endpoint during a validation handoff. A successful probe marks the same issue as pending verification; the coordinator tracks which of the previously faulted subentries have completed an online poll since restart and removes the pending marker only once every one of them has, or has been removed. A separate, non-fixable `no_inverter` issue is created instead when the entry has zero inverter subentries; the coordinator then holds no link and no engines and leaves the update interval at its configured value.
 
 Home Assistant owns the repair issue's native **Ignore** state. The coordinator
 updates one stable issue ID during a fault episode, and the repair flow preserves
 the issue metadata when it adds the pending marker. A verified recovery deletes
 the issue, so a later fault starts a new issue without the old Ignore state.
 
-The coordinator also exposes device metadata and sends a local-midnight listener update for daily energy rollover.
+The coordinator also exposes per-subentry device metadata and sends a local-midnight listener update for daily energy rollover, registered once per entry when any subentry has night-keep enabled.
 
 ### Sensors
 
-`SolarmaxSensor` turns snapshot values into Home Assistant entities. The Status Code entity remains available during connection failures and exposes the state plus diagnostic attributes. Other entities use the per-key night policy from `const.py` when the user enables overnight values.
+`SolarmaxSensor` turns snapshot values into Home Assistant entities. Each inverter subentry gets the full sensor set, added with `config_subentry_id`; unique IDs are `{subentry_id}-{key}` and device identifiers are `{(solarmax, subentry_id)}`. Entity IDs for a new inverter derive from its subentry's device name. The Status Code entity, and its diagnostic attributes, are per inverter and remain available during that inverter's own connection failures. Other entities use the per-key night policy from `const.py` when the user enables overnight values for that inverter.
 
-Entity unique IDs form persistent user data. `_UNIQUE_ID_MIGRATIONS` in `__init__.py` handles any required key rename.
+Entity unique IDs form persistent user data. `_UNIQUE_ID_MIGRATIONS` in `__init__.py` handles any required key rename, matching the `{subentry_id}-{key}` form. Removing a subentry removes its device and entities through Home Assistant.
 
 ### Setup and teardown
 
-Schema version 2 stores host, port, inverter address, and device name in
-`ConfigEntry.data`. It stores the update interval, checksum preference,
-night-value preference, and twilight threshold in `ConfigEntry.options`. The
-migration copies legacy values into that split without changing entity IDs or
-entity unique IDs. A downgrade requires a Home Assistant backup from before the
-migration because older integration versions cannot read the version 2 entry.
+Schema version 3 stores host and port in `ConfigEntry.data`, and update
+interval, checksum preference, and response timeout in `ConfigEntry.options`.
+Each inverter is a `ConfigSubentry` of type `inverter`, its data holding
+`address`, `device_name`, `twilight_elevation_threshold`, and
+`night_keep_values`, with the address as its unique ID. Migrating a version 1
+or 2 entry falls through version 2's existing step into a version 3
+reconciliation: it creates the missing `inverter` subentry from the legacy
+data and options, moves every entity's unique ID and `config_subentry_id`
+under it, moves the existing device under the subentry with its device ID
+preserved, and then drops the moved fields from `data`/`options` and sets the
+entry's unique ID to `host:port`. Every step is idempotent and its version
+bump is its last write, so a failure at any point leaves an entry the next
+attempt completes. Entity IDs and history are untouched. When a second entry
+already owns the same `host:port`, the migrating entry does not become a rival
+endpoint: its inverter is folded in as a subentry of the survivor (migrating
+the survivor to version 3 first if needed), its device and entities move
+across with their IDs preserved, and the duplicate entry is scheduled for
+removal so it never loads. A downgrade from `v1.5.0` requires a Home Assistant
+backup from before the migration, as it did for version 2.
 
-The initial config flow uses a short-lived `SolarmaxLink` to request and
-validate `PAC`. It closes the link in `finally`. Native reconfiguration uses the
-same probe when the host, port, or inverter address changes. A device-name-only
-change updates the entry and device registry without probing. The Options flow
-only accepts preference fields and does not probe the inverter.
+The initial config flow uses a short-lived `SolarmaxLink` to probe the first
+inverter's address and creates the entry together with its first `inverter`
+subentry in one call. **Add inverter** and inverter **Reconfigure** probe
+only the address being added or changed, through the coordinator's
+`validation_handoff()`, which takes the cycle lock, disconnects the link, and
+yields so the probe can use the endpoint's single client slot; a name-only or
+preference-only inverter change is saved without a probe. Parent
+**Reconfigure** (host or port) and the repair fix flow probe every inverter
+through `validate_endpoint` over one shared link: every inverter that is
+currently online must answer, an inverter that is not online is tolerated, and
+at least one answer is required when no inverter is online or the entry is not
+loaded. The endpoint reconfigure keeps a title the user set and retitles to the
+new host only while the title still equals the old host. The Options flow only
+accepts update interval, checksum, and response timeout, and never probes.
 
 The domain-scoped `configuration_mutation_lock` serializes setup,
-reconfiguration, Options, and repair mutations across all entries. Endpoint
-checks run again while the caller holds that lock. For a running entry,
-`validation_handoff()` asks the engine to release its persistent socket and
-pause polling while the short-lived probe uses the inverter's single client
-slot.
+reconfiguration, Options, subentry, and repair mutations across all entries.
+Endpoint checks run again while the caller holds that lock.
+
+Home Assistant does not reload an entry when a subentry is added, changed, or
+removed, so the entry registers an update listener that compares a runtime
+fingerprint of the subentries, the set of `(subentry_id, address,
+twilight_elevation_threshold, night_keep_values)` tuples, to the fingerprint
+the running coordinator was built from, and schedules a reload only when they
+differ. A device-name-only change is not part of the fingerprint; the flow
+updates the device registry directly instead. An entry with zero `inverter`
+subentries loads and stays idle: the coordinator holds no link and no
+engines, and a non-fixable `no_inverter` repair issue tells the user to add
+one.
 
 Endpoint and preference changes use one reload transaction. The transaction
 captures `data`, `options`, title, and config-entry unique ID before applying a
@@ -112,7 +147,11 @@ change. If Home Assistant cannot load the changed entry, the transaction
 restores the snapshot and reloads the prior configuration. Cancellation waits
 for the apply-or-rollback transaction to reach a stable state.
 
-Entry setup stores the coordinator in typed `ConfigEntry.runtime_data`, migrates entity IDs, forwards the sensor platform, and registers the midnight listener. Entry unload closes the engine after platform teardown succeeds.
+Entry setup stores the coordinator in typed `ConfigEntry.runtime_data`,
+migrates entity IDs, forwards the sensor platform, and registers the
+midnight listener. Coordinator shutdown takes the cycle lock, closes every
+engine, and then closes the shared link exactly once; entry unload and a
+failed setup both go through that shutdown.
 
 ## Test strategy
 

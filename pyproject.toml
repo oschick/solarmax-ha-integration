@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "solarmax-ha-integration"
-version = "1.4.0"
+version = "1.5.0.dev0+test"
 description = "Home Assistant integration for Solarmax solar inverters"
 readme = "README.md"
 license = {file = "LICENSE"}
@@ -17,12 +17,10 @@ classifiers = [
     "License :: OSI Approved :: MIT License",
     "Operating System :: OS Independent",
     "Programming Language :: Python :: 3",
-    "Programming Language :: Python :: 3.12",
-    "Programming Language :: Python :: 3.13",
     "Programming Language :: Python :: 3.14",
     "Topic :: Home Automation",
 ]
-requires-python = ">=3.12"
+requires-python = ">=3.14"
 
 [project.urls]
 Homepage = "https://github.com/oschick/solarmax-ha-integration"

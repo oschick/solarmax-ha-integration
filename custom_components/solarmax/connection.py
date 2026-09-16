@@ -15,8 +15,7 @@ import asyncio
 import logging
 import socket
 import time
-from collections.abc import AsyncIterator, Callable
-from contextlib import asynccontextmanager
+from collections.abc import Callable
 from dataclasses import asdict, dataclass, field
 from datetime import UTC, date, datetime
 from enum import StrEnum
@@ -74,11 +73,12 @@ class ArmingTracker:
 
 @dataclass
 class EngineDiagnostics:
-    """Poll/connection counters and the most recent state transitions."""
+    """Per-engine poll counters and the most recent state transitions.
 
-    connection_attempts: int = 0
-    reconnects: int = 0
-    timeouts: int = 0
+    Link-level counters (attempts, reconnects, timeouts) belong to the shared
+    link and are reported once at coordinator level, not copied per engine.
+    """
+
     polls_ok: int = 0
     last_successful_poll: datetime | None = None
     last_shutdown_announcement: datetime | None = None
@@ -88,6 +88,13 @@ class EngineDiagnostics:
         """Append an (iso-ts, from, to) transition, capped at the last 20."""
         self.transitions.append((datetime.now(UTC).isoformat(), from_state, to_state))
         del self.transitions[:-20]
+
+
+class LinkFailure(StrEnum):
+    """Which stage of the link failed during the poll that produced a snapshot."""
+
+    CONNECT = "connect"
+    EXCHANGE = "exchange"
 
 
 @dataclass(frozen=True)
@@ -104,6 +111,11 @@ class EngineSnapshot:
     # churn in diagnostics must not defeat `always_update=False`, so it is
     # excluded from equality/hash comparison.
     diagnostics: dict[str, object] = field(compare=False)
+    # None on success; CONNECT means the endpoint itself was unreachable, so
+    # the coordinator can fail the rest of the bus without more attempts.
+    # compare=False: a CONNECT/EXCHANGE flip must never notify listeners; the
+    # coordinator reads it once per cycle, so its equality is irrelevant.
+    link_failure: LinkFailure | None = field(default=None, compare=False)
 
 
 class LinkTimeout(Exception):
@@ -112,6 +124,14 @@ class LinkTimeout(Exception):
 
 class LinkClosed(Exception):
     """Peer closed the connection (FIN/reset/EPIPE) and no recovery was possible."""
+
+
+class LinkConnectTimeout(LinkTimeout):
+    """The TCP connect itself timed out; nothing at the endpoint answered."""
+
+
+class LinkConnectFailed(LinkClosed):
+    """The TCP connect was refused or failed before any request was sent."""
 
 
 class _PeerClosed(Exception):
@@ -210,7 +230,7 @@ class SolarmaxLink:
             self._configure_socket(writer)
         except OSError as err:
             self._abort_transport()
-            raise LinkClosed(
+            raise LinkConnectFailed(
                 f"connect to {self.host}:{self.port} failed: {err}"
             ) from err
 
@@ -225,10 +245,12 @@ class SolarmaxLink:
         except TimeoutError as err:
             self.timeouts += 1
             self._abort_transport()
-            raise LinkTimeout(f"connect to {self.host}:{self.port} timed out") from err
+            raise LinkConnectTimeout(
+                f"connect to {self.host}:{self.port} timed out"
+            ) from err
         except OSError as err:
             self._abort_transport()
-            raise LinkClosed(
+            raise LinkConnectFailed(
                 f"connect to {self.host}:{self.port} failed: {err}"
             ) from err
 
@@ -340,9 +362,21 @@ class ConnectionEngine:
         grace_seconds: float = STARTUP_GRACE_SECONDS,
         clock: Callable[[], float] = time.monotonic,
         today: Callable[[], date] | None = None,
+        poll_budget: float | None = None,
     ) -> None:
         self._link = link
         self._address = address
+        # Scale the budget with the link's timeouts so a raised response
+        # timeout never truncates a slow-but-healthy poll; never below the
+        # POLL_BUDGET_SECONDS floor.
+        self._poll_budget = (
+            poll_budget
+            if poll_budget is not None
+            else max(
+                POLL_BUDGET_SECONDS,
+                link.connect_timeout + 4 * link.response_timeout,
+            )
+        )
         self._sun_below = sun_below
         self._verify_checksum = verify_checksum
         self._grace_seconds = grace_seconds
@@ -372,30 +406,35 @@ class ConnectionEngine:
                     reconnecting=False, expected_outside_twilight=False
                 )
             try:
-                async with asyncio.timeout(POLL_BUDGET_SECONDS):
+                async with asyncio.timeout(self._poll_budget):
                     return await self._poll_inner()
+            except (LinkConnectTimeout, LinkConnectFailed):
+                return await self._on_failure(LinkFailure.CONNECT)
             except (TimeoutError, LinkTimeout, LinkClosed, ProtocolError):
-                return await self._on_failure()
-
-    @asynccontextmanager
-    async def validation_handoff(self) -> AsyncIterator[None]:
-        """Temporarily release the inverter connection for validation."""
-        async with self._poll_lock:
-            if self._closed:
-                raise LinkClosed("connection engine is closed")
-            await self._link.disconnect()
-            yield
+                return await self._on_failure(LinkFailure.EXCHANGE)
 
     async def close(self) -> None:
-        """Idempotent; the last word — no poll() may touch the link again.
+        """Idempotent; no poll() may issue another request after close returns.
 
-        Sets `_closed` before tearing down the link, then waits for the poll
-        lock so no active poll can issue another request after close returns.
+        The shared link belongs to the coordinator, which closes it once after
+        every engine has drained.
         """
         self._closed = True
-        await self._link.close()
         async with self._poll_lock:
             pass
+
+    async def record_bus_failure(self) -> EngineSnapshot:
+        """Classify a connect-stage failure another engine saw on the shared link.
+
+        No request is sent. The engine applies its own arming and sun evidence,
+        exactly as it would after its own failed poll.
+        """
+        async with self._poll_lock:
+            if self._closed:
+                return self._snapshot(
+                    reconnecting=False, expected_outside_twilight=False
+                )
+            return await self._on_failure(LinkFailure.CONNECT)
 
     async def _poll_inner(self) -> EngineSnapshot:
         if not self._statics_loaded:
@@ -431,10 +470,14 @@ class ConnectionEngine:
         except LinkTimeout:
             raw = await self._link.request(payload)
         try:
-            return parse_response(raw, self._verify_checksum)
+            return parse_response(
+                raw, self._verify_checksum, expected_address=self._address
+            )
         except RetryableProtocolError:
             raw = await self._link.request(payload)
-            return parse_response(raw, self._verify_checksum)
+            return parse_response(
+                raw, self._verify_checksum, expected_address=self._address
+            )
 
     def _on_success(self, values: dict[str, dict[str, float | int]]) -> EngineSnapshot:
         today = self._today()
@@ -460,7 +503,7 @@ class ConnectionEngine:
 
         return self._snapshot(reconnecting=False, expected_outside_twilight=False)
 
-    async def _on_failure(self) -> EngineSnapshot:
+    async def _on_failure(self, link_failure: LinkFailure) -> EngineSnapshot:
         previous_state = self._state
         armed = self._tracker.armed
         sun_below = self._sun_is_below()
@@ -477,6 +520,7 @@ class ConnectionEngine:
         return self._snapshot(
             reconnecting=reconnecting,
             expected_outside_twilight=expected_outside_twilight,
+            link_failure=link_failure,
         )
 
     def _sun_is_below(self) -> bool:
@@ -495,7 +539,6 @@ class ConnectionEngine:
         """Handle a disconnect explained by shutdown evidence or darkness."""
         # An expected window starts a fresh repair clock if it later becomes a fault.
         self._fault_since = None
-        await self._link.disconnect()
         self._statics_loaded = False
         self._static_fetch_attempts = 0
 
@@ -543,12 +586,12 @@ class ConnectionEngine:
             self._diagnostics.record_transition(previous_state, state)
 
     def _snapshot(
-        self, *, reconnecting: bool, expected_outside_twilight: bool
+        self,
+        *,
+        reconnecting: bool,
+        expected_outside_twilight: bool,
+        link_failure: LinkFailure | None = None,
     ) -> EngineSnapshot:
-        # Link counters are live and must not lag behind the returned snapshot.
-        self._diagnostics.connection_attempts = self._link.attempts
-        self._diagnostics.reconnects = self._link.reconnects
-        self._diagnostics.timeouts = self._link.timeouts
         return EngineSnapshot(
             state=self._state,
             values=dict(self._values),  # fresh copy every snapshot
@@ -557,4 +600,5 @@ class ConnectionEngine:
             expected_outside_twilight=expected_outside_twilight,
             fault_since=self._fault_since,
             diagnostics=asdict(self._diagnostics),
+            link_failure=link_failure,
         )

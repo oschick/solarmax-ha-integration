@@ -13,8 +13,9 @@ account.
 ## At a glance
 
 - Local, read-only communication with no cloud account
+- Several inverters behind one address, each with its own device
 - Optional night values for dashboards and energy statistics
-- One persistent inverter connection with automatic recovery
+- One persistent connection per endpoint with automatic recovery
 - Faster checks after daytime failures and quiet polling overnight
 - Clear states for normal shutdowns and unexpected connection faults
 - Native reconfiguration and repair flows in Home Assistant
@@ -24,9 +25,13 @@ account.
 
 You need:
 
-- Home Assistant 2024.12.0 or newer
+- Home Assistant 2026.8.0 or newer
 - A SolarMax inverter that exposes the MaxComm protocol over TCP
 - Network access from Home Assistant to the inverter, normally on port `12345`
+
+Upgrading to `v1.5.0` migrates existing entries automatically. To downgrade
+from `v1.5.0`, restore a Home Assistant backup made before you installed the
+upgrade.
 
 ### Supported inverters
 
@@ -88,27 +93,48 @@ a successful check, the integration creates one device and its sensor entities.
 | --- | ---: | --- |
 | Host | `192.168.1.100` | Inverter IP address or host name |
 | Port | `12345` | MaxComm TCP port |
-| Inverter address | `1` | MaxComm address from 1 to 249 |
+| Inverter address (per inverter) | `1` | MaxComm address from 1 to 249 |
 | Update interval | `30 s` | Normal online interval from 5 to 3600 seconds |
-| Device name | `Solarmax Inverter` | Device name shown in Home Assistant |
+| Response timeout | `3.5 s` | Seconds to wait for each reply, 0.5 to 10 |
+| Device name (per inverter) | `Solarmax Inverter` | Device name shown in Home Assistant |
 | Verify response checksum | On | Reject responses with an invalid MaxComm checksum |
-| Keep sensor values overnight | Off | Apply the synthetic night policies described below |
-| Twilight elevation threshold | `5°` | Sun elevation below which an offline inverter is expected |
+| Keep sensor values overnight (per inverter) | Off | Apply the synthetic night policies described below |
+| Twilight elevation threshold (per inverter) | `5°` | Sun elevation below which an offline inverter is expected |
+
+### Several inverters on one connection
+
+One integration entry represents one endpoint: an IP address and a port.
+Add every inverter behind that endpoint from the integration page with
+**Add inverter**; each one gets its own device, sensors, address, name,
+twilight threshold, and night-value setting.
+
+Polling is strictly sequential over the one connection the endpoint allows,
+with a poll budget per inverter of 15 seconds, or longer when the response
+timeout is raised. A full cycle can take up to about 150 seconds when all ten
+inverters are dark. Up to about ten inverters per endpoint is the tested
+design size.
+
+Multi-inverter operation is not verified on real hardware. Reports welcome.
 
 ### Change settings later
 
-The integration menu offers two actions:
+The integration menu offers two actions, plus a per-inverter option:
 
 | Action | Use it for |
 | --- | --- |
-| **Reconfigure** | Host, port, inverter address, or device name |
-| **Configure** | Update interval, checksum verification, night values, or twilight threshold |
+| **Reconfigure** | Host or port |
+| **Configure** | Update interval, checksum verification, or response timeout |
+| Per inverter | Open the inverter under the integration and choose **Reconfigure** for address, name, night values, or twilight threshold |
 
-Home Assistant tests a changed host, port, or inverter address before saving
-it, so the inverter must be reachable. It then reloads the integration and
-restores the previous connection if the new one cannot start. Entity IDs and
-unique IDs stay unchanged. Changing only the device name does not contact the
-inverter.
+Reconfiguring the endpoint (host or port) probes every inverter that is
+currently online; a faulted inverter is tolerated, and if every inverter is
+faulted, or the entry is not loaded, at least one inverter must still answer.
+Adding or reconfiguring an inverter probes only that inverter's address. A
+successful test reloads the integration and restores the previous
+configuration if the new one cannot start. Entity IDs and unique IDs stay
+unchanged. Changing only a device name does not contact the inverter. If the
+entry's title still matches the old host, it follows the new host; a title you
+set yourself is kept.
 
 Options do not require a connection test. Home Assistant reloads the
 integration after saving them and restores the previous options if that reload
@@ -128,6 +154,14 @@ preserving their connection settings and preferences. After migration,
 `v1.3.3` and older releases cannot read the entry. To downgrade from `v1.4.0`,
 restore a Home Assistant backup made before you installed the update.
 
+`v1.5.0` migrates existing entries in place to configuration schema version
+3, moving the single configured inverter into its own subentry. Entity IDs,
+the device, and history are preserved. Two entries for the same host and port
+are merged into one: the second entry disappears and its inverter appears as a
+subentry of the first. After migration, `v1.4.0` and older releases cannot
+read the entry. To downgrade from `v1.5.0`, restore a Home Assistant backup
+made before you installed the update.
+
 ## Connection, outages, and recovery
 
 The integration owns one persistent TCP connection and reuses it across polls.
@@ -140,9 +174,9 @@ optional value does not discard an otherwise valid update.
   enabled, and converts raw register values to Home Assistant units.
 - `SolarmaxLink` owns the inverter's single TCP connection and serializes
   requests so two exchanges cannot overlap.
-- `ConnectionEngine` caches values, applies the 15-second poll budget and
-  retry policy, and turns connection or protocol failures into an
-  `EngineSnapshot`.
+- `ConnectionEngine` caches values, applies the poll budget (15 seconds, or
+  longer when the response timeout is raised) and retry policy, and turns
+  connection or protocol failures into an `EngineSnapshot`.
 - `SolarmaxCoordinator` schedules the next poll from that snapshot and
   supplies the resulting state to sensors, diagnostics, and repairs.
 
@@ -194,8 +228,9 @@ inverter or network is still becoming available.
 Expected-offline polling accelerates when the rising sun reaches -6°, before
 the configurable twilight threshold used to classify faults. This helps detect
 the inverter's return promptly without increasing traffic throughout the
-night. Each poll has a 15-second budget. A lost response or corrupt frame gets
-one retry within that budget. Reloading or unloading the integration closes
+night. Each poll has a budget of 15 seconds, or longer when the response
+timeout is raised. A lost response or corrupt frame gets one retry within that
+budget. Reloading or unloading the integration closes
 the socket so the inverter does not retain the client slot.
 
 If Home Assistant's `sun.sun` entity is unavailable, the integration logs one

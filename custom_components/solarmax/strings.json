@@ -12,26 +12,24 @@
           "device_name": "Device name",
           "verify_checksum": "Verify response checksum",
           "night_keep_values": "Keep sensor values overnight",
-          "twilight_elevation_threshold": "Twilight elevation threshold (degrees)"
+          "twilight_elevation_threshold": "Twilight elevation threshold (degrees)",
+          "response_timeout": "Response timeout (seconds)"
         },
         "data_description": {
-          "twilight_elevation_threshold": "Sun elevation below which an unannounced disconnect counts as expected (also starts fast dawn polling)."
+          "twilight_elevation_threshold": "Sun elevation below which an unannounced disconnect counts as expected (also starts fast dawn polling).",
+          "response_timeout": "How long to wait for each inverter reply before treating it as silent."
         }
       },
       "reconfigure": {
         "title": "Change inverter connection",
-        "description": "The inverter must be reachable to save connection changes.",
+        "description": "Change the endpoint. Every inverter that is currently online must answer on the new host and port before it is saved.",
         "data": {
           "host": "Host",
-          "port": "Port",
-          "address": "Inverter address (1-249)",
-          "device_name": "Device name"
+          "port": "Port"
         },
         "data_description": {
           "host": "IP address or host name of the inverter.",
-          "port": "MaxComm TCP port used by the inverter.",
-          "address": "MaxComm address assigned to the inverter.",
-          "device_name": "Name shown for the device in Home Assistant."
+          "port": "MaxComm TCP port used by the inverter."
         }
       }
     },
@@ -55,16 +53,59 @@
         "data": {
           "update_interval": "Update interval (seconds)",
           "verify_checksum": "Verify response checksum",
-          "night_keep_values": "Keep sensor values overnight",
-          "twilight_elevation_threshold": "Twilight elevation threshold (degrees)"
+          "response_timeout": "Response timeout (seconds)"
         },
         "data_description": {
-          "twilight_elevation_threshold": "Sun elevation below which an unannounced disconnect counts as expected (also starts fast dawn polling)."
+          "response_timeout": "How long to wait for each inverter reply before treating it as silent."
         }
       }
     },
     "error": {
       "reload_failed": "Home Assistant could not activate the new connection. The previous settings were restored."
+    }
+  },
+  "config_subentries": {
+    "inverter": {
+      "entry_type": "Inverter",
+      "initiate_flow": {
+        "user": "Add inverter"
+      },
+      "step": {
+        "user": {
+          "title": "Add inverter",
+          "description": "The inverter must answer on this endpoint before it is added.",
+          "data": {
+            "address": "Inverter address (1-249)",
+            "device_name": "Device name",
+            "twilight_elevation_threshold": "Twilight elevation threshold (degrees)",
+            "night_keep_values": "Keep sensor values overnight"
+          },
+          "data_description": {
+            "twilight_elevation_threshold": "Sun elevation below which an unannounced disconnect counts as expected (also starts fast dawn polling)."
+          }
+        },
+        "reconfigure": {
+          "title": "Change inverter",
+          "description": "A changed address must answer before it is saved. Name and preference changes do not contact the inverter.",
+          "data": {
+            "address": "Inverter address (1-249)",
+            "device_name": "Device name",
+            "twilight_elevation_threshold": "Twilight elevation threshold (degrees)",
+            "night_keep_values": "Keep sensor values overnight"
+          },
+          "data_description": {
+            "twilight_elevation_threshold": "Sun elevation below which an unannounced disconnect counts as expected (also starts fast dawn polling)."
+          }
+        }
+      },
+      "error": {
+        "cannot_connect": "Failed to connect to inverter",
+        "unknown": "Unexpected error occurred"
+      },
+      "abort": {
+        "already_configured": "An inverter with this address is already configured on this endpoint",
+        "reconfigure_successful": "The inverter configuration was updated."
+      }
     }
   },
   "issues": {
@@ -74,7 +115,7 @@
         "step": {
           "init": {
             "title": "Repair inverter connection",
-            "description": "The inverter at {host}:{port} has been unreachable for {minutes} minutes during daytime. Update the host or port to test another connection.",
+            "description": "{inverters} at {host}:{port} has been unreachable for {minutes} minutes during daytime. Update the host or port to test another connection. Inverters that are still online must answer there. If only one inverter is silent while the others answer, check that inverter's address or remove it instead.",
             "data": {
               "host": "Host",
               "port": "Port"
@@ -93,6 +134,10 @@
           "issue_missing": "The repair issue no longer exists."
         }
       }
+    },
+    "no_inverter": {
+      "title": "No inverter configured",
+      "description": "The Solarmax endpoint {title} has no inverter. Open the integration and use Add inverter."
     }
   },
   "entity": {

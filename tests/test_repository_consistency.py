@@ -151,12 +151,8 @@ def test_translations_declare_required_reconfiguration_paths() -> None:
         "config.step.reconfigure.description",
         "config.step.reconfigure.data.host",
         "config.step.reconfigure.data.port",
-        "config.step.reconfigure.data.address",
-        "config.step.reconfigure.data.device_name",
         "config.step.reconfigure.data_description.host",
         "config.step.reconfigure.data_description.port",
-        "config.step.reconfigure.data_description.address",
-        "config.step.reconfigure.data_description.device_name",
         "config.error.cannot_connect",
         "config.error.reload_failed",
         "config.abort.reconfigure_successful",
@@ -171,6 +167,22 @@ def test_translations_declare_required_reconfiguration_paths() -> None:
         "issues.connection_issues.fix_flow.abort.already_configured",
         "issues.connection_issues.fix_flow.abort.repair_pending_verification",
         "issues.connection_issues.fix_flow.abort.issue_missing",
+        "config.step.user.data.response_timeout",
+        "options.step.init.data.response_timeout",
+        "config_subentries.inverter.entry_type",
+        "config_subentries.inverter.initiate_flow.user",
+        "config_subentries.inverter.step.user.data.address",
+        "config_subentries.inverter.step.user.data.device_name",
+        "config_subentries.inverter.step.user.data.twilight_elevation_threshold",
+        "config_subentries.inverter.step.user.data.night_keep_values",
+        "config_subentries.inverter.step.reconfigure.data.address",
+        "config_subentries.inverter.step.reconfigure.data.device_name",
+        "config_subentries.inverter.error.cannot_connect",
+        "config_subentries.inverter.error.unknown",
+        "config_subentries.inverter.abort.already_configured",
+        "config_subentries.inverter.abort.reconfigure_successful",
+        "issues.no_inverter.title",
+        "issues.no_inverter.description",
     }
 
     for path in [
@@ -228,7 +240,11 @@ def test_release_workflow_prepares_changes_through_a_pull_request() -> None:
     )
     assert "script/prepare-release" in prepare_commands
     assert "git push" in prepare_commands
-    assert "compare/main..." in prepare_commands
+    assert "compare/${BASE_BRANCH}..." in prepare_commands
+    guard = next(step for step in prepare["steps"] if "Require main" in step["name"])
+    assert guard["if"] == "github.event_name == 'workflow_dispatch'"
+    assert "INPUT_TAG" in guard["env"]
+    assert "refs/heads/main" in guard["run"]
     assert "git remote set-url" not in prepare_commands
     assert "x-access-token" not in prepare_commands
     assert "GIT_CONFIG_KEY_0=http.https://github.com/.extraheader" in prepare_commands
@@ -244,18 +260,15 @@ def test_release_workflow_prepares_changes_through_a_pull_request() -> None:
 
 
 def test_supported_python_versions_use_distinct_home_assistant_stacks() -> None:
-    """Minimum, current, and newest Python lanes must not collapse together."""
+    """The minimum and current Home Assistant lanes must not collapse together."""
     minimum = _active_requirement(
-        "requirements_min.txt", "pytest-homeassistant-custom-component", "3.12"
+        "requirements_min.txt", "pytest-homeassistant-custom-component", "3.14"
     )
     current = _active_requirement(
-        "requirements_test.txt", "pytest-homeassistant-custom-component", "3.13"
-    )
-    newest = _active_requirement(
         "requirements_test.txt", "pytest-homeassistant-custom-component", "3.14"
     )
 
-    assert _exact_version(minimum) < _exact_version(current) < _exact_version(newest)
+    assert _exact_version(minimum) < _exact_version(current)
 
 
 def test_quality_chardet_constraint_matches_requests() -> None:

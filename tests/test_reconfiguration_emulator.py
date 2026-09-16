@@ -9,15 +9,15 @@ from homeassistant.config_entries import ConfigEntryDisabler, ConfigEntryState
 from homeassistant.data_entry_flow import FlowResultType
 
 from custom_components.solarmax import async_setup_entry, sensor
-from custom_components.solarmax.configuration import validate_connection
-from custom_components.solarmax.connection import (
-    ConnectionEngine,
-    EngineState,
-    SolarmaxLink,
+from custom_components.solarmax.configuration import (
+    probe_addresses,
+    validate_connection,
 )
+from custom_components.solarmax.connection import EngineState, SolarmaxLink
 from custom_components.solarmax.coordinator import SolarmaxCoordinator
 from custom_components.solarmax.protocol import build_request, parse_response
 from tests.emulator import EmulatorHandle
+from tests.helpers import endpoint_entry
 from tests.test_config_flow import (
     _configured_endpoint_entry,
     _submit_options,
@@ -40,17 +40,29 @@ def proposed_emulator(socket_enabled):
 
 async def _loaded_entry(hass, emulator):
     host, port = emulator.addr
-    entry = _configured_endpoint_entry(host=host, port=port, address=1)
+    entry = endpoint_entry(host=host, port=port, inverters=(1,))
     entry.add_to_hass(hass)
     assert await hass.config_entries.async_setup(entry.entry_id)
-    assert (await entry.runtime_data.engine.poll()).state is EngineState.ONLINE
+    coordinator = entry.runtime_data
+    snapshots = await coordinator._async_update_data()
+    assert all(s.state is EngineState.ONLINE for s in snapshots.values())
     return entry
+
+
+def _engine(runtime):
+    """The sole engine of a single-inverter runtime."""
+    return next(iter(runtime.engines.values()))
+
+
+def _state(runtime):
+    """The sole snapshot's state of a single-inverter runtime."""
+    return next(iter(runtime.data.values())).state
 
 
 async def test_reconfigure_emulator_success(hass, emulator, proposed_emulator):
     """Real HA unload and setup transfer the connection to the proposed endpoint."""
     entry = await _loaded_entry(hass, emulator)
-    old_engine = entry.runtime_data.engine
+    old_runtime = entry.runtime_data
     host, port = proposed_emulator.addr
     try:
         result = await asyncio.wait_for(
@@ -58,8 +70,8 @@ async def test_reconfigure_emulator_success(hass, emulator, proposed_emulator):
         )
         assert result["type"] is FlowResultType.ABORT
         assert entry.data["port"] == port
-        assert entry.runtime_data.engine is not old_engine
-        assert (await entry.runtime_data.engine.poll()).state is EngineState.ONLINE
+        assert entry.runtime_data is not old_runtime
+        assert (await _engine(entry.runtime_data).poll()).state is EngineState.ONLINE
     finally:
         await hass.config_entries.async_unload(entry.entry_id)
 
@@ -67,23 +79,25 @@ async def test_reconfigure_emulator_success(hass, emulator, proposed_emulator):
 async def test_reconfigure_emulator_probe_failure(hass, emulator, proposed_emulator):
     """Rejected probe leaves the original engine able to reconnect."""
     entry = await _loaded_entry(hass, emulator)
-    old_engine = entry.runtime_data.engine
+    old_runtime = entry.runtime_data
     proposed_emulator.inject("corrupt_crc")
     host, port = proposed_emulator.addr
     try:
         result = await _submit_reconfigure(hass, entry, host=host, port=port)
         assert result["errors"] == {"base": "cannot_connect"}
         assert entry.data["port"] == emulator.addr[1]
-        assert entry.runtime_data.engine is old_engine
-        assert (await old_engine.poll()).state is EngineState.ONLINE
+        assert entry.runtime_data is old_runtime
+        assert (await _engine(old_runtime).poll()).state is EngineState.ONLINE
     finally:
         await hass.config_entries.async_unload(entry.entry_id)
 
 
-async def test_reconfigure_waits_for_startup_connection_owner(hass, emulator):
+async def test_reconfigure_waits_for_startup_connection_owner(
+    hass, emulator, proposed_emulator
+):
     """Validation must not overlap an entry's first refresh connection."""
     host, port = emulator.addr
-    entry = _configured_endpoint_entry(host=host, port=port, address=1)
+    entry = endpoint_entry(host=host, port=port, inverters=(1,))
     entry.add_to_hass(hass)
     response_started = threading.Event()
     release_response = threading.Event()
@@ -106,10 +120,11 @@ async def test_reconfigure_waits_for_startup_connection_owner(hass, emulator):
         starting_runtime = coordinator
         await original_refresh(coordinator)
 
-    async def probe(**kwargs):
-        overlaps.append(starting_runtime.engine._link.connected)
-        return await validate_connection(**kwargs)
+    async def probe(link, addresses, verify_checksum):
+        overlaps.append(starting_runtime.link.connected)
+        return await probe_addresses(link, addresses, verify_checksum)
 
+    new_host, new_port = proposed_emulator.addr
     try:
         with (
             patch.object(
@@ -121,14 +136,14 @@ async def test_reconfigure_waits_for_startup_connection_owner(hass, emulator):
                 first_refresh,
             ),
             patch(
-                "custom_components.solarmax.config_flow.validate_connection",
+                "custom_components.solarmax.configuration.probe_addresses",
                 side_effect=probe,
             ),
         ):
             setup = asyncio.create_task(hass.config_entries.async_setup(entry.entry_id))
             await asyncio.wait_for(wait_for_response(), 5)
             reconfigure = asyncio.create_task(
-                _submit_reconfigure(hass, entry, address=2)
+                _submit_reconfigure(hass, entry, host=new_host, port=new_port)
             )
             await asyncio.sleep(0.05)
             release_response.set()
@@ -142,7 +157,6 @@ async def test_reconfigure_waits_for_startup_connection_owner(hass, emulator):
             await hass.config_entries.async_unload(entry.entry_id)
         if starting_runtime is not None:
             await starting_runtime.async_shutdown()
-            await starting_runtime.engine.close()
 
 
 async def test_sensor_setup_failure_rolls_back_reconfiguration(
@@ -190,10 +204,10 @@ async def test_failed_setup_closes_connection_before_restoration(
         if failed_runtime is None:
             failed_runtime = entry.runtime_data
             assert failed_runtime is not old_runtime
-            assert failed_runtime.data.state is EngineState.ONLINE
-            assert failed_runtime.engine._link.connected
+            assert _state(failed_runtime) is EngineState.ONLINE
+            assert failed_runtime.link.connected
             raise RuntimeError("platform forwarding failed after first refresh")
-        assert not failed_runtime.engine._link.connected
+        assert not failed_runtime.link.connected
         await forward(entry, platforms)
 
     try:
@@ -209,18 +223,18 @@ async def test_failed_setup_closes_connection_before_restoration(
                 result = await _submit_reconfigure(hass, entry, host=host, port=port)
         assert result["errors"] == {"base": "reload_failed"}
         assert failed_runtime is not None
-        assert not failed_runtime.engine._link.connected
+        assert not failed_runtime.link.connected
         assert dict(entry.data) == old_data
         assert dict(entry.options) == old_options
         assert entry.runtime_data is not old_runtime
         assert entry.runtime_data is not failed_runtime
-        assert entry.runtime_data.data.state is EngineState.ONLINE
-        assert (await entry.runtime_data.engine.poll()).state is EngineState.ONLINE
+        assert _state(entry.runtime_data) is EngineState.ONLINE
+        assert (await _engine(entry.runtime_data).poll()).state is EngineState.ONLINE
     finally:
         await hass.config_entries.async_unload(entry.entry_id)
         # Also clean up on RED, so the assertion remains the failure signal.
         if failed_runtime is not None:
-            await failed_runtime.engine.close()
+            await failed_runtime.async_shutdown()
     for handle in (emulator, proposed_emulator):
         for thread in tuple(handle._emulator._client_threads):
             await asyncio.to_thread(thread.join, 5)
@@ -261,17 +275,16 @@ async def test_cancelled_setup_closes_open_connection(hass, emulator, during_ref
         ):
             setup = asyncio.create_task(hass.config_entries.async_setup(entry.entry_id))
             await asyncio.wait_for(connected.wait(), 5)
-            assert runtime.engine._link.connected
+            assert runtime.link.connected
             setup.cancel()
             with pytest.raises(asyncio.CancelledError):
                 await setup
-        assert not runtime.engine._link.connected
+        assert not runtime.link.connected
         # The inverter's only slot is available immediately after cancellation.
         await validate_connection(host=host, port=port, address=1, verify_checksum=True)
     finally:
         if runtime is not None:
             await runtime.async_shutdown()
-            await runtime.engine.close()
     for thread in tuple(emulator._emulator._client_threads):
         await asyncio.to_thread(thread.join, 5)
         assert not thread.is_alive()
@@ -300,7 +313,7 @@ async def test_failed_initial_setup_detaches_closed_runtime(
         result = await _submit_reconfigure(hass, entry, host=new_host, port=new_port)
         assert result["type"] is FlowResultType.ABORT
         assert result["reason"] == "reconfigure_successful"
-        assert entry.runtime_data.data.state is EngineState.ONLINE
+        assert _state(entry.runtime_data) is EngineState.ONLINE
     finally:
         if entry.state is ConfigEntryState.LOADED:
             await hass.config_entries.async_unload(entry.entry_id)
@@ -311,18 +324,19 @@ async def test_reconfigure_emulator_cancel_validation(
 ):
     """Cancelling while the old engine is handed off releases its polling lock."""
     entry = await _loaded_entry(hass, emulator)
-    old_engine = entry.runtime_data.engine
+    old_runtime = entry.runtime_data
     validated = asyncio.Event()
 
-    async def blocked_probe(**kwargs):
-        await validate_connection(**kwargs)
+    async def blocked_probe(link, addresses, verify_checksum):
+        answered = await probe_addresses(link, addresses, verify_checksum)
         validated.set()
         await asyncio.Event().wait()
+        return answered
 
     host, port = proposed_emulator.addr
     try:
         with patch(
-            "custom_components.solarmax.config_flow.validate_connection",
+            "custom_components.solarmax.configuration.probe_addresses",
             side_effect=blocked_probe,
         ):
             submit = asyncio.create_task(
@@ -333,7 +347,9 @@ async def test_reconfigure_emulator_cancel_validation(
             with pytest.raises(asyncio.CancelledError):
                 await submit
         assert entry.data["port"] == emulator.addr[1]
-        assert (await old_engine.poll()).state is EngineState.ONLINE
+        # A full cycle through the cycle lock proves the handoff released it.
+        snapshots = await old_runtime._async_update_data()
+        assert all(s.state is EngineState.ONLINE for s in snapshots.values())
     finally:
         await hass.config_entries.async_unload(entry.entry_id)
 
@@ -377,28 +393,29 @@ async def test_reconfigure_emulator_cancel_failed_activation_restores(
                 await submit
         assert entry.data["port"] == emulator.addr[1]
         assert entry.runtime_data is not old_runtime
-        assert (await entry.runtime_data.engine.poll()).state is EngineState.ONLINE
+        assert (await _engine(entry.runtime_data).poll()).state is EngineState.ONLINE
     finally:
         await hass.config_entries.async_unload(entry.entry_id)
 
 
-async def test_validation_handoff_releases_single_client_slot(emulator):
+async def test_validation_handoff_releases_single_client_slot(hass, emulator):
     """A validation client owns the sole socket slot only during handoff."""
+    entry = await _loaded_entry(hass, emulator)
+    runtime = entry.runtime_data
     host, port = emulator.addr
-    link = SolarmaxLink(host, port)
-    engine = ConnectionEngine(link, address=1, sun_below=lambda: False)
-    assert (await engine.poll()).state is EngineState.ONLINE
+    try:
+        async with runtime.validation_handoff():
+            probe = SolarmaxLink(host, port)
+            try:
+                raw = await probe.request(build_request(1, ["PAC"]))
+                assert parse_response(raw, verify_checksum=True)["PAC"]["value"] >= 0
+            finally:
+                await probe.close()
 
-    async with engine.validation_handoff():
-        probe = SolarmaxLink(host, port)
-        try:
-            raw = await probe.request(build_request(1, ["PAC"]))
-            assert parse_response(raw, verify_checksum=True)["PAC"]["value"] >= 0
-        finally:
-            await probe.close()
-
-    assert (await engine.poll()).state is EngineState.ONLINE
-    await engine.close()
+        snapshots = await runtime._async_update_data()
+        assert all(s.state is EngineState.ONLINE for s in snapshots.values())
+    finally:
+        await hass.config_entries.async_unload(entry.entry_id)
 
 
 @pytest.mark.parametrize("changed", [False, True])
@@ -429,7 +446,7 @@ async def test_repair_emulator_waits_for_full_poll(
             await hass.async_block_till_done()
         assert result["type"] is FlowResultType.ABORT
         assert entry.data["port"] == port
-        assert entry.runtime_data.data.state is EngineState.ONLINE
+        assert _state(entry.runtime_data) is EngineState.ONLINE
         assert _connection_issue(hass, entry) is None
     finally:
         release_poll.set()
@@ -447,18 +464,19 @@ async def test_old_runtime_poll_cannot_verify_new_repair_endpoint(
     issue_seen_during_unload = []
     unload_platforms = hass.config_entries.async_unload_platforms
 
-    async def probe(**kwargs):
+    async def probe(link, addresses, verify_checksum):
         nonlocal poll_task
-        await validate_connection(**kwargs)
+        answered = await probe_addresses(link, addresses, verify_checksum)
         poll_task = asyncio.create_task(old_runtime._async_update_data())
         await asyncio.sleep(0)
         assert not poll_task.done()
+        return answered
 
     async def unload(current, platforms):
         issue = _connection_issue(hass, entry)
         assert issue.data["verification_pending"] == 1
-        snapshot = await asyncio.wait_for(poll_task, 5)
-        assert snapshot.state is EngineState.ONLINE
+        snapshots = await asyncio.wait_for(poll_task, 5)
+        assert all(s.state is EngineState.ONLINE for s in snapshots.values())
         assert entry.runtime_data is old_runtime
         issue_seen_during_unload.append(_connection_issue(hass, entry) is not None)
         return await unload_platforms(current, platforms)
@@ -466,7 +484,7 @@ async def test_old_runtime_poll_cannot_verify_new_repair_endpoint(
     try:
         with (
             patch(
-                "custom_components.solarmax.repairs.validate_connection",
+                "custom_components.solarmax.configuration.probe_addresses",
                 side_effect=probe,
             ),
             patch.object(
@@ -481,7 +499,7 @@ async def test_old_runtime_poll_cannot_verify_new_repair_endpoint(
         assert result["type"] is FlowResultType.ABORT
         assert issue_seen_during_unload == [True]
         assert entry.runtime_data is not old_runtime
-        assert entry.runtime_data.data.state is EngineState.ONLINE
+        assert _state(entry.runtime_data) is EngineState.ONLINE
         assert _connection_issue(hass, entry) is None
     finally:
         if poll_task is not None:
@@ -505,7 +523,7 @@ async def test_repair_emulator_unreachable_endpoint_stays_open(
         assert entry.runtime_data is old_runtime
         assert _connection_issue(hass, entry) is not None
         await entry.runtime_data.async_refresh()
-        assert entry.runtime_data.data.state is EngineState.ONLINE
+        assert _state(entry.runtime_data) is EngineState.ONLINE
         assert _connection_issue(hass, entry) is None
     finally:
         await hass.config_entries.async_unload(entry.entry_id)
@@ -538,7 +556,7 @@ async def test_repair_emulator_activation_rollback_full_poll_clears(
             result = await asyncio.wait_for(task, 5)
         assert result["errors"] == {"base": "reload_failed"}
         assert entry.data["port"] == emulator.addr[1]
-        assert entry.runtime_data.data.state is EngineState.ONLINE
+        assert _state(entry.runtime_data) is EngineState.ONLINE
         assert _connection_issue(hass, entry) is None
     finally:
         release_restore.set()
@@ -560,7 +578,7 @@ async def test_disabled_repair_emulator_waits_until_enabled(hass, emulator):
     object.__setattr__(entry, "disabled_by", None)
     try:
         assert await hass.config_entries.async_setup(entry.entry_id)
-        assert entry.runtime_data.data.state is EngineState.ONLINE
+        assert _state(entry.runtime_data) is EngineState.ONLINE
         assert _connection_issue(hass, entry) is None
     finally:
         await hass.config_entries.async_unload(entry.entry_id)

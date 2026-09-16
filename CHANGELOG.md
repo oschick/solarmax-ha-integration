@@ -7,6 +7,34 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+This release lets one integration entry manage several inverters behind the
+same connection and adds a configurable response timeout.
+
+### New: several inverters on one connection
+
+One integration entry now represents one endpoint: an IP address and port.
+Add each inverter behind that endpoint with **Add inverter**; every inverter
+gets its own device and sensors. Up to about ten inverters per endpoint is
+the tested design size. Multi-inverter operation is not verified on real
+hardware; reports welcome.
+
+### New: response timeout option
+
+**Configure** gains **Response timeout** (`0.5`-`10` s, default `3.5` s). It
+applies to polling and to every connection test.
+
+### Other highlights
+
+- Minimum Home Assistant version is now 2026.8. Existing entries migrate
+  automatically, and entity IDs, device, and history are preserved.
+  Twilight elevation threshold and keep sensor values overnight are now
+  edited per inverter under the inverter's **Reconfigure**. To downgrade
+  from `v1.5.0`, restore a Home Assistant backup made before you installed
+  the upgrade.
+- Two entries for the same host and port are merged into one: the second
+  entry disappears and its inverter appears as a subentry of the first.
+- A reply from a different inverter address is rejected and retried once.
+
 ## [1.4.0] - 2026-09-06
 
 This release adds optional sensor values while the inverter is off at night.

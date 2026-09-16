@@ -32,13 +32,18 @@ jobs:
       ready: ${{ steps.prepare.outputs.ready }}
       tag: ${{ steps.version.outputs.tag }}
     steps:
-      - name: Require main branch
+      - name: Require main branch for stable releases
         if: github.event_name == 'workflow_dispatch'
         env:
           DISPATCH_REF: ${{ github.ref }}
+          INPUT_TAG: ${{ inputs.version }}
         run: |
-          if [[ "$DISPATCH_REF" != "refs/heads/main" ]]; then
-            echo "Releases must run from main, not $DISPATCH_REF" >&2
+          # A prerelease tag (vX.Y.Z-suffix) may be built from any branch so
+          # that a pull request can ship a test release. Stable tags stay on main.
+          if [[ "$INPUT_TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+-[0-9A-Za-z.-]+$ ]]; then
+            echo "Prerelease $INPUT_TAG requested from $DISPATCH_REF"
+          elif [[ "$DISPATCH_REF" != "refs/heads/main" ]]; then
+            echo "Stable releases must run from main, not $DISPATCH_REF" >&2
             exit 1
           fi
 
@@ -99,6 +104,7 @@ jobs:
         if: steps.prepare.outputs.ready == 'false'
         id: branch
         env:
+          BASE_BRANCH: ${{ github.ref_name }}
           GH_TOKEN: ${{ github.token }}
           RELEASE_TAG: ${{ steps.version.outputs.tag }}
         run: |
@@ -125,13 +131,14 @@ jobs:
             fi
           fi
 
-          compare_url="https://github.com/${GITHUB_REPOSITORY}/compare/main...${release_branch}?expand=1"
+          compare_url="https://github.com/${GITHUB_REPOSITORY}/compare/${BASE_BRANCH}...${release_branch}?expand=1"
           echo "branch=$release_branch" >> "$GITHUB_OUTPUT"
           echo "compare-url=$compare_url" >> "$GITHUB_OUTPUT"
 
       - name: Summarize preparation
         if: steps.prepare.outputs.ready == 'false'
         env:
+          BASE_BRANCH: ${{ github.ref_name }}
           COMPARE_URL: ${{ steps.branch.outputs.compare-url }}
           RELEASE_TAG: ${{ steps.version.outputs.tag }}
         run: |
@@ -139,7 +146,11 @@ jobs:
             echo "### Release preparation"
             echo "- Tag: \`$RELEASE_TAG\`"
             echo "- [Open the preparation pull request]($COMPARE_URL)"
-            echo "- Merge the pull request to create the draft release."
+            if [[ "$BASE_BRANCH" == "main" ]]; then
+              echo "- Merge the pull request to create the draft release."
+            else
+              echo "- Merge the pull request into \`$BASE_BRANCH\`, then run this workflow again with \`$RELEASE_TAG\` on \`$BASE_BRANCH\` to create the draft release."
+            fi
           } >> "$GITHUB_STEP_SUMMARY"
 
   release:

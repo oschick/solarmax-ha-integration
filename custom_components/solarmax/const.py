@@ -20,6 +20,10 @@ CONF_DEVICE_NAME = "device_name"
 CONF_VERIFY_CHECKSUM = "verify_checksum"
 CONF_TWILIGHT_ELEVATION_THRESHOLD = "twilight_elevation_threshold"
 CONF_NIGHT_KEEP_VALUES = "night_keep_values"
+CONF_RESPONSE_TIMEOUT = "response_timeout"
+
+# Config subentry type holding one inverter address behind the endpoint.
+SUBENTRY_TYPE_INVERTER = "inverter"
 
 # Default values
 DEFAULT_PORT = 12345
@@ -35,6 +39,13 @@ DEFAULT_TWILIGHT_ELEVATION_THRESHOLD = 5
 
 DEFAULT_NIGHT_KEEP_VALUES = False
 
+# Per-request response timeout (seconds) on the shared link. The vendor
+# client waits 500 ms by default and at most 3000 ms; 3.5 s keeps the
+# pre-1.5.0 behaviour for existing installations.
+DEFAULT_RESPONSE_TIMEOUT = 3.5
+MIN_RESPONSE_TIMEOUT = 0.5
+MAX_RESPONSE_TIMEOUT = 10.0
+
 # Coordinator poll cadence (seconds) when the engine reports OFFLINE_EXPECTED.
 NIGHT_POLL_SECONDS = 900
 DAWN_POLL_SECONDS = 60
@@ -45,6 +56,10 @@ FAULT_REPAIR_SECONDS = 300
 # A repair probe succeeded; only a complete ONLINE poll verifies recovery.
 REPAIR_PENDING = "verification_pending"
 REPAIR_PENDING_ENDPOINT = "verification_endpoint"
+# Comma-separated subentry IDs that were in fault when the repair was applied.
+REPAIR_PENDING_INVERTERS = "verification_inverters"
+# Non-fixable issue raised while an endpoint has no inverter subentry.
+NO_INVERTER_ISSUE = "no_inverter"
 
 # Static device-identification MaxComm keys (queried once for device info)
 DEVICE_KEY_TYPE = "TYP"  # device type / model identifier

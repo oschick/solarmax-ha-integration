@@ -275,3 +275,32 @@ def test_parse_response_skips_malformed_field():
     assert result["PAC"]["raw_value"] == 3000
     assert result["SYS"]["raw_value"] == 0x4E33
     assert result["SAL"]["raw_value"] == 0
+
+
+def test_parse_response_rejects_reply_from_other_address():
+    """A frame whose Src is not the requested address is a retryable error."""
+    frame_payload = "02;FB;18|64:PAC=BB8|"
+    frame = "{" + frame_payload + calculate_checksum(frame_payload) + "}"
+    with pytest.raises(RetryableProtocolError):
+        parse_response(frame, expected_address=1)
+
+
+def test_parse_response_accepts_matching_source_address():
+    frame_payload = "02;FB;18|64:PAC=BB8|"
+    frame = "{" + frame_payload + calculate_checksum(frame_payload) + "}"
+    assert parse_response(frame, expected_address=2)["PAC"]["raw_value"] == 3000
+
+
+def test_parse_response_without_expected_address_skips_source_check():
+    frame_payload = "02;FB;18|64:PAC=BB8|"
+    frame = "{" + frame_payload + calculate_checksum(frame_payload) + "}"
+    assert parse_response(frame)["PAC"]["raw_value"] == 3000
+
+
+def test_parse_response_interface_error_precedes_source_check():
+    """An IPR frame keeps its deterministic classification despite a foreign Src."""
+    inner = "02;FB;0E|3E8:IPR|"
+    frame = "{" + inner + calculate_checksum(inner) + "}"
+    with pytest.raises(ProtocolError) as excinfo:
+        parse_response(frame, expected_address=1)
+    assert not isinstance(excinfo.value, RetryableProtocolError)

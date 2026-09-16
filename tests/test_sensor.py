@@ -2,21 +2,41 @@
 
 from dataclasses import replace
 from datetime import timedelta
+from types import MappingProxyType
 from unittest.mock import Mock
 
 import pytest
 from freezegun import freeze_time
 from homeassistant.components.sensor import SensorDeviceClass, SensorStateClass
-from homeassistant.config_entries import ConfigEntry
+from homeassistant.config_entries import ConfigSubentry
 from homeassistant.helpers.entity import EntityCategory
 from homeassistant.util import dt as dt_util
 
 from custom_components.solarmax.connection import EngineSnapshot, EngineState
-from custom_components.solarmax.const import CONF_NIGHT_KEEP_VALUES, SENSOR_TYPES
+from custom_components.solarmax.const import DOMAIN, SENSOR_TYPES
 from custom_components.solarmax.coordinator import SolarmaxCoordinator
 from custom_components.solarmax.sensor import SolarmaxSensor
 
 _SENSOR_BY_KEY = {description.key: description for description in SENSOR_TYPES}
+
+SUBENTRY_ID = "sub1"
+
+
+def _subentry(night_keep: bool = False) -> ConfigSubentry:
+    return ConfigSubentry(
+        data=MappingProxyType(
+            {
+                "address": 1,
+                "device_name": "Test Inverter",
+                "twilight_elevation_threshold": 5,
+                "night_keep_values": night_keep,
+            }
+        ),
+        subentry_id=SUBENTRY_ID,
+        subentry_type="inverter",
+        title="Test Inverter",
+        unique_id="1",
+    )
 
 
 def _make_snapshot(
@@ -43,13 +63,18 @@ def _make_snapshot(
 def mock_coordinator():
     """Create a mock coordinator."""
     coordinator = Mock(spec=SolarmaxCoordinator)
-    coordinator.data = _make_snapshot(
-        values={
-            "SYS": {"value": 20004, "raw_value": 20004},
-            "PAC": {"value": 1500.0, "raw_value": 3000},
-        }
-    )
-    coordinator.last_successful_update = None
+    coordinator.data = {
+        SUBENTRY_ID: _make_snapshot(
+            values={
+                "SYS": {"value": 20004, "raw_value": 20004},
+                "PAC": {"value": 1500.0, "raw_value": 3000},
+            }
+        )
+    }
+    coordinator.last_successful_update_for = Mock(return_value=None)
+    coordinator.device_model_for = Mock(return_value=None)
+    coordinator.sw_version_for = Mock(return_value=None)
+    coordinator.serial_number_for = Mock(return_value=None)
     # Plain Mock: hass.config/hass.states are instance attributes and thus
     # not visible to a spec'd Mock
     coordinator.hass = Mock()
@@ -58,30 +83,19 @@ def mock_coordinator():
 
 
 @pytest.fixture
-def mock_config_entry():
-    """Create a mock config entry."""
-    entry = Mock(spec=ConfigEntry)
-    entry.entry_id = "test_entry_id"
-    entry.data = {
-        "host": "192.168.1.100",
-        "port": 12345,
-        "device_name": "Test Inverter",
-    }
-    entry.options = {}
-    return entry
+def mock_subentry():
+    """Create a mock inverter subentry."""
+    return _subentry()
 
 
-def _make_sensor(coordinator, entry, sensor_key):
-    return SolarmaxSensor(
-        coordinator,
-        entry,
-        _SENSOR_BY_KEY[sensor_key],
-        "Test Inverter",
-    )
+def _make_sensor(coordinator, subentry, sensor_key):
+    return SolarmaxSensor(coordinator, subentry, _SENSOR_BY_KEY[sensor_key])
 
 
 def _set_state(coordinator, state: EngineState) -> None:
-    coordinator.data = replace(coordinator.data, state=state)
+    coordinator.data = {
+        SUBENTRY_ID: replace(coordinator.data[SUBENTRY_ID], state=state)
+    }
 
 
 def _set_night(coordinator) -> None:
@@ -92,78 +106,72 @@ def _set_fault(coordinator) -> None:
     _set_state(coordinator, EngineState.OFFLINE_FAULT)
 
 
-def test_sensor_available_when_online(mock_coordinator, mock_config_entry):
+def test_sensor_available_when_online(mock_coordinator, mock_subentry):
     """Test sensor is available while the engine reports ONLINE."""
-    sensor = _make_sensor(mock_coordinator, mock_config_entry, "PAC")
+    sensor = _make_sensor(mock_coordinator, mock_subentry, "PAC")
 
     assert sensor.available is True
 
 
-def test_runtime_option_overrides_legacy_night_preference(
-    mock_coordinator, mock_config_entry
-):
-    """A migrated option must take precedence over legacy entry data."""
-    mock_config_entry.data[CONF_NIGHT_KEEP_VALUES] = False
-    mock_config_entry.options[CONF_NIGHT_KEEP_VALUES] = True
+def test_night_keep_values_option_enables_zero_policy(mock_coordinator):
+    """A subentry with night_keep_values=True takes precedence over the default."""
     _set_night(mock_coordinator)
 
-    sensor = _make_sensor(mock_coordinator, mock_config_entry, "PAC")
+    sensor = _make_sensor(mock_coordinator, _subentry(night_keep=True), "PAC")
 
     assert sensor.native_value == 0
 
 
-def test_sys_sensor_available_when_offline_fault(mock_coordinator, mock_config_entry):
+def test_sys_sensor_available_when_offline_fault(mock_coordinator, mock_subentry):
     """Test SYS sensor remains available during an OFFLINE_FAULT."""
     _set_fault(mock_coordinator)
 
-    sensor = _make_sensor(mock_coordinator, mock_config_entry, "SYS")
+    sensor = _make_sensor(mock_coordinator, mock_subentry, "SYS")
 
     assert sensor.available is True
 
 
-def test_other_sensor_unavailable_when_offline_fault(
-    mock_coordinator, mock_config_entry
-):
+def test_other_sensor_unavailable_when_offline_fault(mock_coordinator, mock_subentry):
     """A daytime fault makes normal sensors unavailable immediately."""
     _set_fault(mock_coordinator)
 
-    sensor = _make_sensor(mock_coordinator, mock_config_entry, "PAC")
+    sensor = _make_sensor(mock_coordinator, mock_subentry, "PAC")
 
     assert sensor.available is False
 
 
 def test_sys_sensor_shows_offline_fault_during_daytime_outage(
-    mock_coordinator, mock_config_entry
+    mock_coordinator, mock_subentry
 ):
     """Test SYS sensor shows the new offline_fault key on OFFLINE_FAULT."""
     _set_fault(mock_coordinator)
 
-    sensor = _make_sensor(mock_coordinator, mock_config_entry, "SYS")
+    sensor = _make_sensor(mock_coordinator, mock_subentry, "SYS")
 
     assert sensor.native_value == "offline_fault"
 
 
 def test_sys_sensor_shows_offline_expected_when_expected_offline(
-    mock_coordinator, mock_config_entry
+    mock_coordinator, mock_subentry
 ):
     """Test SYS sensor shows the new offline_expected key on OFFLINE_EXPECTED."""
     _set_night(mock_coordinator)
 
-    sensor = _make_sensor(mock_coordinator, mock_config_entry, "SYS")
+    sensor = _make_sensor(mock_coordinator, mock_subentry, "SYS")
 
     assert sensor.native_value == "offline_expected"
 
 
-def test_sys_sensor_shows_unknown_state(mock_coordinator, mock_config_entry):
+def test_sys_sensor_shows_unknown_state(mock_coordinator, mock_subentry):
     """Test SYS sensor shows unknown for EngineState.UNKNOWN."""
     _set_state(mock_coordinator, EngineState.UNKNOWN)
 
-    sensor = _make_sensor(mock_coordinator, mock_config_entry, "SYS")
+    sensor = _make_sensor(mock_coordinator, mock_subentry, "SYS")
 
     assert sensor.native_value == "unknown"
 
 
-def test_sys_sensor_offline_attributes(mock_coordinator, mock_config_entry):
+def test_sys_sensor_offline_attributes(mock_coordinator, mock_subentry):
     """Test SYS sensor shows offline attributes when the engine is offline.
 
     A real OFFLINE_FAULT snapshot always carries a fault_since (the engine
@@ -171,12 +179,14 @@ def test_sys_sensor_offline_attributes(mock_coordinator, mock_config_entry):
     realistic pairing to test here rather than a bare OFFLINE_FAULT.
     """
     fault_since = dt_util.utcnow() - timedelta(minutes=5)
-    mock_coordinator.data = _make_snapshot(
-        state=EngineState.OFFLINE_FAULT, fault_since=fault_since
-    )
-    mock_coordinator.last_successful_update = dt_util.now()
+    mock_coordinator.data = {
+        SUBENTRY_ID: _make_snapshot(
+            state=EngineState.OFFLINE_FAULT, fault_since=fault_since
+        )
+    }
+    mock_coordinator.last_successful_update_for.return_value = dt_util.now()
 
-    sensor = _make_sensor(mock_coordinator, mock_config_entry, "SYS")
+    sensor = _make_sensor(mock_coordinator, mock_subentry, "SYS")
 
     attributes = sensor.extra_state_attributes
     assert attributes["raw_value"] == "offline"
@@ -188,15 +198,17 @@ def test_sys_sensor_offline_attributes(mock_coordinator, mock_config_entry):
     assert "expected_outside_twilight" not in attributes
 
 
-def test_status_reports_reconnecting_attribute(mock_coordinator, mock_config_entry):
+def test_status_reports_reconnecting_attribute(mock_coordinator, mock_subentry):
     """The status sensor surfaces the engine's reconnecting flag while offline.
 
     UNKNOWN-with-reconnecting is the startup grace window, which precedes
     any fault ever being declared, so fault_since is genuinely absent here.
     """
-    mock_coordinator.data = _make_snapshot(state=EngineState.UNKNOWN, reconnecting=True)
+    mock_coordinator.data = {
+        SUBENTRY_ID: _make_snapshot(state=EngineState.UNKNOWN, reconnecting=True)
+    }
 
-    sensor = _make_sensor(mock_coordinator, mock_config_entry, "SYS")
+    sensor = _make_sensor(mock_coordinator, mock_subentry, "SYS")
     attributes = sensor.extra_state_attributes
 
     assert sensor.native_value == "unknown"
@@ -204,22 +216,24 @@ def test_status_reports_reconnecting_attribute(mock_coordinator, mock_config_ent
     assert "fault_since" not in attributes
 
 
-def test_status_reports_outside_twilight_anomaly(mock_coordinator, mock_config_entry):
+def test_status_reports_outside_twilight_anomaly(mock_coordinator, mock_subentry):
     """A shutdown-armed offline outside the twilight window is surfaced."""
-    mock_coordinator.data = _make_snapshot(
-        state=EngineState.OFFLINE_EXPECTED, expected_outside_twilight=True
-    )
+    mock_coordinator.data = {
+        SUBENTRY_ID: _make_snapshot(
+            state=EngineState.OFFLINE_EXPECTED, expected_outside_twilight=True
+        )
+    }
 
-    sensor = _make_sensor(mock_coordinator, mock_config_entry, "SYS")
+    sensor = _make_sensor(mock_coordinator, mock_subentry, "SYS")
     attributes = sensor.extra_state_attributes
 
     assert sensor.native_value == "offline_expected"
     assert attributes["expected_outside_twilight"] is True
 
 
-def test_normal_sensor_operation(mock_coordinator, mock_config_entry):
+def test_normal_sensor_operation(mock_coordinator, mock_subentry):
     """Test normal sensor operation when the engine is ONLINE."""
-    sensor = _make_sensor(mock_coordinator, mock_config_entry, "SYS")
+    sensor = _make_sensor(mock_coordinator, mock_subentry, "SYS")
 
     # Should show enum option key (HA handles translation)
     assert sensor.native_value == "mpp_operation"
@@ -230,9 +244,9 @@ def test_normal_sensor_operation(mock_coordinator, mock_config_entry):
     assert attributes["code"] == 20004
 
 
-def test_description_metadata_flows_through(mock_coordinator, mock_config_entry):
+def test_description_metadata_flows_through(mock_coordinator, mock_subentry):
     """A main sensor exposes its description's unit/class/state metadata."""
-    sensor = _make_sensor(mock_coordinator, mock_config_entry, "PAC")
+    sensor = _make_sensor(mock_coordinator, mock_subentry, "PAC")
 
     assert sensor.native_unit_of_measurement == "W"
     assert sensor.device_class == SensorDeviceClass.POWER
@@ -242,25 +256,33 @@ def test_description_metadata_flows_through(mock_coordinator, mock_config_entry)
     assert sensor.entity_category is None
 
 
-def test_diagnostic_sensor_disabled_by_default(mock_coordinator, mock_config_entry):
+def test_diagnostic_sensor_disabled_by_default(mock_coordinator, mock_subentry):
     """A diagnostic sensor is opt-in and categorized as diagnostic."""
-    sensor = _make_sensor(mock_coordinator, mock_config_entry, "UL1")
+    sensor = _make_sensor(mock_coordinator, mock_subentry, "UL1")
 
     assert sensor.entity_registry_enabled_default is False
     assert sensor.entity_category == EntityCategory.DIAGNOSTIC
 
 
-def test_unique_id_and_entity_id_scheme(mock_coordinator, mock_config_entry):
+def test_unique_id_and_entity_id_scheme(mock_coordinator, mock_subentry):
     """unique_id and forced entity_id keep the pre-migration scheme."""
-    sensor = _make_sensor(mock_coordinator, mock_config_entry, "PAC")
+    sensor = _make_sensor(mock_coordinator, mock_subentry, "PAC")
 
-    assert sensor.unique_id == "test_entry_id-pac"
+    assert sensor.unique_id == "sub1-pac"
     assert sensor.entity_id == "sensor.test_inverter_pac"
 
 
-def test_enum_sensor_description(mock_coordinator, mock_config_entry):
+def test_device_info_uses_subentry_identity(mock_coordinator, mock_subentry):
+    """The device is keyed by subentry ID, not the config entry ID."""
+    sensor = _make_sensor(mock_coordinator, mock_subentry, "PAC")
+
+    assert sensor.device_info["identifiers"] == {(DOMAIN, SUBENTRY_ID)}
+    assert sensor.device_info["name"] == "Test Inverter"
+
+
+def test_enum_sensor_description(mock_coordinator, mock_subentry):
     """The status sensor is an enum with options sourced from the description."""
-    sensor = _make_sensor(mock_coordinator, mock_config_entry, "SYS")
+    sensor = _make_sensor(mock_coordinator, mock_subentry, "SYS")
 
     assert sensor.device_class == SensorDeviceClass.ENUM
     assert sensor.options
@@ -290,59 +312,66 @@ def test_no_invalid_device_state_class_combinations():
 
 
 @pytest.fixture
-def night_entry(mock_config_entry):
-    """A config entry with the night-keep-values option enabled."""
-    mock_config_entry.data = {**mock_config_entry.data, "night_keep_values": True}
-    return mock_config_entry
+def night_subentry():
+    """An inverter subentry with the night-keep-values option enabled."""
+    return _subentry(night_keep=True)
 
 
-def test_zero_policy_sensor_reads_zero_at_night(mock_coordinator, night_entry):
+def test_zero_policy_sensor_reads_zero_at_night(mock_coordinator, night_subentry):
     """PAC is available and reads 0 at night when the option is on."""
     _set_night(mock_coordinator)
 
-    sensor = _make_sensor(mock_coordinator, night_entry, "PAC")
+    sensor = _make_sensor(mock_coordinator, night_subentry, "PAC")
 
     assert sensor.available is True
     assert sensor.native_value == 0
 
 
 def test_zero_policy_sensor_is_unavailable_without_prior_data(
-    mock_coordinator, night_entry
+    mock_coordinator, night_subentry
 ):
     """A never-reported register must not become a synthetic zero."""
-    mock_coordinator.data = _make_snapshot(values={})
+    mock_coordinator.data = {SUBENTRY_ID: _make_snapshot(values={})}
     _set_night(mock_coordinator)
 
-    sensor = _make_sensor(mock_coordinator, night_entry, "PAC")
+    sensor = _make_sensor(mock_coordinator, night_subentry, "PAC")
 
     assert sensor.available is False
     assert sensor.native_value is None
 
 
-def test_hold_policy_sensor_keeps_last_value_at_night(mock_coordinator, night_entry):
+def test_hold_policy_sensor_keeps_last_value_at_night(mock_coordinator, night_subentry):
     """KT0 holds the last successful reading rather than going unavailable."""
-    mock_coordinator.data.values["KT0"] = {"value": 12345, "raw_value": 12345}
+    mock_coordinator.data[SUBENTRY_ID].values["KT0"] = {
+        "value": 12345,
+        "raw_value": 12345,
+    }
     _set_night(mock_coordinator)
 
-    sensor = _make_sensor(mock_coordinator, night_entry, "KT0")
+    sensor = _make_sensor(mock_coordinator, night_subentry, "KT0")
 
     assert sensor.available is True
     assert sensor.native_value == 12345
 
 
-def test_hold_policy_sensor_survives_midnight(mock_coordinator, night_entry):
+def test_hold_policy_sensor_survives_midnight(mock_coordinator, night_subentry):
     """Only KDY resets at midnight; lifetime totals keep holding."""
-    mock_coordinator.data.values["KT0"] = {"value": 12345, "raw_value": 12345}
-    mock_coordinator.last_successful_update = dt_util.now() - timedelta(days=1)
+    mock_coordinator.data[SUBENTRY_ID].values["KT0"] = {
+        "value": 12345,
+        "raw_value": 12345,
+    }
+    mock_coordinator.last_successful_update_for.return_value = (
+        dt_util.now() - timedelta(days=1)
+    )
     _set_night(mock_coordinator)
 
-    sensor = _make_sensor(mock_coordinator, night_entry, "KT0")
+    sensor = _make_sensor(mock_coordinator, night_subentry, "KT0")
 
     assert sensor.native_value == 12345
 
 
 def test_hold_policy_sensor_unavailable_with_nothing_to_hold(
-    mock_coordinator, night_entry
+    mock_coordinator, night_subentry
 ):
     """An available sensor reporting `unknown` is worse than an absent one.
 
@@ -351,95 +380,102 @@ def test_hold_policy_sensor_unavailable_with_nothing_to_hold(
     """
     _set_night(mock_coordinator)
 
-    sensor = _make_sensor(mock_coordinator, night_entry, "KLM")
+    sensor = _make_sensor(mock_coordinator, night_subentry, "KLM")
 
     assert sensor.available is False
 
 
 def test_unavailable_policy_sensor_still_unavailable_at_night(
-    mock_coordinator, night_entry
+    mock_coordinator, night_subentry
 ):
     """AC grid voltage has no honest night value, so it stays unavailable."""
     _set_night(mock_coordinator)
 
-    sensor = _make_sensor(mock_coordinator, night_entry, "UL1")
+    sensor = _make_sensor(mock_coordinator, night_subentry, "UL1")
 
     assert sensor.available is False
 
 
-def test_night_policy_ignored_during_daytime_outage(mock_coordinator, night_entry):
+def test_night_policy_ignored_during_daytime_outage(mock_coordinator, night_subentry):
     """A daytime fault is a real fault and must not be smoothed over."""
     _set_fault(mock_coordinator)
 
-    sensor = _make_sensor(mock_coordinator, night_entry, "PAC")
+    sensor = _make_sensor(mock_coordinator, night_subentry, "PAC")
 
     assert sensor.available is False
 
 
-def test_night_policy_ignored_when_option_disabled(mock_coordinator, mock_config_entry):
+def test_night_policy_ignored_when_option_disabled(mock_coordinator, mock_subentry):
     """Default-off installs keep the original behaviour exactly."""
     _set_night(mock_coordinator)
 
-    sensor = _make_sensor(mock_coordinator, mock_config_entry, "PAC")
+    sensor = _make_sensor(mock_coordinator, mock_subentry, "PAC")
 
     assert sensor.available is False
 
 
-def test_kdy_holds_before_midnight(mock_coordinator, night_entry):
+def test_kdy_holds_before_midnight(mock_coordinator, night_subentry):
     """Same local day as the last poll: the day's total still stands."""
     with freeze_time("2026-01-01 12:00:00"):
-        mock_coordinator.data.values["KDY"] = {"value": 24.5, "raw_value": 245}
-        mock_coordinator.last_successful_update = dt_util.now()
+        mock_coordinator.data[SUBENTRY_ID].values["KDY"] = {
+            "value": 24.5,
+            "raw_value": 245,
+        }
+        mock_coordinator.last_successful_update_for.return_value = dt_util.now()
         _set_night(mock_coordinator)
 
-        sensor = _make_sensor(mock_coordinator, night_entry, "KDY")
+        sensor = _make_sensor(mock_coordinator, night_subentry, "KDY")
 
         assert sensor.available is True
         assert sensor.native_value == 24.5
 
 
-def test_kdy_reads_zero_after_midnight(mock_coordinator, night_entry):
+def test_kdy_reads_zero_after_midnight(mock_coordinator, night_subentry):
     """Last poll was an earlier local day: today's total is 0."""
-    mock_coordinator.data.values["KDY"] = {"value": 24.5, "raw_value": 245}
-    mock_coordinator.last_successful_update = dt_util.now() - timedelta(days=1)
+    mock_coordinator.data[SUBENTRY_ID].values["KDY"] = {"value": 24.5, "raw_value": 245}
+    mock_coordinator.last_successful_update_for.return_value = (
+        dt_util.now() - timedelta(days=1)
+    )
     _set_night(mock_coordinator)
 
-    sensor = _make_sensor(mock_coordinator, night_entry, "KDY")
+    sensor = _make_sensor(mock_coordinator, night_subentry, "KDY")
 
     assert sensor.available is True
     assert sensor.native_value == 0
 
 
 def test_kdy_after_midnight_is_unavailable_without_prior_data(
-    mock_coordinator, night_entry
+    mock_coordinator, night_subentry
 ):
     """A timestamp alone does not prove that the inverter supports KDY."""
-    mock_coordinator.data = _make_snapshot(values={})
-    mock_coordinator.last_successful_update = dt_util.now() - timedelta(days=1)
+    mock_coordinator.data = {SUBENTRY_ID: _make_snapshot(values={})}
+    mock_coordinator.last_successful_update_for.return_value = (
+        dt_util.now() - timedelta(days=1)
+    )
     _set_night(mock_coordinator)
 
-    sensor = _make_sensor(mock_coordinator, night_entry, "KDY")
+    sensor = _make_sensor(mock_coordinator, night_subentry, "KDY")
 
     assert sensor.available is False
     assert sensor.native_value is None
 
 
-def test_kdy_unavailable_when_never_polled(mock_coordinator, night_entry):
+def test_kdy_unavailable_when_never_polled(mock_coordinator, night_subentry):
     """No successful poll ever: nothing to hold and no day boundary crossed."""
-    mock_coordinator.data = _make_snapshot(values={})
-    mock_coordinator.last_successful_update = None
+    mock_coordinator.data = {SUBENTRY_ID: _make_snapshot(values={})}
+    mock_coordinator.last_successful_update_for.return_value = None
     _set_night(mock_coordinator)
 
-    sensor = _make_sensor(mock_coordinator, night_entry, "KDY")
+    sensor = _make_sensor(mock_coordinator, night_subentry, "KDY")
 
     assert sensor.available is False
 
 
-def test_night_value_source_reports_zero(mock_coordinator, night_entry):
+def test_night_value_source_reports_zero(mock_coordinator, night_subentry):
     """A synthesised zero says so, and does not advertise a stale raw_value."""
     _set_night(mock_coordinator)
 
-    sensor = _make_sensor(mock_coordinator, night_entry, "PAC")
+    sensor = _make_sensor(mock_coordinator, night_subentry, "PAC")
     attributes = sensor.extra_state_attributes
 
     assert attributes["night_value_source"] == "zero"
@@ -447,35 +483,38 @@ def test_night_value_source_reports_zero(mock_coordinator, night_entry):
 
 
 def test_night_value_source_reports_unavailable_without_prior_data(
-    mock_coordinator, night_entry
+    mock_coordinator, night_subentry
 ):
     """Expose why a never-reported night sensor has no value."""
-    mock_coordinator.data = _make_snapshot(values={})
+    mock_coordinator.data = {SUBENTRY_ID: _make_snapshot(values={})}
     _set_night(mock_coordinator)
 
-    sensor = _make_sensor(mock_coordinator, night_entry, "PAC")
+    sensor = _make_sensor(mock_coordinator, night_subentry, "PAC")
 
     assert sensor.extra_state_attributes["night_value_source"] == "unavailable"
 
 
-def test_night_value_source_reports_hold(mock_coordinator, night_entry):
+def test_night_value_source_reports_hold(mock_coordinator, night_subentry):
     """A held value keeps its original raw_value."""
-    mock_coordinator.data.values["KT0"] = {"value": 12345, "raw_value": 12345}
+    mock_coordinator.data[SUBENTRY_ID].values["KT0"] = {
+        "value": 12345,
+        "raw_value": 12345,
+    }
     _set_night(mock_coordinator)
 
-    sensor = _make_sensor(mock_coordinator, night_entry, "KT0")
+    sensor = _make_sensor(mock_coordinator, night_subentry, "KT0")
     attributes = sensor.extra_state_attributes
 
     assert attributes["night_value_source"] == "hold"
     assert attributes["raw_value"] == 12345
 
 
-def test_held_alarm_sensor_keeps_decoded_attributes(mock_coordinator, night_entry):
+def test_held_alarm_sensor_keeps_decoded_attributes(mock_coordinator, night_subentry):
     """SAL holds so a dusk alarm stays legible — decoding must survive."""
-    mock_coordinator.data.values["SAL"] = {"value": 6, "raw_value": 6}
+    mock_coordinator.data[SUBENTRY_ID].values["SAL"] = {"value": 6, "raw_value": 6}
     _set_night(mock_coordinator)
 
-    sensor = _make_sensor(mock_coordinator, night_entry, "SAL")
+    sensor = _make_sensor(mock_coordinator, night_subentry, "SAL")
     attributes = sensor.extra_state_attributes
 
     assert attributes["night_value_source"] == "hold"
@@ -487,21 +526,25 @@ def test_held_alarm_sensor_keeps_decoded_attributes(mock_coordinator, night_entr
 
 
 def test_night_value_source_absent_during_normal_operation(
-    mock_coordinator, night_entry
+    mock_coordinator, night_subentry
 ):
     """Absence means the reading is real — automations test for presence."""
-    sensor = _make_sensor(mock_coordinator, night_entry, "PAC")
+    sensor = _make_sensor(mock_coordinator, night_subentry, "PAC")
 
     assert "night_value_source" not in (sensor.extra_state_attributes or {})
 
 
-def test_kdy_after_midnight_reports_zero_source_and_raw(mock_coordinator, night_entry):
+def test_kdy_after_midnight_reports_zero_source_and_raw(
+    mock_coordinator, night_subentry
+):
     """KDY's midnight zero is synthetic too — it must not show a stale raw_value."""
-    mock_coordinator.data.values["KDY"] = {"value": 24.5, "raw_value": 245}
-    mock_coordinator.last_successful_update = dt_util.now() - timedelta(days=1)
+    mock_coordinator.data[SUBENTRY_ID].values["KDY"] = {"value": 24.5, "raw_value": 245}
+    mock_coordinator.last_successful_update_for.return_value = (
+        dt_util.now() - timedelta(days=1)
+    )
     _set_night(mock_coordinator)
 
-    sensor = _make_sensor(mock_coordinator, night_entry, "KDY")
+    sensor = _make_sensor(mock_coordinator, night_subentry, "KDY")
     attributes = sensor.extra_state_attributes
 
     assert attributes["night_value_source"] == "zero"
@@ -512,57 +555,65 @@ def test_kdy_after_midnight_reports_zero_source_and_raw(mock_coordinator, night_
 
 
 def test_zero_policy_sensor_unavailable_when_anomalous_expected(
-    mock_coordinator, night_entry
+    mock_coordinator, night_subentry
 ):
     """A ZERO-policy sensor (PAC) must not fabricate a 0 when the armed
     disconnect happened outside twilight — that is an anomaly (e.g.
     shading), not a normal dusk, so there is no honest zero to report."""
-    mock_coordinator.data = _make_snapshot(
-        state=EngineState.OFFLINE_EXPECTED, expected_outside_twilight=True
-    )
+    mock_coordinator.data = {
+        SUBENTRY_ID: _make_snapshot(
+            state=EngineState.OFFLINE_EXPECTED, expected_outside_twilight=True
+        )
+    }
 
-    sensor = _make_sensor(mock_coordinator, night_entry, "PAC")
+    sensor = _make_sensor(mock_coordinator, night_subentry, "PAC")
 
     assert sensor.available is False
     assert sensor.native_value is None
 
 
 def test_hold_policy_sensor_still_holds_when_anomalous_expected(
-    mock_coordinator, night_entry
+    mock_coordinator, night_subentry
 ):
     """A HOLD-policy sensor (KT0) keeps holding its last-known value even
     when the disconnect is anomalous — only ZERO-policy sensors are gated."""
-    mock_coordinator.data = _make_snapshot(
-        state=EngineState.OFFLINE_EXPECTED,
-        values={"KT0": {"value": 12345, "raw_value": 12345}},
-        expected_outside_twilight=True,
-    )
+    mock_coordinator.data = {
+        SUBENTRY_ID: _make_snapshot(
+            state=EngineState.OFFLINE_EXPECTED,
+            values={"KT0": {"value": 12345, "raw_value": 12345}},
+            expected_outside_twilight=True,
+        )
+    }
 
-    sensor = _make_sensor(mock_coordinator, night_entry, "KT0")
+    sensor = _make_sensor(mock_coordinator, night_subentry, "KT0")
 
     assert sensor.available is True
     assert sensor.native_value == 12345
 
 
-def test_normal_dusk_zero_policy_sensor_still_reads_zero(mock_coordinator, night_entry):
+def test_normal_dusk_zero_policy_sensor_still_reads_zero(
+    mock_coordinator, night_subentry
+):
     """Sanity: a normal (twilight) EXPECTED is unaffected — PAC still reads
     0 exactly as before (the default `expected_outside_twilight=False`)."""
     _set_night(mock_coordinator)
 
-    sensor = _make_sensor(mock_coordinator, night_entry, "PAC")
+    sensor = _make_sensor(mock_coordinator, night_subentry, "PAC")
 
     assert sensor.available is True
     assert sensor.native_value == 0
 
 
 def test_anomalous_expected_night_value_source_is_unavailable(
-    mock_coordinator, night_entry
+    mock_coordinator, night_subentry
 ):
     """The night_value_source attribute reports the gated state honestly."""
-    mock_coordinator.data = _make_snapshot(
-        state=EngineState.OFFLINE_EXPECTED, expected_outside_twilight=True
-    )
+    mock_coordinator.data = {
+        SUBENTRY_ID: _make_snapshot(
+            state=EngineState.OFFLINE_EXPECTED, expected_outside_twilight=True
+        )
+    }
 
-    sensor = _make_sensor(mock_coordinator, night_entry, "PAC")
+    sensor = _make_sensor(mock_coordinator, night_subentry, "PAC")
 
     assert sensor.extra_state_attributes["night_value_source"] == "unavailable"
