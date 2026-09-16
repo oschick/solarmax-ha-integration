@@ -136,6 +136,10 @@ class SolarmaxCoordinator(DataUpdateCoordinator[SnapshotMap]):
         self._shutdown = False
         # Subentries that completed an ONLINE poll since this coordinator started.
         self._verified_online: set[str] = set()
+        # The pending-repair marker currently being verified; resetting
+        # `_verified_online` when it first appears keeps stale pre-marker
+        # online history from clearing a still-faulted inverter.
+        self._pending_marker_seen: str | None = None
 
         super().__init__(
             hass,
@@ -381,6 +385,11 @@ class SolarmaxCoordinator(DataUpdateCoordinator[SnapshotMap]):
     @asynccontextmanager
     async def validation_handoff(self) -> AsyncIterator[None]:
         """Pause polling and release the client slot for a short-lived probe."""
+        # Abort any in-flight exchange BEFORE waiting for the lock so the probe
+        # does not wait out a running poll's budget; disconnect again inside
+        # the lock so the client slot is guaranteed free when we yield.
+        if self.link is not None:
+            await self.link.disconnect()
         async with self._cycle_lock:
             if self._shutdown:
                 raise LinkClosed("coordinator is shut down")
@@ -395,15 +404,19 @@ class SolarmaxCoordinator(DataUpdateCoordinator[SnapshotMap]):
         call must be a no-op.
         """
         await super().async_shutdown()  # idempotent in core; safe to repeat
+        if self._shutdown:
+            return
+        self._shutdown = True
+        # Close the link BEFORE waiting for the cycle lock. link.close() aborts
+        # the transport synchronously, so an in-flight poll fails fast and
+        # releases the lock instead of holding it for the rest of its budget.
+        if self.link is not None:
+            await self.link.close()
         async with self._cycle_lock:
-            # Keep this guard inside the lock: the once-only link close that
-            # test_shutdown_closes_engines_and_link_exactly_once asserts
-            # depends on it.
-            if self._shutdown:
-                return
-            self._shutdown = True
             for engine in self.engines.values():
                 await engine.close()
+            # Idempotent second close inside the lock: the once-only guarantee
+            # that the client slot is free once shutdown returns.
             if self.link is not None:
                 await self.link.close()
 
@@ -412,15 +425,27 @@ class SolarmaxCoordinator(DataUpdateCoordinator[SnapshotMap]):
     async def _async_handle_snapshots(self, snapshots: SnapshotMap) -> None:
         """Log transitions and synchronize the endpoint's repair issue."""
         self._log_state_transitions(snapshots)
-        for subentry_id, snapshot in snapshots.items():
-            if snapshot.state is EngineState.ONLINE:
-                self._verified_online.add(subentry_id)
 
         issue = async_get_issue_registry(self.hass).async_get_issue(
             DOMAIN, self._repair_issue_id
         )
         issue_data = issue.data or {} if issue is not None else {}
-        if issue_data.get(REPAIR_PENDING) == 1:
+        pending = issue_data.get(REPAIR_PENDING) == 1
+        if pending:
+            marker = str(issue_data.get(REPAIR_PENDING_INVERTERS, ""))
+            if self._pending_marker_seen != marker:
+                # A newly written marker starts verification from scratch: only
+                # ONLINE polls observed from this cycle onward count.
+                self._verified_online = set()
+                self._pending_marker_seen = marker
+        else:
+            self._pending_marker_seen = None
+
+        for subentry_id, snapshot in snapshots.items():
+            if snapshot.state is EngineState.ONLINE:
+                self._verified_online.add(subentry_id)
+
+        if pending:
             if self._pending_repair_verified(issue_data):
                 self._clear_repair_issue()
             return

@@ -365,7 +365,10 @@ async def test_shutdown_closes_engines_and_link_exactly_once(coordinator):
     await coordinator.async_shutdown()
     await coordinator.async_shutdown()  # HA calls it again on entry unload
     assert all(engine.closed for engine in coordinator.engines.values())
-    assert coordinator.link.close.await_count == 1
+    # A6: the link is closed once before the lock (to abort an in-flight poll)
+    # and once inside it (the once-only slot-free guarantee); the second
+    # shutdown is a no-op, so the count stays at two.
+    assert coordinator.link.close.await_count == 2
 
 
 async def test_handoff_disconnects_link_and_blocks_cycles(coordinator):
@@ -375,7 +378,9 @@ async def test_handoff_disconnects_link_and_blocks_cycles(coordinator):
         second: _StubEngine(_snap(EngineState.ONLINE)),
     }
     async with coordinator.validation_handoff():
-        coordinator.link.disconnect.assert_awaited_once()
+        # A6: disconnect runs once before the lock (aborting any in-flight
+        # exchange) and once inside it (guaranteeing the slot is free).
+        assert coordinator.link.disconnect.await_count == 2
         cycle = asyncio.create_task(coordinator._async_update_data())
         await asyncio.sleep(0)
         assert coordinator.engines[first].polls == 0
@@ -1006,3 +1011,85 @@ async def test_pending_repair_clears_only_on_online_snapshot(coordinator, hass, 
     else:
         assert issue is not None
         assert issue.data[REPAIR_PENDING] == 1
+
+
+async def test_pending_repair_ignores_online_polls_before_the_marker(hass, coordinator):
+    """A2: only ONLINE polls after the pending marker was written verify it.
+
+    An inverter that polled ONLINE earlier, then faulted, must not have that
+    stale online history clear a same-endpoint pending repair while it is
+    still faulted.
+    """
+    first, second = _ids(coordinator)
+    issue_id = coordinator._repair_issue_id
+    old = dt_util.utcnow() - timedelta(seconds=FAULT_REPAIR_SECONDS + 60)
+
+    # 1. `first` polls ONLINE, landing in the pre-marker online history.
+    coordinator.engines = {
+        first: _StubEngine(_snap(EngineState.ONLINE)),
+        second: _StubEngine(_snap(EngineState.ONLINE)),
+    }
+    coordinator.async_set_updated_data(await coordinator._async_update_data())
+
+    # 2. `first` faults long enough to raise the (non-pending) repair issue.
+    coordinator.engines[first] = _StubEngine(
+        _snap(EngineState.OFFLINE_FAULT, fault_since=old)
+    )
+    coordinator.async_set_updated_data(await coordinator._async_update_data())
+    issue = ir.async_get(hass).async_get_issue(DOMAIN, issue_id)
+    assert issue is not None
+
+    # 3. A fix flow for the same endpoint writes the pending marker for `first`.
+    ir.async_create_issue(
+        hass,
+        DOMAIN,
+        issue_id,
+        is_fixable=True,
+        is_persistent=False,
+        severity=ir.IssueSeverity.ERROR,
+        translation_key="connection_issues",
+        translation_placeholders=issue.translation_placeholders,
+        data={
+            **(issue.data or {}),
+            REPAIR_PENDING: 1,
+            REPAIR_PENDING_ENDPOINT: "192.0.2.10:12345",
+            REPAIR_PENDING_INVERTERS: first,
+        },
+    )
+
+    # 4. `first` still faulted -> the pre-marker ONLINE must not clear it.
+    coordinator.async_set_updated_data(await coordinator._async_update_data())
+    assert ir.async_get(hass).async_get_issue(DOMAIN, issue_id) is not None
+
+    # 5. `first` polls ONLINE after the marker -> the issue clears.
+    coordinator.engines[first] = _StubEngine(_snap(EngineState.ONLINE))
+    await coordinator._async_update_data()
+    assert ir.async_get(hass).async_get_issue(DOMAIN, issue_id) is None
+
+
+async def test_shutdown_aborts_in_flight_poll_before_taking_the_lock(coordinator):
+    """A6: closing the link must abort the in-flight poll so shutdown never
+    waits for the cycle lock through a whole poll budget."""
+    first, second = _ids(coordinator)
+    poll_started = asyncio.Event()
+    released = asyncio.Event()
+
+    class _BlockingEngine(_StubEngine):
+        async def poll(self) -> EngineSnapshot:
+            poll_started.set()
+            # Stuck on the wire until the link is closed under us.
+            await asyncio.wait_for(released.wait(), timeout=5)
+            return _snap(EngineState.ONLINE)
+
+    coordinator.link.close = AsyncMock(side_effect=lambda: released.set())
+    coordinator.engines = {
+        first: _BlockingEngine(_snap(EngineState.ONLINE)),
+        second: _StubEngine(_snap(EngineState.ONLINE)),
+    }
+
+    cycle = asyncio.create_task(coordinator._async_update_data())
+    await asyncio.wait_for(poll_started.wait(), timeout=1)
+    # If shutdown took the lock first, it would wait behind the blocked poll.
+    await asyncio.wait_for(coordinator.async_shutdown(), timeout=1)
+    await cycle
+    assert coordinator.link.close.await_count == 2
