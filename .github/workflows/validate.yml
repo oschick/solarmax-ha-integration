@@ -44,7 +44,7 @@ jobs:
 
       - name: Validate integration metadata
         # The upstream action selects its current Hassfest container.
-        uses: home-assistant/actions/hassfest@a7c616ce81ccda50150bf1595786c71b1883fabb # master
+        uses: home-assistant/actions/hassfest@58bff37c8947f690ace498be413a9b78d6f30f93 # master
 
   workflow-lint:
     name: Workflow security and syntax
@@ -72,7 +72,7 @@ jobs:
         run: python -m pre_commit run actionlint --all-files
 
       - name: Run zizmor
-        uses: zizmorcore/zizmor-action@70fb788f84895a7701f5643d103d587e460b5c99 # v0.6.3
+        uses: zizmorcore/zizmor-action@cc914d7f3750a2d13d75c7f184a1060aa0e9d482 # v0.6.4
         with:
           advanced-security: false
           annotations: true
